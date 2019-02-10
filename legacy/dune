@@ -1,6 +1,0 @@
-(library
- (name rpdl_legacy)
- (libraries camlp5)
- (preprocess (per_module
-  ((action (run camlp5o -loc loc -impl %{input-file})) lexer parser)
- )))
