@@ -1,0 +1,18 @@
+pipeline Pipeline(): vec4 {
+
+  def vertex(pos: vec3, nor: vec3): vec3 {
+    builtin.position = vec4(pos, 1.0)
+    return pos
+  }
+
+  def fragment(pos: vec3): vec4 {
+    return vec4(pos, 1.0)
+  }
+}
+
+renderer Simple(geometry: set, screen: crt) {
+  for g in geometry {
+    screen += Pipeline(pos = g)
+  }
+}
+

@@ -1,0 +1,25 @@
+TODO
+===========================================================================
+- analysis pass
+  - environment
+  - type check
+- unit test
+- error reporting
+- code generation (vulkan,dummy)
+  - c++ equivalent types (how to statically check offsets+alignment?)
+  - graphics pipeline
+    - create specialization config
+    - what about fixed stage params?
+    - assign (binding,location) to vertex inputs
+    - assign (set,binding) to descriptor sets
+    - generate vertex input attributes & binding info
+    - emit GLSL code and compile into spirv arrays
+
+Demo ideas
+===========================================================================
+- deferred
+- culling (tiled deferred maybe?)
+- many/different lights
+- post effect (bloom, or motion blur)
+- loaded model (Sponza?)
+

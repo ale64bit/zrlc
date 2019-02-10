@@ -1,0 +1,13 @@
+(ocamllex
+ (modules lexer)
+)
+
+(menhir
+ (flags --explain --strict)
+ (modules parser)
+)
+
+(library
+ (name rpdl)
+ (libraries ocamlgraph)
+)

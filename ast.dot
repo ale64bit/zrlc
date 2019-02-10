@@ -1,0 +1,81 @@
+digraph G {
+  ordering=out;
+  0 [fillcolor="#777777", shape=box, label="root", style="dashed", ];
+  1 [fillcolor="#EEEEEE", shape=box, label="pipeline$Pipeline",
+     style="filled", ];
+  2 [fillcolor="#EEEEEE", shape=box, label="func$vertex", style="filled", ];
+  3 [fillcolor="#F4A6AE", shape=box, label="=", style="filled", ];
+  4 [fillcolor="#777777", shape=box, label="lhs", style="dashed", ];
+  5 [fillcolor="#777777", shape=box, label="rhs", style="dashed", ];
+  6 [fillcolor="#F4A6AE", shape=box, label=".", style="filled", ];
+  7 [fillcolor="#F9F0A7", shape=box, label="builtin", style="filled", ];
+  8 [fillcolor="#F9F0A7", shape=box, label="position", style="filled", ];
+  9 [fillcolor="#F4A6AE", shape=box, label="()", style="filled", ];
+  10 [fillcolor="#F9F0A7", shape=box, label="vec4", style="filled", ];
+  11 [fillcolor="#777777", shape=box, label="args", style="dashed", ];
+  12 [fillcolor="#F9F0A7", shape=box, label="pos", style="filled", ];
+  13 [fillcolor="#42D7F4", shape=box, label="1.", style="filled", ];
+  14 [fillcolor="#EEEEEE", shape=box, label="return", style="filled", ];
+  15 [fillcolor="#F9F0A7", shape=box, label="pos", style="filled", ];
+  16 [fillcolor="#EEEEEE", shape=box, label="func$fragment", style="filled", ];
+  17 [fillcolor="#EEEEEE", shape=box, label="return", style="filled", ];
+  18 [fillcolor="#F4A6AE", shape=box, label="()", style="filled", ];
+  19 [fillcolor="#F9F0A7", shape=box, label="vec4", style="filled", ];
+  20 [fillcolor="#777777", shape=box, label="args", style="dashed", ];
+  21 [fillcolor="#F9F0A7", shape=box, label="pos", style="filled", ];
+  22 [fillcolor="#42D7F4", shape=box, label="1.", style="filled", ];
+  23 [fillcolor="#EEEEEE", shape=box, label="renderer$Simple",
+      style="filled", ];
+  24 [fillcolor="#EEEEEE", shape=box, label="for_iter", style="filled", ];
+  25 [fillcolor="#F9F0A7", shape=box, label="g", style="filled", ];
+  26 [fillcolor="#F9F0A7", shape=box, label="geometry", style="filled", ];
+  27 [fillcolor="#F4A6AE", shape=box, label="+=", style="filled", ];
+  28 [fillcolor="#777777", shape=box, label="lhs", style="dashed", ];
+  29 [fillcolor="#777777", shape=box, label="rhs", style="dashed", ];
+  30 [fillcolor="#F9F0A7", shape=box, label="screen", style="filled", ];
+  31 [fillcolor="#F4A6AE", shape=box, label="()", style="filled", ];
+  32 [fillcolor="#F9F0A7", shape=box, label="Pipeline", style="filled", ];
+  33 [fillcolor="#777777", shape=box, label="args", style="dashed", ];
+  34 [fillcolor="#EEEEEE", shape=box, label="named_arg", style="filled", ];
+  35 [fillcolor="#EEEEEE", shape=box, label="pos", style="filled", ];
+  36 [fillcolor="#F9F0A7", shape=box, label="g", style="filled", ];
+  
+  
+  0 -> 1 [color="#001267", ];
+  0 -> 23 [color="#001267", ];
+  1 -> 2 [color="#001267", ];
+  1 -> 16 [color="#001267", ];
+  2 -> 3 [color="#001267", ];
+  2 -> 14 [color="#001267", ];
+  3 -> 4 [color="#001267", ];
+  3 -> 5 [color="#001267", ];
+  4 -> 6 [color="#001267", ];
+  5 -> 9 [color="#001267", ];
+  6 -> 7 [color="#001267", ];
+  6 -> 8 [color="#001267", ];
+  9 -> 10 [color="#001267", ];
+  9 -> 11 [color="#001267", ];
+  11 -> 12 [color="#001267", ];
+  11 -> 13 [color="#001267", ];
+  14 -> 15 [color="#001267", ];
+  16 -> 17 [color="#001267", ];
+  17 -> 18 [color="#001267", ];
+  18 -> 19 [color="#001267", ];
+  18 -> 20 [color="#001267", ];
+  20 -> 21 [color="#001267", ];
+  20 -> 22 [color="#001267", ];
+  23 -> 24 [color="#001267", ];
+  24 -> 25 [color="#001267", ];
+  24 -> 26 [color="#001267", ];
+  24 -> 27 [color="#001267", ];
+  27 -> 28 [color="#001267", ];
+  27 -> 29 [color="#001267", ];
+  28 -> 30 [color="#001267", ];
+  29 -> 31 [color="#001267", ];
+  31 -> 32 [color="#001267", ];
+  31 -> 33 [color="#001267", ];
+  33 -> 34 [color="#001267", ];
+  34 -> 35 [color="#001267", ];
+  34 -> 36 [color="#001267", ];
+  
+  }

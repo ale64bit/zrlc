@@ -1,0 +1,4 @@
+(tests
+ (names lexer_test parser_test)
+ (libraries rpdl camlp5 oUnit))
+
