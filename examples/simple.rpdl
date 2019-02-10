@@ -1,6 +1,6 @@
 pipeline Pipeline(): vec4 {
 
-  def vertex(pos: vec3, nor: vec3): vec3 {
+  def vertex(pos: vec3): vec3 {
     builtin.position = vec4(pos, 1.0)
     return pos
   }

@@ -1,36 +1,22 @@
-pipeline Pipeline(
-  hasColor bool
-) {
-  input In {
-    position vec3 
-    color1   vec3 
-    color2   vec3 
-  }
-  output Out {
-    color vec4
-  }
+pipeline Pipeline[hasColor: bool](): vec4 {
 
-  fn vs() vec3 {
-    builtin.position = vec4(In.position, 1.0)
+  def vertex(pos, col1, col2: vec3): vec3 {
+    builtin.position = vec4(pos, 1.0)
     if hasColor { 
-      return In.color1 
+      return col1 
     } else { 
-      return In.color2
+      return col2
     }
   }
 
-  fn fs() {
-    Out.color = vec4(vs(), 1.0)
+  def fragment(col: vec3): vec4 {
+    return vec4(col, 1.0)
   }
 }
 
-renderer Simple {
-
-  fn main(geometry Group[Pipeline, PerMaterial], screen crt) {
-    for g in geometry {
-      bind g to Pipeline(g)::In
-      screen += Pipeline(g)
-    }
+renderer Simple(geometry: set, screen: crt) {
+  for g in geometry {
+    screen += Pipeline[g](pos = g)
   }
 }
 
