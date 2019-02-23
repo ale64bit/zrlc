@@ -1,11 +1,8 @@
+type const_value = 
+  | Int of int
+  | Float of float
+  | Bool of bool
 
-type scope 
-type env
+type t
 
-val empty : env
-val enter_scope : string -> env -> env
-val current_scope : env -> string
-val exit_scope : env -> env
-val get : string -> env -> Type.t
-val put : string -> Type.t -> env -> env 
-
+val empty : string -> t

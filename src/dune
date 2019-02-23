@@ -3,8 +3,8 @@
 )
 
 (menhir
- (flags --explain --strict)
  (modules parser)
+ (flags --explain --strict --dump)
 )
 
 (library

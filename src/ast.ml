@@ -90,8 +90,10 @@ type renderer_declaration = {
   rd_body: stmt list;
 }
 
-type root =
+type toplevel_elem =
   | ConstDecl of const_declaration
   | TypeDecl of type_declaration
   | PipelineDecl of pipeline_declaration
   | RendererDecl of renderer_declaration
+
+type root = toplevel_elem list

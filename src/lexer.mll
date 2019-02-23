@@ -2,7 +2,7 @@
   open Lexing
   open Parser
 
-  exception SyntaxError of string
+  exception Error of string
 
   let next_line lexbuf =
     let pos = lexbuf.lex_curr_p in
@@ -10,6 +10,9 @@
       { pos with pos_bol = lexbuf.lex_curr_pos;
                  pos_lnum = pos.pos_lnum + 1
       }
+
+  let string_of_position pos =
+    Printf.sprintf "%s:%d:%d" pos.pos_fname pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
 }
 
 let sign = ['-' '+']
@@ -81,7 +84,7 @@ rule read =
   | "/="       { ASSIGN_DIV }
   | "%="       { ASSIGN_MOD }
   | eof        { EOF }
-  | _          { raise (SyntaxError ("unexpected char: " ^ Lexing.lexeme lexbuf)) }
+  | _          { raise (Error ("unexpected char: " ^ Lexing.lexeme lexbuf)) }
 
 and comment = 
   parse

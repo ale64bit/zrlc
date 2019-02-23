@@ -1,6 +1,5 @@
 type t =
   | TypeRef of string
-(*   | Primitive of string *)
   | Record of field list
   | Array of t * const list
   | Function of field list * t list
@@ -22,7 +21,6 @@ let string_of_const = function
 let rec string_of_field f = Printf.sprintf "%s:%s" f.name (string_of_type f.t)
 and string_of_type = function
   | TypeRef s -> "&" ^ s
-(*   | Primitive s -> s *)
   | Record fields -> "{" ^ (String.concat ";" (List.map string_of_field fields)) ^ "}"
   | Array (t, dims) -> 
       let dims = List.map string_of_const dims in

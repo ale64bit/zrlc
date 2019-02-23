@@ -41,14 +41,14 @@
 %left MULT DIV MOD
 (* %right LOGICAL_NOT BITWISE_COMPLEMENT *)
 
-%start <Ast.root list> program
+%start <Ast.root> program
 
 %%
 
 program:
-  | l=root_elem* EOF { l }
+  | l=toplevel_elem* EOF { l }
 
-root_elem:
+toplevel_elem:
   | e=const_def { e }
   | e=type_def { e }
   | e=pipeline_def { e }

@@ -201,7 +201,7 @@ let dot_func s g {Ast.fd_name; fd_type=_; fd_body} =
   List.iter (G.add_edge g node) (List.map (dot_stmt s g) fd_body) ;
   node
 
-let dot_root s g = function
+let dot_toplevel s g = function
   | Ast.ConstDecl {cd_name; cd_value} -> 
       let node = new_node s g (Printf.sprintf "const$%s" cd_name) in
       let rhs_node = dot_expr s g cd_value in
@@ -219,11 +219,12 @@ let dot_root s g = function
       List.iter (G.add_edge g node) (List.map (dot_stmt s g) rd_body) ;
       node
 
-let dot roots ch = 
+let dot ch root = 
+  print_endline "Pass: generating AST dot file" ;
   let ids = Stream.from (fun i -> Some i) in
   let g = G.create () in
-  let root = new_dummy_node ids g "root" in
-  G.add_vertex g root ;
-  List.iter (G.add_edge g root) (List.map (dot_root ids g) roots) ;
+  let root_node = new_node ids g "root" in
+  G.add_vertex g root_node ;
+  List.iter (G.add_edge g root_node) (List.map (dot_toplevel ids g) root) ;
   Dot.output_graph ch g
 

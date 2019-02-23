@@ -1,8 +1,6 @@
-(*
-let may f = function
-  | Ok x -> Ok (f x)
-  | Error e -> Error e
+open Monad
 
+(*
 (*
 - identifier must be available
 - rhs must be a literal expression
@@ -67,4 +65,37 @@ let pass ast =
     | Error e -> Error e
     
 *)
-let pass ast = Ok ast
+
+type error = [
+  | `TypeError of string
+  | `SemanticError of string
+]
+
+let check_const_decl env _ = Ok (env, [])
+let check_type_decl env _ = Ok (env, [])
+let check_pipeline_decl env _ = Ok (env, [])
+let check_renderer_decl env _ = Ok (env, [])
+
+let check_toplevel env = function
+(*   | Ast.ConstDecl {cd_name; cd_value} as cd ->  *)
+  | Ast.ConstDecl cd -> 
+      check_const_decl env cd
+(*   | Ast.TypeDecl {td_name; td_type=_} as td ->  *)
+  | Ast.TypeDecl td -> 
+      check_type_decl env td
+(*   | Ast.PipelineDecl {pd_name; pd_type=_; pd_functions} as pd ->  *)
+  | Ast.PipelineDecl pd -> 
+      check_pipeline_decl env pd
+(*   | Ast.RendererDecl {rd_name; rd_type=_; rd_body} as rd -> *)
+  | Ast.RendererDecl rd ->
+      check_renderer_decl env rd
+
+let check ast = 
+  List.fold_left
+    (fun acc tl ->
+      acc >>= fun (env, tls) ->
+      check_toplevel env tl >>= fun (env, res) ->
+      Ok (env, tls @ res))
+    (Ok (Env.empty "global", []))
+    ast
+

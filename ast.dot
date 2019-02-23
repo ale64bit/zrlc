@@ -1,6 +1,6 @@
 digraph G {
   ordering=out;
-  0 [fillcolor="#777777", shape=box, label="root", style="dashed", ];
+  0 [fillcolor="#EEEEEE", shape=box, label="root", style="filled", ];
   1 [fillcolor="#EEEEEE", shape=box, label="pipeline$Pipeline",
      style="filled", ];
   2 [fillcolor="#EEEEEE", shape=box, label="func$vertex", style="filled", ];

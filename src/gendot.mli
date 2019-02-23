@@ -1,1 +1,1 @@
-val dot : Ast.root list -> out_channel -> unit
+val dot : out_channel -> Ast.root -> unit
