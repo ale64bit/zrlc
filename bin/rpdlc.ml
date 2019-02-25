@@ -17,13 +17,15 @@ let check_file file =
 
 let string_of_error = function
   | `LexerError (pos, msg) ->
-      Printf.sprintf "%s: lexer error: %s" (Lexer.string_of_position pos) msg
+      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
   | `ParserError (pos, msg) ->
-      Printf.sprintf "%s: parser error: %s" (Lexer.string_of_position pos) msg
-  | `SemanticError msg ->
-      Printf.sprintf "???: semantic error: %s" msg
-  | `TypeError msg ->
-      Printf.sprintf "???: type error: %s" msg
+      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
+  | `Redefinition id ->
+      Printf.sprintf "???: error: redefinition of '%s'" id
+  | `DuplicateMember (t, id) ->
+      Printf.sprintf "???: error: %s: duplicate member '%s'" t id
+  | `Unimplemented msg ->
+      Printf.sprintf "???: error: %s" msg
 
 let () =
   let spec = [

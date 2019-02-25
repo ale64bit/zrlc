@@ -20,6 +20,9 @@ let process cfg =
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = cfg.source_file } ;
   Parsing.parse lexbuf >>= fun ast ->
   gen_dot cfg ast >>= fun ast ->
-  Analysis.check ast >>= fun typed_ast ->
-  Ok typed_ast
+  Analysis.check ast >>= fun (env, tls) -> (
+    if cfg.verbose then 
+      print_endline (Env.string_of_env env) ;
+    Ok (env, tls)
+  )
 

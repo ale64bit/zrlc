@@ -1,6 +1,7 @@
 type error = [
-  | `TypeError of string
-  | `SemanticError of string
+  | `Redefinition of string
+  | `DuplicateMember of string * string
+  | `Unimplemented of string
 ]
 
 val check : Ast.root -> (TypedAst.root, [> error]) result

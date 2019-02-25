@@ -1,94 +1,57 @@
 open Monad
 
-(*
-(*
-- identifier must be available
-- rhs must be a literal expression
-*)
-let check_const_def {name; value} env = 
-  match value with 
-  | Ast.BoolLiteral _ -> Ok env
-  | Ast.IntLiteral _ -> Ok env
-  | Ast.FloatLiteral _ -> Ok env
-  | _ -> Error (Printf.sprintf "constant '%s': expected boolean, integer or float literal initializer" name)
-
-(*
-- identifier must be available
-- type must be valid
-  - TypeRef must point to existing types
-  - Record field types must be valid
-  - Array type must be valid
-  - Array dimensions must be integers
-  - Function arg and ret ypes must be valid
-*)
-let check_type_def {name; typ} env = Ok (Env.put name typ env)
-
-(* - identifier must be available *)
-let check_func_def {name; typ=_; stmts=_} env =
-  let env = Env.enter_scope ("func$" ^ name) env in
-  let env = Env.exit_scope env in
-  env
-
-(* - identifier must be available *)
-let check_pipeline_def {name=_; typ=_; funcs} env = 
-  let m = fun env f -> may (check_func_def f) env in
-  List.fold_left m (Ok env) funcs
-
-(* - identifier must be available *)
-let check_renderer_def {name=_; typ=_; stmts=_} env = Ok env
-
-let check_root root env = match root with
-  | Ast.ConstDef {name; value} as const_def ->
-      check_const_def const_def env
-  | Ast.TypeDef {name; typ} as type_def -> 
-      check_type_def type_def env
-  | Ast.PipelineDef {name; typ; funcs} as pipeline_def -> 
-      let env = Env.enter_scope ("pipeline$" ^ id) env in
-      let env = check_pipeline_def pipeline_def env in
-      may Env.exit_scope env 
-  | Ast.RendererDef {name; typ; stmts} as renderer_def -> 
-      let env = Env.enter_scope ("renderer$" ^ name) env in
-      let env = check_renderer_def renderer_def env in
-      may Env.exit_scope env
-
-let rec check_roots roots env = match roots with
-  | [] -> Ok env
-  | hd :: tl -> 
-      match check_root hd env with
-        | Ok env -> check_roots tl env
-        | Error e ->  Error e
-
-let pass ast = 
-  let env = Env.enter_scope "global" Env.empty in
-  match check_roots ast env with
-    | Ok _ -> Ok ast
-    | Error e -> Error e
-    
-*)
+module SS = Set.Make(String)
 
 type error = [
-  | `TypeError of string
-  | `SemanticError of string
+  | `Redefinition of string
+  | `DuplicateMember of string * string
+  | `Unimplemented of string
 ]
 
-let check_const_decl env _ = Ok (env, [])
-let check_type_decl env _ = Ok (env, [])
+let check_const_decl env {Ast.cd_name; cd_value} = 
+  if Env.constant_exists cd_name env then
+    Error (`Redefinition cd_name)
+  else match cd_value with
+    | BoolLiteral b -> 
+        Ok (Env.add_constant cd_name (Env.Bool b) env, [])
+    | IntLiteral i -> 
+        Ok (Env.add_constant cd_name (Env.Int i) env, [])
+    | FloatLiteral f -> 
+        Ok (Env.add_constant cd_name (Env.Float f) env, [])
+    | _ -> 
+        Error (`Unimplemented "constant initializer must be a boolean, integer or float literal")
+
+let check_unique ids errfn = 
+  List.fold_left 
+    (fun seen id ->
+      seen >>= fun seen ->
+        if SS.mem id seen then Error (errfn id)
+        else Ok (SS.add id seen))
+  (Ok SS.empty)
+  ids
+
+let check_type_decl env {Ast.td_name; td_type} = 
+  if Env.type_exists td_name env then
+    Error (`Redefinition td_name)
+  else match td_type with
+    | Record fields ->
+        let errfn = fun id -> `DuplicateMember (td_name, id) in
+        let ids = List.map (fun f -> f.Type.name) fields in
+        check_unique ids errfn >>= fun _ ->
+        (* TODO: check field types are valid *)
+        Ok (Env.add_type td_name td_type env, [])
+    | TypeRef _ | Array _ | Function _ ->
+        let msg = Printf.sprintf "type %s: type declarations should always be Record" td_name in
+        failwith msg
+
 let check_pipeline_decl env _ = Ok (env, [])
 let check_renderer_decl env _ = Ok (env, [])
 
 let check_toplevel env = function
-(*   | Ast.ConstDecl {cd_name; cd_value} as cd ->  *)
-  | Ast.ConstDecl cd -> 
-      check_const_decl env cd
-(*   | Ast.TypeDecl {td_name; td_type=_} as td ->  *)
-  | Ast.TypeDecl td -> 
-      check_type_decl env td
-(*   | Ast.PipelineDecl {pd_name; pd_type=_; pd_functions} as pd ->  *)
-  | Ast.PipelineDecl pd -> 
-      check_pipeline_decl env pd
-(*   | Ast.RendererDecl {rd_name; rd_type=_; rd_body} as rd -> *)
-  | Ast.RendererDecl rd ->
-      check_renderer_decl env rd
+  | Ast.ConstDecl cd -> check_const_decl env cd
+  | Ast.TypeDecl td -> check_type_decl env td
+  | Ast.PipelineDecl pd -> check_pipeline_decl env pd
+  | Ast.RendererDecl rd -> check_renderer_decl env rd
 
 let check ast = 
   List.fold_left

@@ -97,3 +97,79 @@ type toplevel_elem =
   | RendererDecl of renderer_declaration
 
 type root = toplevel_elem list
+
+let string_of_unop = function
+  | UPlus -> "+"
+  | UMinus -> "-"
+  | LogicalNot -> "!"
+  | BitwiseComplement-> "~"
+
+let string_of_binop = function
+  | LogicalOr -> "||"
+  | LogicalXor -> "^^"
+  | LogicalAnd-> "&&"
+  | BitwiseOr -> "|"
+  | BitwiseXor -> "^"
+  | BitwiseAnd-> "&"
+  | Equal -> "=="
+  | NotEqual-> "!="
+  | LessThan -> "<"
+  | GreaterThan -> ">"
+  | LessOrEqual -> "<="
+  | GreaterOrEqual-> ">="
+  | ShiftLeft -> "<<"
+  | ShiftRight-> ">>"
+  | Plus -> "+"
+  | Minus -> "-"
+  | Mult -> "*"
+  | Div -> "/"
+  | Mod -> "%"
+
+let rec string_of_expression = function
+  | Access (l, r) ->
+      Printf.sprintf "Access(%s, %s)" (string_of_expression l) r
+  | Index  (l, r) ->
+      Printf.sprintf "Index(%s, [%s])" 
+        (string_of_expression l) 
+        (String.concat ", " (List.map string_of_expression r))
+  | Call (l, r) ->
+      Printf.sprintf "Call(%s, [%s])" 
+        (string_of_expression l) 
+        (String.concat ", " (List.map string_of_expression r))
+  | NamedArg (l, r) ->
+      Printf.sprintf "NamedArg(%s, %s)" l (string_of_expression r)
+  | BundledArg e ->
+      Printf.sprintf "BundledArg(%s)"
+        (String.concat ", " (List.map string_of_expression e))
+  | BinExpr (l, op, r) ->
+      Printf.sprintf "BinExpr(%s, %s, %s)"
+        (string_of_expression l)
+        (string_of_binop op)
+        (string_of_expression r)
+  | UnExpr (op, r) ->
+      Printf.sprintf "UnExpr(%s, %s)"
+        (string_of_unop op)
+        (string_of_expression r)
+  | BoolLiteral b -> 
+      Printf.sprintf "BoolLiteral(%b)" b
+  | IntLiteral i ->
+      Printf.sprintf "IntLiteral(%d)" i
+  | FloatLiteral f ->
+      Printf.sprintf "FloatLiteral(%f)" f
+  | Id id ->
+      Printf.sprintf "Id(%s)" id
+
+let string_of_constdecl {cd_name; cd_value} = 
+  Printf.sprintf "ConstDecl{name=%s; value=%s}" cd_name (string_of_expression cd_value)
+
+let string_of_typedecl {td_name; td_type} =
+  Printf.sprintf "TypeDecl{name=%s; type=%s}" td_name (Type.string_of_type td_type)
+
+let string_of_toplevel = function
+  | ConstDecl cd -> string_of_constdecl cd
+  | TypeDecl td -> string_of_typedecl td
+  | PipelineDecl _ -> "TODO(PipelineDecl)"
+  | RendererDecl _ -> "TODO(RendererDecl)"
+
+let string_of_ast r =
+  "{" ^ (String.concat ", " (List.map string_of_toplevel r)) ^ "}"

@@ -55,7 +55,7 @@ toplevel_elem:
   | e=renderer_def { e }
 
 const_def:
-  | CONST id=ID ASSIGN e=constant { Ast.ConstDecl {cd_name=id; cd_value=e} }
+  | CONST id=ID ASSIGN e=expr { Ast.ConstDecl {cd_name=id; cd_value=e} }
 
 type_def:
   | TYPE id=ID LBRACE fields=flatten(field_decl+) RBRACE 
