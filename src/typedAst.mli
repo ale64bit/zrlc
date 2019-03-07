@@ -28,10 +28,4 @@ type toplevel_elem =
 
 type root = Env.t * toplevel_elem list
 
-let string_of_toplevel = function
-  | PipelineDecl _ -> "TODO(PipelineDecl)"
-  | RendererDecl _ -> "TODO(RendererDecl)"
-
-let string_of_ast (_, tls) =
-  "{" ^ (String.concat ", " (List.map string_of_toplevel tls)) ^ "}"
-
+val string_of_ast : root -> string

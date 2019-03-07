@@ -2,13 +2,13 @@ open OUnit2
 open Rpdl
 
 let ast_printer = function
-  | Ok ast -> Ast.string_of_ast ast
-  | Error _ -> "Error(TODO)"
+  | Ok ast -> "Ok (" ^ (Ast.string_of_ast ast) ^ ")"
+  | Error e -> "Error (" ^ (Error.debug_string_of_error e) ^ ")"
 
 let parsing_test src want _ =
   let lexbuf = Lexing.from_string src in
   let got = Parsing.parse lexbuf in
-  assert_equal ~printer:ast_printer got (Ok want)
+  assert_equal ~printer:ast_printer (Ok want) got
 
 let suite = "Test Parsing" >::: [
 

@@ -10,6 +10,8 @@ type t = {
   types: Type.t SymbolTable.t;
   constants: const_value SymbolTable.t;
   vars: Type.t SymbolTable.t;
+  pipelines: Type.t SymbolTable.t;
+  functions: Type.t SymbolTable.t;
 }
 
 let empty id = 
@@ -18,11 +20,17 @@ let empty id =
     types = SymbolTable.empty;
     constants = SymbolTable.empty;
     vars = SymbolTable.empty;
+    pipelines = SymbolTable.empty;
+    functions = SymbolTable.empty;
   }
 
 let constant_exists name env = SymbolTable.mem name env.constants
 
 let type_exists name env = SymbolTable.mem name env.types
+
+let pipeline_exists name env = SymbolTable.mem name env.pipelines
+
+let function_exists name env = SymbolTable.mem name env.functions
 
 let add_constant name value env = 
   { env with constants = SymbolTable.add name value env.constants }
@@ -30,6 +38,13 @@ let add_constant name value env =
 let add_type name typ env = 
   { env with types = SymbolTable.add name typ env.types }
 
+let add_pipeline name typ env = 
+  { env with pipelines = SymbolTable.add name typ env.pipelines }
+
+let add_function name typ env = 
+  { env with functions = SymbolTable.add name typ env.functions }
+
+let get_constant name env = SymbolTable.find_opt name env.constants
 
 let string_of_types m =
   let elems = List.map 

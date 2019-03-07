@@ -15,18 +15,6 @@ let check_file file =
     exit 1
   )
 
-let string_of_error = function
-  | `LexerError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
-  | `ParserError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
-  | `Redefinition id ->
-      Printf.sprintf "???: error: redefinition of '%s'" id
-  | `DuplicateMember (t, id) ->
-      Printf.sprintf "???: error: %s: duplicate member '%s'" t id
-  | `Unimplemented msg ->
-      Printf.sprintf "???: error: %s" msg
-
 let () =
   let spec = [
     ("-v", Arg.Set verbose, "Enable verbose mode");
@@ -51,6 +39,6 @@ let () =
     | Ok _ ->
         print_endline "====== build succeeded ======" ;
     | Error err -> 
-        print_endline (string_of_error err) ;
+        print_endline (Error.string_of_error err) ;
         print_endline "====== build failed ======" ;
         exit 1
