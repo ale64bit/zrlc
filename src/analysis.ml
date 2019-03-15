@@ -44,6 +44,8 @@ let check_array_dim env = function
   | Type.OfFloat _ | Type.OfBool _ ->
       Error (`NonIntegerArraySize)
 
+(* Checks the given type against the environment. For function types, it returns
+ * and updated environment with a var for each function parameter. *)
 let rec check_type env = function
   | Type.TypeRef name ->
       if Env.type_exists name env then Ok env
@@ -66,7 +68,10 @@ let rec check_type env = function
       let ids = List.map (fun f -> f.Type.name) args in
       check_unique ids errfn >>= fun _ ->
       (List.fold_left
-        (fun env f -> env >>= fun env -> check_type env f.Type.t)
+        (fun env f -> 
+          env >>= fun env -> 
+          check_type env f.Type.t >>= fun env ->
+          (Ok (Env.add_var f.name f.t env)))
         (Ok env)
         args) >>= fun env ->
       (List.fold_left
@@ -98,29 +103,31 @@ let check_function_decl env {Ast.fd_name; fd_type; _} =
     fd_body = [];
   } in
   Ok (env, tmp)
+
+let check_pipeline_functions env functions =
+  let errfn = fun id -> `Redefinition id in
+  let ids = List.map (fun f -> f.Ast.fd_name) functions in
+  check_unique ids errfn >>= fun _ ->
+  List.fold_left
+    (fun acc fdecl ->
+      acc >>= fun (env, funcs) -> 
+      check_function_decl env fdecl >>= fun f ->
+      Ok (Env.add_function fdecl.fd_name fdecl.fd_type env, f :: funcs))
+    (Ok (env, []))
+    functions
         
 let check_pipeline_decl env {Ast.pd_name; pd_type; pd_functions} = 
   if Env.pipeline_exists pd_name env then
     Error (`Redefinition pd_name)
   else
-    let errfn = fun id -> `Redefinition id in
-    let ids = List.map (fun f -> f.Ast.fd_name) pd_functions in
-    check_unique ids errfn >>= fun _ ->
+    Ok (Env.add_pipeline pd_name pd_type env) >>= fun env ->
     check_type env pd_type >>= fun env ->
-    Ok (Env.add_pipeline pd_name pd_type env) >>= fun genv ->
-    (List.fold_left
-      (fun acc fdecl ->
-        acc >>= fun (env, funcs) -> 
-        check_function_decl env fdecl >>= fun f ->
-        Ok (Env.add_function fdecl.fd_name fdecl.fd_type env, f :: funcs))
-      (Ok (genv, []))
-      pd_functions
-    ) >>= fun (penv, funcs) ->
+    check_pipeline_functions env pd_functions >>= fun (penv, funcs) ->
     let pd = {
       TypedAst.pd_name = pd_name;
       pd_type = pd_type;
       pd_functions = List.rev funcs; 
-    } in Ok (genv, [TypedAst.PipelineDecl (penv, pd)])
+    } in Ok (env, [TypedAst.PipelineDecl (penv, pd)])
 
 (* TODO: implement *)
 let check_renderer_decl env _ = Ok (env, [])
@@ -131,113 +138,12 @@ let check_toplevel env = function
   | Ast.PipelineDecl pd -> check_pipeline_decl env pd
   | Ast.RendererDecl rd -> check_renderer_decl env rd
 
-let permutations l =
-  let rec aux left right = function
-    | [] -> [left]
-    | hd :: tl ->
-        let r = aux (hd :: left) [] (right @ tl) in
-        if tl <> [] then r @ aux left (hd :: right) tl
-        else r in
-  aux [] [] l 
-
-let rec combinations k l =
-  if k <= 0 then [ [] ]
-  else match l with
-    | [] -> []
-    | hd :: tl ->
-        let with_h = List.map (fun l -> hd :: l) (combinations (k-1) tl) in
-        let without_h = combinations k tl in
-        with_h @ without_h
-
-let generate_fields_for_swizzle len swizzle =
-  let sizes = List.init len ((+) 1) in
-  (List.concat 
-    (List.map 
-      (fun k ->
-        let all_k_swizzles = List.map permutations (combinations k swizzle) in
-        List.concat all_k_swizzles)
-      sizes))
-
-let generate_fields size ptname tprefix =
-  let coord_base = (Stream.of_string "xyzw") in
-  let color_base = (Stream.of_string "rgba") in
-  let textr_base = (Stream.of_string "stpq") in
-  let coord = List.init size (fun _ -> Stream.next coord_base) in 
-  let color = List.init size (fun _ -> Stream.next color_base) in 
-  let textr = List.init size (fun _ -> Stream.next textr_base) in 
-  let all = [coord; color; textr] in
-  let swizzles = List.concat (List.map (generate_fields_for_swizzle size) all) in
-  let swizzles = List.map (fun sw -> String.concat "" (List.map Char.escaped sw)) swizzles in
-  let swizzles = List.sort Pervasives.compare swizzles in
-  List.map 
-    (fun name -> 
-      let sz = String.length name in
-      let t = if sz = 1 then Type.TypeRef ptname 
-        else Type.TypeRef (Printf.sprintf "%s%d" tprefix sz) in
-      {Type.name=name; t=t})
-    swizzles
-
-let global_env = 
-  let builtins = [
-    (* Basic types *)
-    ("bool", (Type.Primitive Bool));
-    ("int", (Type.Primitive Int));
-    ("uint", (Type.Primitive UInt));
-    ("float", (Type.Primitive Float));
-    ("double", (Type.Primitive Double));
-    (* Vector types *)
-    ("bvec2", (Type.Record (generate_fields 2 "bool" "bvec")));
-    ("bvec3", (Type.Record (generate_fields 3 "bool" "bvec")));
-    ("bvec4", (Type.Record (generate_fields 4 "bool" "bvec")));
-    ("ivec2", (Type.Record (generate_fields 2 "int" "ivec")));
-    ("ivec3", (Type.Record (generate_fields 3 "int" "ivec")));
-    ("ivec4", (Type.Record (generate_fields 4 "int" "ivec")));
-    ("uvec2", (Type.Record (generate_fields 2 "uint" "uvec")));
-    ("uvec3", (Type.Record (generate_fields 3 "uint" "uvec")));
-    ("uvec4", (Type.Record (generate_fields 4 "uint" "uvec")));
-    ("vec2", (Type.Record (generate_fields 2 "float" "vec")));
-    ("vec3", (Type.Record (generate_fields 3 "float" "vec")));
-    ("vec4", (Type.Record (generate_fields 4 "float" "vec")));
-    ("dvec2", (Type.Record (generate_fields 2 "double" "dvec")));
-    ("dvec3", (Type.Record (generate_fields 3 "double" "dvec")));
-    ("dvec4", (Type.Record (generate_fields 4 "double" "dvec")));
-    (* Matrix types *)
-    ("mat2", (Type.Array (Type.TypeRef "float", [OfInt 2; OfInt 2])));
-    ("mat3", (Type.Array (Type.TypeRef "float", [OfInt 3; OfInt 3])));
-    ("mat4", (Type.Array (Type.TypeRef "float", [OfInt 4; OfInt 4])));
-    ("mat2x2", (Type.Array (Type.TypeRef "float", [OfInt 2; OfInt 2])));
-    ("mat2x3", (Type.Array (Type.TypeRef "float", [OfInt 2; OfInt 3])));
-    ("mat2x4", (Type.Array (Type.TypeRef "float", [OfInt 2; OfInt 4])));
-    ("mat3x2", (Type.Array (Type.TypeRef "float", [OfInt 3; OfInt 2])));
-    ("mat3x3", (Type.Array (Type.TypeRef "float", [OfInt 3; OfInt 3])));
-    ("mat3x4", (Type.Array (Type.TypeRef "float", [OfInt 3; OfInt 4])));
-    ("mat4x2", (Type.Array (Type.TypeRef "float", [OfInt 4; OfInt 2])));
-    ("mat4x3", (Type.Array (Type.TypeRef "float", [OfInt 4; OfInt 3])));
-    ("mat4x4", (Type.Array (Type.TypeRef "float", [OfInt 4; OfInt 4])));
-    ("dmat2", (Type.Array (Type.TypeRef "double", [OfInt 2; OfInt 2])));
-    ("dmat3", (Type.Array (Type.TypeRef "double", [OfInt 3; OfInt 3])));
-    ("dmat4", (Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 4])));
-    ("dmat2x2", (Type.Array (Type.TypeRef "double", [OfInt 2; OfInt 2])));
-    ("dmat2x3", (Type.Array (Type.TypeRef "double", [OfInt 2; OfInt 3])));
-    ("dmat2x4", (Type.Array (Type.TypeRef "double", [OfInt 2; OfInt 4])));
-    ("dmat3x2", (Type.Array (Type.TypeRef "double", [OfInt 3; OfInt 2])));
-    ("dmat3x3", (Type.Array (Type.TypeRef "double", [OfInt 3; OfInt 3])));
-    ("dmat3x4", (Type.Array (Type.TypeRef "double", [OfInt 3; OfInt 4])));
-    ("dmat4x2", (Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 2])));
-    ("dmat4x3", (Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 3])));
-    ("dmat4x4", (Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 4])));
-  ] in
-  List.fold_left 
-    (fun env (name, t) -> Env.add_type name t env) 
-    (Env.empty "global")
-    builtins
-
 let check ast = 
   List.fold_left
     (fun acc tl ->
       acc >>= fun (env, tls) ->
       check_toplevel env tl >>= fun (env, res) ->
       Ok (env, tls @ res))
-    (Ok (global_env, []))
+    (Ok (Env.global, []))
     ast
 

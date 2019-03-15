@@ -9,4 +9,3 @@ type error = [
 ]
 
 val check : Ast.root -> (TypedAst.root, [> error]) result
-val global_env : Env.t

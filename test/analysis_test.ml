@@ -18,23 +18,38 @@ let analysis_error_test src want _ = analysis_test src (Error want)
 let suite = "Test Analysis" >::: [
   "test_empty" >:: analysis_ok_test 
     "" 
-    (Analysis.global_env, []);
+    (Env.global, []);
 
   "test_const_bool_true" >:: analysis_ok_test 
     "const b = true" 
-    (Env.add_constant "b" (Env.Bool true) (Analysis.global_env), []);
+    (Env.add_constant "b" (Env.Bool true) (Env.global), []);
 
   "test_const_bool_false" >:: analysis_ok_test 
     "const b = false" 
-    (Env.add_constant "b" (Env.Bool false) (Analysis.global_env), []);
+    (Env.add_constant "b" (Env.Bool false) (Env.global), []);
 
   "test_const_int" >:: analysis_ok_test 
     "const i = 42" 
-    (Env.add_constant "i" (Env.Int 42) (Analysis.global_env), []);
+    (Env.add_constant "i" (Env.Int 42) (Env.global), []);
 
   "test_const_float" >:: analysis_ok_test 
     "const pi = 3.14" 
-    (Env.add_constant "pi" (Env.Float 3.14) (Analysis.global_env), []);
+    (Env.add_constant "pi" (Env.Float 3.14) (Env.global), []);
+
+  "test_empty_pipeline" >:: analysis_ok_test
+    "pipeline P(x: int): float {}"
+    (Env.global, [
+      TypedAst.PipelineDecl (
+        Env.global,
+        {
+          pd_name = "P";
+          pd_type = Type.Function (
+            [{name = "x"; t = Type.TypeRef "int"}], 
+            [Type.TypeRef "float"]);
+          pd_functions = [];
+        }
+      );
+    ]);
 
   "test_const_redefined" >:: analysis_error_test 
     "const i = 1
