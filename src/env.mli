@@ -17,5 +17,8 @@ val add_type : string -> Type.t -> t -> t
 val add_pipeline : string -> Type.t -> t -> t
 val add_function : string -> Type.t -> t -> t
 val add_var : string -> Type.t -> t -> t
+val enter_pipeline_scope : string -> t -> t
+val enter_renderer_scope : string -> t -> t
+val enter_function_scope : string -> t -> t
 val get_constant : string -> t -> const_value option
 val string_of_env : t -> string

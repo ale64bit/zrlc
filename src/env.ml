@@ -51,6 +51,15 @@ let add_var name typ env =
 
 let get_constant name env = SymbolTable.find_opt name env.constants
 
+let enter_pipeline_scope id env = 
+  { env with id = Printf.sprintf "%s::p$%s" env.id id }
+
+let enter_renderer_scope id env = 
+  { env with id = Printf.sprintf "%s::r$%s" env.id id }
+
+let enter_function_scope id env = 
+  { env with id = Printf.sprintf "%s::f$%s" env.id id }
+
 let permutations l =
   let rec aux left right = function
     | [] -> [left]

@@ -120,14 +120,16 @@ let check_pipeline_decl env {Ast.pd_name; pd_type; pd_functions} =
   if Env.pipeline_exists pd_name env then
     Error (`Redefinition pd_name)
   else
-    Ok (Env.add_pipeline pd_name pd_type env) >>= fun env ->
+    Ok (Env.add_pipeline pd_name pd_type env) >>= fun genv ->
     check_type env pd_type >>= fun env ->
     check_pipeline_functions env pd_functions >>= fun (penv, funcs) ->
     let pd = {
       TypedAst.pd_name = pd_name;
       pd_type = pd_type;
       pd_functions = List.rev funcs; 
-    } in Ok (env, [TypedAst.PipelineDecl (penv, pd)])
+    } in Ok (genv, [
+      TypedAst.PipelineDecl (Env.enter_pipeline_scope pd_name penv, pd)
+    ])
 
 (* TODO: implement *)
 let check_renderer_decl env _ = Ok (env, [])

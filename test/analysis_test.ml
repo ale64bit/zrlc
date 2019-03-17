@@ -38,18 +38,11 @@ let suite = "Test Analysis" >::: [
 
   "test_empty_pipeline" >:: analysis_ok_test
     "pipeline P(x: int): float {}"
-    (Env.global, [
-      TypedAst.PipelineDecl (
-        Env.global,
-        {
-          pd_name = "P";
-          pd_type = Type.Function (
-            [{name = "x"; t = Type.TypeRef "int"}], 
-            [Type.TypeRef "float"]);
-          pd_functions = [];
-        }
-      );
-    ]);
+    (let pt = Type.Function ([{name="x"; t=TypeRef "int"}], [TypeRef "float"]) in
+    ((Env.add_pipeline "P" pt Env.global), 
+     [TypedAst.PipelineDecl
+       (Env.add_var "x" (TypeRef "int") (Env.enter_pipeline_scope "P" Env.global),
+       {pd_name = "P"; pd_type = pt; pd_functions = []})]));
 
   "test_const_redefined" >:: analysis_error_test 
     "const i = 1
