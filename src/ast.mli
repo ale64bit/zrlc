@@ -1,4 +1,26 @@
+(* Expressions *)
+
+type unop =
+  | UPlus | UMinus | LogicalNot | BitwiseComplement
+
+type binop =
+  | LogicalOr | LogicalXor | LogicalAnd
+  | BitwiseOr | BitwiseXor | BitwiseAnd
+  | Equal | NotEqual
+  | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual
+  | ShiftLeft | ShiftRight
+  | Plus | Minus | Mult | Div | Mod
+
+type assignop =
+  | Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv | AssignMod
+
+type 'a located =
+  { loc: Lexing.position * Lexing.position; value: 'a }
+
 type expression =
+  raw_expression located
+
+and raw_expression =
   | Access of expression * string
   | Index of expression * expression list
   | Call of expression * expression list
@@ -11,19 +33,7 @@ type expression =
   | FloatLiteral of float
   | Id of string
 
-and unop =
-  | UPlus | UMinus | LogicalNot | BitwiseComplement
-
-and binop =
-  | LogicalOr | LogicalXor | LogicalAnd
-  | BitwiseOr | BitwiseXor | BitwiseAnd
-  | Equal | NotEqual
-  | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual
-  | ShiftLeft | ShiftRight
-  | Plus | Minus | Mult | Div | Mod
-
-and assignop =
-  | Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv | AssignMod
+(* Statements *)
 
 type var_declaration = {
   var_ids: string list;
@@ -55,6 +65,9 @@ and for_range_stmt = {
 }
 
 and stmt =
+  raw_stmt located
+
+and raw_stmt =
   | Var of var_declaration
   | Assignment of assignment
   | If of if_stmt

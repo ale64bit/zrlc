@@ -42,51 +42,50 @@
 (* %right LOGICAL_NOT BITWISE_COMPLEMENT *)
 
 %start <Ast.root> program
+(* %{ open Ast %} *)
 
 %%
 
-program:
-  | l=toplevel_elem* EOF { l }
+let program :=
+  ~ = toplevel_elem*; EOF; <>
 
-toplevel_elem:
-  | e=const_def { e }
-  | e=type_def { e }
-  | e=pipeline_def { e }
-  | e=renderer_def { e }
+let toplevel_elem == 
+  | const_def
+  | type_def
+  | pipeline_def
+  | renderer_def
 
-const_def:
-  | CONST id=ID ASSIGN e=expr { Ast.ConstDecl {cd_name=id; cd_value=e} }
+let const_def :=
+  CONST; id = ID; ASSIGN; value = expr; 
+    { Ast.ConstDecl {cd_name = id; cd_value = value} }
 
-type_def:
-  | TYPE id=ID LBRACE fields=flatten(field_decl+) RBRACE 
+let type_def :=
+  TYPE; id = ID; LBRACE; fields=flatten(field_decl+); RBRACE;
     { Ast.TypeDecl {td_name=id; td_type=(Type.Record fields)} }
 
-field_decl:
-  | ids=separated_list(COMMA, ID) COLON t=type_id 
+let field_decl :=
+  ids = separated_list(COMMA, ID); COLON; t=type_id;
     { List.map (fun id -> {Type.name=id; Type.t=t}) ids }
 
-type_id:
-  | id=ID 
-    { Type.TypeRef id }
-  | LBRACKET id=ID COMMA dims=separated_list(COMMA, array_dimension) RBRACKET 
+let type_id :=
+  | ~ = ID; <Type.TypeRef>
+  | LBRACKET; id = ID; COMMA; dims = separated_list(COMMA, array_dimension); RBRACKET; 
     { Type.Array (Type.TypeRef id, dims) }
 
-array_dimension:
-  | i=INT 
-    { OfInt i }
-  | id=ID 
-    { OfName id }
+let array_dimension ==
+  | ~ = INT; <Type.OfInt>
+  | ~ = ID; <Type.OfName>
 
-pipeline_def:
-  | PIPELINE id=ID t=function_signature LBRACE fs=func* RBRACE
-    { Ast.PipelineDecl {pd_name=id; pd_type=t; pd_functions=fs} }
+let pipeline_def :=
+  PIPELINE; id = ID; fsign = function_signature; LBRACE; funcs = func*; RBRACE; 
+    { Ast.PipelineDecl {pd_name = id; pd_type = fsign; pd_functions = funcs} }
 
-renderer_def:
-  | RENDERER id=ID t=function_signature LBRACE stmts=stmt* RBRACE
-    { Ast.RendererDecl {rd_name=id; rd_type=t; rd_body=stmts} }
+let renderer_def :=
+  RENDERER; id = ID; fsign = function_signature; LBRACE; stmts = stmt*; RBRACE; 
+    { Ast.RendererDecl {rd_name = id; rd_type = fsign; rd_body = stmts} }
 
-function_signature:
-  | LPAREN args=function_args RPAREN ret=function_ret_args?
+let function_signature :=
+  LPAREN; args = function_args; RPAREN; ret = function_ret_args?;
     { 
       let v = match ret with
         | Some tl -> tl
@@ -94,75 +93,72 @@ function_signature:
       Type.Function (args, v)
     }
 
-function_args:
-  | args=flatten(separated_list(COMMA, field_decl)) 
-    { args }
+let function_args ==
+  ~ = flatten(separated_list(COMMA, field_decl)); <>
 
-function_ret_args:
-  | COLON t=type_id 
-    { [t] } 
-  | COLON LPAREN tl=separated_nonempty_list(COMMA, type_id) RPAREN 
-    { tl }
+let function_ret_args :=
+  | COLON; t=type_id; { [t] }
+  | COLON; LPAREN; ~ = separated_nonempty_list(COMMA, type_id); RPAREN; <>
 
-func:
-  | DEF id=ID t=function_signature LBRACE stmts=stmt* RBRACE 
-    { {fd_name=id; fd_type=t; fd_body=stmts} }
+let func :=
+  DEF; id = ID; fsign = function_signature; LBRACE; body = stmt*; RBRACE; 
+    { {fd_name = id; fd_type = fsign; fd_body = body} }
 
-stmt:
-  | VAR ids=separated_nonempty_list(COMMA, ID) ASSIGN rhs=separated_nonempty_list(COMMA, expr) 
+let stmt :=
+  located(
+  | VAR; ids=separated_nonempty_list(COMMA, ID); ASSIGN; rhs=separated_nonempty_list(COMMA, expr);
     { Ast.Var {var_ids=ids; var_values=rhs} }
-  | lhs=separated_nonempty_list(COMMA, lvalue) op=assign_op rhs=separated_nonempty_list(COMMA, expr) 
+  | lhs=separated_nonempty_list(COMMA, lvalue); op=assign_op; rhs=separated_nonempty_list(COMMA, expr);
     { Ast.Assignment {asg_op=op; asg_lvalues=lhs; asg_rvalues=rhs} }
-  | IF cond=expr LBRACE stmts=stmt* RBRACE 
+  | IF; cond=expr; LBRACE; stmts=stmt*; RBRACE;
     { Ast.If {if_cond=cond; if_body=stmts} }
-  | FOR id=ID IN it=expr LBRACE stmts=stmt* RBRACE 
+  | FOR; id=ID; IN; it=expr; LBRACE; stmts=stmt*; RBRACE;
     { Ast.ForIter {foriter_id=id; foriter_it=it; foriter_body=stmts} }  
-  | FOR id=ID ASSIGN lo=expr TO hi=expr LBRACE stmts=stmt* RBRACE 
+  | FOR; id=ID; ASSIGN; lo=expr; TO; hi=expr; LBRACE; stmts=stmt*; RBRACE;
     { Ast.ForRange {forrange_id=id; forrange_from=lo; forrange_to=hi; forrange_body=stmts} }
-  | RETURN e=separated_nonempty_list(COMMA, expr) 
-    { Ast.Return e }
+  | RETURN; ~ = separated_nonempty_list(COMMA, expr); <Ast.Return>
+  )
 
-expr:
-  | lhs=expr op=binary_op rhs=expr 
-    { Ast.BinExpr (lhs, op, rhs) }
-  | e=unary_expr 
-    { e }
+let expr :=
+  | unary_expr 
+  | located(
+      lhs = expr; op = binary_op; rhs = expr; { Ast.BinExpr (lhs, op, rhs) }
+    )
 
-lvalue:
-  | e=lvalue DOT id=ID 
-    { Ast.Access (e, id) }
-  | e=lvalue LBRACKET args=separated_nonempty_list(COMMA, expr) RBRACKET 
-    { Ast.Index (e, args) }
-  | id=ID 
-    { Ast.Id id }
+let lvalue :=
+  located(
+  | ~ = lvalue; DOT; ~ = ID; <Ast.Access>
+  | ~ = lvalue; LBRACKET; ~ = separated_nonempty_list(COMMA, expr); RBRACKET; <Ast.Index>
+  | ~ = ID; <Ast.Id>
+  )
 
-unary_expr:
-  | op=unary_op e=unary_expr 
-    { Ast.UnExpr (op, e) }
-  | e=primary_expr 
-    { e }
+let unary_expr :=
+  | primary_expr
+  | located(
+      ~ = unary_op; ~ = unary_expr; <Ast.UnExpr>
+    )
 
-arg_expr:
-  | e=expr
-    { e }
-  | id=ID ASSIGN e=expr
-    { Ast.NamedArg (id, e) }
-  | id=ID ASSIGN LBRACE e=separated_nonempty_list(COMMA, expr) RBRACE
-    { Ast.NamedArg (id, Ast.BundledArg e) }
+let bundled_arg ==
+  located(
+    LBRACE; ~ = separated_nonempty_list(COMMA, expr); RBRACE; <Ast.BundledArg>
+  )
 
-primary_expr:
-  | LPAREN e=expr RPAREN
-    { e }
-  | e=primary_expr DOT id=ID 
-    { Ast.Access (e, id) }
-  | e=primary_expr LBRACKET args=separated_nonempty_list(COMMA, expr) RBRACKET 
-    { Ast.Index (e, args) }
-  | e=primary_expr LPAREN args=separated_list(COMMA, arg_expr) RPAREN 
-    { Ast.Call (e, args) }
-  | id=ID 
-    { Ast.Id id }
-  | c=constant 
-    { c }
+let arg_expr :=
+  | expr
+  | located(
+    | ~ = ID; ASSIGN; ~ = expr; <Ast.NamedArg>
+    | ~ = ID; ASSIGN; ~ = bundled_arg; <Ast.NamedArg>
+    )
+
+let primary_expr :=
+  | LPAREN; ~ = expr; RPAREN; <>
+  | constant
+  | located(
+    | ~ = primary_expr; DOT; ~ = ID; <Ast.Access>
+    | ~ = primary_expr; LBRACKET; ~ = separated_nonempty_list(COMMA, expr); RBRACKET; <Ast.Index>
+    | ~ = primary_expr; LPAREN; ~ = separated_list(COMMA, arg_expr); RPAREN; <Ast.Call>
+    | ~ = ID; <Ast.Id>
+    )
 
 let unary_op == 
   | PLUS;               { Ast.UPlus }
@@ -199,7 +195,12 @@ let assign_op ==
   | ASSIGN_DIV;   { Ast.AssignDiv }
   | ASSIGN_MOD;   { Ast.AssignMod }
 
-let constant ==
-  | b=BOOL;  { Ast.BoolLiteral b }
-  | i=INT;   { Ast.IntLiteral i }
-  | f=FLOAT; { Ast.FloatLiteral f }
+let constant :=
+  located(
+  | ~ = BOOL;  <Ast.BoolLiteral>
+  | ~ = INT;   <Ast.IntLiteral>
+  | ~ = FLOAT; <Ast.FloatLiteral>
+  )
+
+let located(x) ==
+  ~ = x; { { Ast.loc = $loc; value = x } }

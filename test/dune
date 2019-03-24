@@ -1,4 +1,4 @@
 (tests
-  (names parsing_test analysis_test)
+  (names analysis_test)
   (libraries rpdl oUnit)
 )

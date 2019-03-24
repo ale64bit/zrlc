@@ -18,7 +18,6 @@ let string_of_error = function
   | `UndeclaredIdentifier id ->
       Printf.sprintf "???: error: undeclared identifier '%s'" id
 
-
 let debug_string_of_error = function
   | `LexerError (pos, msg) ->
       Printf.sprintf "LexerError (pos=%s, msg=%s)" (Lexer.string_of_position pos) msg

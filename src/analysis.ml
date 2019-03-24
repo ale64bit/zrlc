@@ -15,12 +15,12 @@ type error = [
 let check_const_decl env {Ast.cd_name; cd_value} = 
   if Env.constant_exists cd_name env then
     Error (`Redefinition cd_name)
-  else match cd_value with
-    | BoolLiteral b -> 
+  else match cd_value.value with
+    | Ast.BoolLiteral b -> 
         Ok (Env.add_constant cd_name (Env.Bool b) env, [])
-    | IntLiteral i -> 
+    | Ast.IntLiteral i -> 
         Ok (Env.add_constant cd_name (Env.Int i) env, [])
-    | FloatLiteral f -> 
+    | Ast.FloatLiteral f -> 
         Ok (Env.add_constant cd_name (Env.Float f) env, [])
     | _ -> 
         Error (`Unimplemented "constant initializer must be a boolean, integer or float literal")

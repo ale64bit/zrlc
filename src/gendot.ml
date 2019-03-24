@@ -95,7 +95,9 @@ let new_op_node s g label = new_generic_node s g [
   `Fillcolor 0x00F4A6AE;
 ]
 
-let rec dot_expr s g = function
+let rec dot_expr s g e = dot_raw_expr s g e.Ast.value
+
+and dot_raw_expr s g = function
   | Ast.Access (lhs, rhs) ->
     let access_node = new_op_node s g "." in
     let lhs_node = dot_expr s g lhs in
@@ -148,7 +150,9 @@ let rec dot_expr s g = function
   | Ast.FloatLiteral f -> new_literal_node s g (string_of_float f)
   | Ast.Id id -> new_ident_node s g id
 
-let rec dot_stmt s g = function
+let rec dot_stmt s g e = dot_raw_stmt s g e.Ast.value
+
+and dot_raw_stmt s g = function
   | Ast.Var {var_ids; var_values} ->
     let var_node = new_node s g "var" in
     let id_node = new_dummy_node s g "ids" in
