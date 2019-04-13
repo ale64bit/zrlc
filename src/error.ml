@@ -1,8 +1,8 @@
 let string_of_error = function
   | `LexerError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
+      Printf.sprintf "%s: error: %s" (Located.string_of_position pos) msg
   | `ParserError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Lexer.string_of_position pos) msg
+      Printf.sprintf "%s: error: %s" (Located.string_of_position pos) msg
   | `Redefinition id ->
       Printf.sprintf "???: error: redefinition of '%s'" id
   | `DuplicateMember (t, id) ->
@@ -20,9 +20,9 @@ let string_of_error = function
 
 let debug_string_of_error = function
   | `LexerError (pos, msg) ->
-      Printf.sprintf "LexerError (pos=%s, msg=%s)" (Lexer.string_of_position pos) msg
+      Printf.sprintf "LexerError (pos=%s, msg=%s)" (Located.string_of_position pos) msg
   | `ParserError (pos, msg) ->
-      Printf.sprintf "ParserError (pos=%s, msg=%s)" (Lexer.string_of_position pos) msg
+      Printf.sprintf "ParserError (pos=%s, msg=%s)" (Located.string_of_position pos) msg
   | `Redefinition id ->
       Printf.sprintf "Redefinition id=%s" id
   | `DuplicateMember (t, id) ->

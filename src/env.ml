@@ -7,11 +7,11 @@ type const_value =
 
 type t = {
   id: string;
-  types: Type.t SymbolTable.t;
-  constants: const_value SymbolTable.t;
-  vars: Type.t SymbolTable.t;
-  pipelines: Type.t SymbolTable.t;
-  functions: Type.t SymbolTable.t;
+  types: (Type.t Located.t) SymbolTable.t;
+  constants: (const_value Located.t) SymbolTable.t;
+  vars: (Type.t Located.t) SymbolTable.t;
+  pipelines: (Type.t Located.t) SymbolTable.t;
+  functions: (Type.t Located.t) SymbolTable.t;
 }
 
 let empty id = 
@@ -107,6 +107,9 @@ let generate_fields size ptname tprefix =
     swizzles
 
 let global = 
+  let builtin_pos = 
+    {Lexing.pos_fname = "builtin"; pos_lnum = 0; pos_cnum = 0; pos_bol = 0} in
+  let builtin_loc = (builtin_pos, builtin_pos) in
   let builtins = [
     (* Basic types *)
     ("bool", (Type.Primitive Bool));
@@ -157,7 +160,7 @@ let global =
     ("dmat4x4", (Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 4])));
   ] in
   List.fold_left 
-    (fun env (name, t) -> add_type name t env) 
+    (fun env (name, t) -> add_type name {loc = builtin_loc; value = t} env) 
     (empty "global")
     builtins
 
@@ -170,7 +173,8 @@ let string_of_table id t f =
   if SymbolTable.is_empty t then []
   else 
     [id ^ "={" ^ (String.concat "; " (List.map 
-      (fun (k, v) -> Printf.sprintf "%s=%s" k (f v))
+      (fun (k, lv) -> Printf.sprintf "%s={loc=%s;value=%s}" 
+        k (Located.string_of_start_position lv.Located.loc) (f lv.value))
       (SymbolTable.bindings t)
     )) ^ "}"]
 

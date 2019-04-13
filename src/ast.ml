@@ -14,11 +14,8 @@ type binop =
 type assignop =
   | Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv | AssignMod
 
-type 'a located =
-  { loc: Lexing.position * Lexing.position; value: 'a }
-
 type expression =
-  raw_expression located
+  raw_expression Located.t
 
 and raw_expression =
   | Access of expression * string
@@ -65,7 +62,7 @@ and for_range_stmt = {
 }
 
 and stmt =
-  raw_stmt located
+  raw_stmt Located.t
 
 and raw_stmt =
   | Var of var_declaration
@@ -94,7 +91,7 @@ type function_declaration = {
 type pipeline_declaration = {
   pd_name: string;
   pd_type: Type.t;
-  pd_functions: function_declaration list;
+  pd_functions: (function_declaration Located.t) list;
 }
 
 type renderer_declaration = {
@@ -103,11 +100,14 @@ type renderer_declaration = {
   rd_body: stmt list;
 }
 
-type toplevel_elem =
+type raw_toplevel_elem =
   | ConstDecl of const_declaration
   | TypeDecl of type_declaration
   | PipelineDecl of pipeline_declaration
   | RendererDecl of renderer_declaration
+
+type toplevel_elem =
+  raw_toplevel_elem Located.t
 
 type root = toplevel_elem list
 
@@ -137,13 +137,6 @@ let string_of_binop = function
   | Mult -> "*"
   | Div -> "/"
   | Mod -> "%"
-
-(* TODO: duplicated in Lexer module *)
-let string_of_position pos =
-    Printf.sprintf "%s:%d:%d" pos.Lexing.pos_fname pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
-  
-let string_of_positions (start, _) = 
-  string_of_position start
 
 let rec string_of_raw_expression = function
   | Access (l, r) ->
@@ -181,7 +174,7 @@ let rec string_of_raw_expression = function
 
 and string_of_expression {loc; value} =
   Printf.sprintf "{loc=%s; value=%s}" 
-    (string_of_positions loc) 
+    (Located.string_of_start_position loc) 
     (string_of_raw_expression value)
 
 let string_of_constdecl {cd_name; cd_value} = 
@@ -190,11 +183,16 @@ let string_of_constdecl {cd_name; cd_value} =
 let string_of_typedecl {td_name; td_type} =
   Printf.sprintf "TypeDecl{name=%s; type=%s}" td_name (Type.string_of_type td_type)
 
-let string_of_toplevel = function
+let string_of_raw_toplevel = function
   | ConstDecl cd -> string_of_constdecl cd
   | TypeDecl td -> string_of_typedecl td
   | PipelineDecl _ -> "TODO(PipelineDecl)"
   | RendererDecl _ -> "TODO(RendererDecl)"
+
+let string_of_toplevel {Located.loc; value} =
+  Printf.sprintf "{loc=%s; value=%s}"
+    (Located.string_of_start_position loc) 
+    (string_of_raw_toplevel value)
 
 let string_of_ast r =
   "{" ^ (String.concat ", " (List.map string_of_toplevel r)) ^ "}"

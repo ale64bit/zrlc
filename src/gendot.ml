@@ -95,7 +95,7 @@ let new_op_node s g label = new_generic_node s g [
   `Fillcolor 0x00F4A6AE;
 ]
 
-let rec dot_expr s g e = dot_raw_expr s g e.Ast.value
+let rec dot_expr s g e = dot_raw_expr s g e.Located.value
 
 and dot_raw_expr s g = function
   | Ast.Access (lhs, rhs) ->
@@ -150,7 +150,7 @@ and dot_raw_expr s g = function
   | Ast.FloatLiteral f -> new_literal_node s g (string_of_float f)
   | Ast.Id id -> new_ident_node s g id
 
-let rec dot_stmt s g e = dot_raw_stmt s g e.Ast.value
+let rec dot_stmt s g e = dot_raw_stmt s g e.Located.value
 
 and dot_raw_stmt s g = function
   | Ast.Var {var_ids; var_values} ->
@@ -200,12 +200,14 @@ and dot_raw_stmt s g = function
     List.iter (G.add_edge g ret_node) (List.map (dot_expr s g) exprs) ;
     ret_node
 
-let dot_func s g {Ast.fd_name; fd_type=_; fd_body} =
+let dot_raw_func s g {Ast.fd_name; fd_type=_; fd_body} =
   let node = new_node s g (Printf.sprintf "func$%s" fd_name) in
   List.iter (G.add_edge g node) (List.map (dot_stmt s g) fd_body) ;
   node
 
-let dot_toplevel s g = function
+let dot_func s g f = dot_raw_func s g f.Located.value
+
+let dot_raw_toplevel s g = function
   | Ast.ConstDecl {cd_name; cd_value} -> 
       let node = new_node s g (Printf.sprintf "const$%s" cd_name) in
       let rhs_node = dot_expr s g cd_value in
@@ -222,6 +224,8 @@ let dot_toplevel s g = function
       let node = new_node s g (Printf.sprintf "renderer$%s" rd_name) in
       List.iter (G.add_edge g node) (List.map (dot_stmt s g) rd_body) ;
       node
+
+let dot_toplevel s g e = dot_raw_toplevel s g e.Located.value
 
 let dot ch root = 
   print_endline "Pass: generating AST dot file" ;

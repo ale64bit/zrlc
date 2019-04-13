@@ -49,11 +49,13 @@
 let program :=
   ~ = toplevel_elem*; EOF; <>
 
-let toplevel_elem == 
+let toplevel_elem := 
+  located(
   | const_def
   | type_def
   | pipeline_def
   | renderer_def
+  )
 
 let const_def :=
   CONST; id = ID; ASSIGN; value = expr; 
@@ -77,7 +79,7 @@ let array_dimension ==
   | ~ = ID; <Type.OfName>
 
 let pipeline_def :=
-  PIPELINE; id = ID; fsign = function_signature; LBRACE; funcs = func*; RBRACE; 
+  PIPELINE; id = ID; fsign = function_signature; LBRACE; funcs = located(func)*; RBRACE; 
     { Ast.PipelineDecl {pd_name = id; pd_type = fsign; pd_functions = funcs} }
 
 let renderer_def :=
@@ -203,4 +205,4 @@ let constant :=
   )
 
 let located(x) ==
-  ~ = x; { { Ast.loc = $loc; value = x } }
+  ~ = x; { { Located.loc = $loc; value = x } }
