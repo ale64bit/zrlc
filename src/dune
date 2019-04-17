@@ -9,5 +9,6 @@
 
 (library
  (name rpdl)
- (libraries ocamlgraph)
+ (libraries ocamlgraph yojson ppx_deriving_yojson.runtime)
+ (preprocess (pps ppx_deriving_yojson))
 )
