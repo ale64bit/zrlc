@@ -20,6 +20,6 @@ let process cfg =
   gen_dot cfg ast
   >>= fun ast ->
   Analysis.check ast
-  >>= fun (env, tls) ->
-  if cfg.verbose then print_endline (Env.string_of_env env) ;
-  Ok (env, tls)
+  >>= fun {root_env; root_elems} ->
+  if cfg.verbose then print_endline (Env.string_of_env root_env) ;
+  Ok (root_env, root_elems)

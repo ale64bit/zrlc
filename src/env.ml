@@ -127,7 +127,7 @@ let generate_fields size ptname tprefix =
 
 let global =
   let builtin_pos =
-    {Lexing.pos_fname= "builtin"; pos_lnum= 0; pos_cnum= 0; pos_bol= 0}
+    Lexing.{pos_fname= "builtin"; pos_lnum= 0; pos_cnum= 0; pos_bol= 0}
   in
   let builtin_loc = (builtin_pos, builtin_pos) in
   let builtins =
@@ -182,5 +182,17 @@ let global =
   List.fold_left
     (fun env (name, t) -> add_type name {loc= builtin_loc; value= t} env)
     (empty "global") builtins
+
+let filter_global env =
+  SymbolTable.(
+    let skip src k _ = not (mem k src) in
+    { env with
+      types= SymbolTable.(filter (skip global.types) env.types)
+    ; constants= SymbolTable.(filter (skip global.constants) env.constants)
+    ; vars= SymbolTable.(filter (skip global.vars) env.vars)
+    ; pipelines= SymbolTable.(filter (skip global.pipelines) env.pipelines)
+    ; functions= SymbolTable.(filter (skip global.functions) env.functions) })
+
+let to_yojson t = to_yojson (filter_global t)
 
 let string_of_env env = Yojson.Safe.pretty_to_string (to_yojson env)

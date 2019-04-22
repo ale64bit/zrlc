@@ -227,7 +227,7 @@ and dot_raw_stmt s g = function
       List.iter (G.add_edge g ret_node) (List.map (dot_expr s g) exprs) ;
       ret_node
 
-let dot_raw_func s g {Ast.fd_name; fd_type= _; fd_body} =
+let dot_raw_func s g Ast.{fd_name; fd_type= _; fd_body} =
   let node = new_node s g (Printf.sprintf "func$%s" fd_name) in
   List.iter (G.add_edge g node) (List.map (dot_stmt s g) fd_body) ;
   node

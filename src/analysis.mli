@@ -1,6 +1,6 @@
 type error =
   [ `Redefinition of string
-  | `DuplicateMember of string * string
+  | `DuplicateMember of string
   | `DuplicateParameter of string
   | `Unimplemented of string
   | `UnknownTypeName of string

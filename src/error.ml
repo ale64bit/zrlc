@@ -5,8 +5,8 @@ let string_of_error = function
       Printf.sprintf "%s: error: %s" (Located.string_of_position pos) msg
   | `Redefinition id ->
       Printf.sprintf "???: error: redefinition of '%s'" id
-  | `DuplicateMember (t, id) ->
-      Printf.sprintf "???: error: %s: duplicate member '%s'" t id
+  | `DuplicateMember id ->
+      Printf.sprintf "???: error: duplicate member '%s'" id
   | `DuplicateParameter id ->
       Printf.sprintf "???: error: redefinition of parameter '%s'" id
   | `Unimplemented msg ->
@@ -29,8 +29,8 @@ let debug_string_of_error = function
         msg
   | `Redefinition id ->
       Printf.sprintf "Redefinition id=%s" id
-  | `DuplicateMember (t, id) ->
-      Printf.sprintf "DuplicateMember (t=%s, id=%s)" t id
+  | `DuplicateMember id ->
+      Printf.sprintf "DuplicateMember id=%s" id
   | `DuplicateParameter id ->
       Printf.sprintf "DuplicateParameter id=%s" id
   | `Unimplemented msg ->
