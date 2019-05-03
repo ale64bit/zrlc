@@ -15,11 +15,8 @@ let process cfg =
   let ch = open_in cfg.source_file in
   let lexbuf = Lexing.from_channel ch in
   lexbuf.lex_curr_p <- {lexbuf.lex_curr_p with pos_fname= cfg.source_file} ;
-  Parsing.parse lexbuf
-  >>= fun ast ->
-  gen_dot cfg ast
-  >>= fun ast ->
-  Analysis.check ast
-  >>= fun {root_env; root_elems} ->
+  Parsing.parse lexbuf >>= fun ast ->
+  gen_dot cfg ast >>= fun ast ->
+  Analysis.check ast >>= fun {root_env; root_elems} ->
   if cfg.verbose then print_endline (Env.string_of_env root_env) ;
   Ok (root_env, root_elems)

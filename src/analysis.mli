@@ -5,6 +5,7 @@ type error =
   | `Unimplemented of string
   | `UnknownTypeName of string
   | `NonIntegerArraySize
-  | `UndeclaredIdentifier of string ]
+  | `UndeclaredIdentifier of string
+  | `AssignmentMismatch of int * int ]
 
-val check : Ast.root -> (TypedAst.root, [> error]) result
+val check : Ast.root -> (TypedAst.root, [> error] Located.t) result

@@ -19,3 +19,6 @@ type 'a t = {loc: lexing_position * lexing_position; value: 'a}
 [@@deriving to_yojson]
 
 let string_of_start_position (pos, _) = string_of_position pos
+
+let string_of_location (a, b) =
+  Printf.sprintf "%s...%s" (string_of_position a) (string_of_position b)

@@ -1,43 +1,52 @@
-let string_of_error = function
-  | `LexerError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Located.string_of_position pos) msg
-  | `ParserError (pos, msg) ->
-      Printf.sprintf "%s: error: %s" (Located.string_of_position pos) msg
+let string_of_error Located.{loc; value} =
+  let pos = Located.string_of_start_position loc in
+  match value with
+  | `LexerError msg ->
+      Printf.sprintf "%s: error: %s" pos msg
+  | `ParserError msg ->
+      Printf.sprintf "%s: error: %s" pos msg
   | `Redefinition id ->
-      Printf.sprintf "???: error: redefinition of '%s'" id
+      Printf.sprintf "%s: error: redefinition of '%s'" pos id
   | `DuplicateMember id ->
-      Printf.sprintf "???: error: duplicate member '%s'" id
+      Printf.sprintf "%s: error: duplicate member '%s'" pos id
   | `DuplicateParameter id ->
-      Printf.sprintf "???: error: redefinition of parameter '%s'" id
+      Printf.sprintf "%s: error: redefinition of parameter '%s'" pos id
   | `Unimplemented msg ->
-      Printf.sprintf "???: error: %s" msg
+      Printf.sprintf "%s: error: %s" pos msg
   | `UnknownTypeName name ->
-      Printf.sprintf "???: error: unknown type name '%s'" name
+      Printf.sprintf "%s: error: unknown type name '%s'" pos name
   | `NonIntegerArraySize ->
-      "???: error: non-integer array size"
+      Printf.sprintf "%s: error: non-integer array size" pos
   | `UndeclaredIdentifier id ->
-      Printf.sprintf "???: error: undeclared identifier '%s'" id
+      Printf.sprintf "%s: error: undeclared identifier '%s'" pos id
+  | `AssignmentMismatch (vars, values) ->
+      let var_plural = if vars > 1 then "s" else "" in
+      let val_plural = if values > 1 then "s" else "" in
+      Printf.sprintf
+        "%s: error: assignment mismatch: %d variable%s but %d value%s" pos vars
+        var_plural values val_plural
 
-let debug_string_of_error = function
-  | `LexerError (pos, msg) ->
-      Printf.sprintf "LexerError (pos=%s, msg=%s)"
-        (Located.string_of_position pos)
-        msg
-  | `ParserError (pos, msg) ->
-      Printf.sprintf "ParserError (pos=%s, msg=%s)"
-        (Located.string_of_position pos)
-        msg
+let debug_string_of_error Located.{loc; value} =
+  let loc = Located.string_of_location loc in
+  match value with
+  | `LexerError msg ->
+      Printf.sprintf "%s: LexerError msg=%s" loc msg
+  | `ParserError msg ->
+      Printf.sprintf "%s: ParserError msg=%s" loc msg
   | `Redefinition id ->
-      Printf.sprintf "Redefinition id=%s" id
+      Printf.sprintf "%s: Redefinition id=%s" loc id
   | `DuplicateMember id ->
-      Printf.sprintf "DuplicateMember id=%s" id
+      Printf.sprintf "%s: DuplicateMember id=%s" loc id
   | `DuplicateParameter id ->
-      Printf.sprintf "DuplicateParameter id=%s" id
+      Printf.sprintf "%s: DuplicateParameter id=%s" loc id
   | `Unimplemented msg ->
-      Printf.sprintf "Unimplemented msg=%s" msg
+      Printf.sprintf "%s: Unimplemented msg=%s" loc msg
   | `UnknownTypeName name ->
-      Printf.sprintf "UnknownTypeName name=%s" name
+      Printf.sprintf "%s: UnknownTypeName name=%s" loc name
   | `NonIntegerArraySize ->
-      "NonIntegerArraySize"
+      Printf.sprintf "%s: NonIntegerArraySize" loc
   | `UndeclaredIdentifier id ->
-      Printf.sprintf "UndeclaredIdentifier id=%s" id
+      Printf.sprintf "%s: UndeclaredIdentifier id=%s" loc id
+  | `AssignmentMismatch (vars, values) ->
+      Printf.sprintf "%s: AssignmentMismatch (vars=%d, values=%d)" loc vars
+        values

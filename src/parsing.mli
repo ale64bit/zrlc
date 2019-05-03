@@ -1,5 +1,3 @@
-type error =
-  [ `LexerError of Lexing.position * string
-  | `ParserError of Lexing.position * string ]
+type error = [`LexerError of string | `ParserError of string]
 
-val parse : Lexing.lexbuf -> (Ast.root, [> error]) result
+val parse : Lexing.lexbuf -> (Ast.root, [> error] Located.t) result

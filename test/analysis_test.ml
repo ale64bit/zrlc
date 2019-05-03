@@ -121,33 +121,41 @@ let test_empty_pipeline =
 
 let test_const_redefined =
   let src = "const i = 1\nconst i = 2" in
-  let want_err = `Redefinition "i" in
+  let want_loc = (loc 2 12 12, loc 2 12 23) in
+  let want_err = Located.{loc= want_loc; value= `Redefinition "i"} in
   "test_const_redefined" >:: analysis_error_test src want_err
 
 let test_duplicate_member =
   let src = "type T {\n  f: float\n  f: int\n}" in
-  let want_err = `DuplicateMember "f" in
+  let want_loc = (loc 1 0 0, loc 4 29 30) in
+  let want_err = Located.{loc= want_loc; value= `DuplicateMember "f"} in
   "test_duplicate_member" >:: analysis_error_test src want_err
 
 let test_unknown_type_name =
   let src = "type T {\n  x: X\n}" in
-  let want_err = `UnknownTypeName "X" in
+  let want_loc = (loc 1 0 0, loc 3 16 17) in
+  let want_err = Located.{loc= want_loc; value= `UnknownTypeName "X"} in
   "test_unknown_type_name" >:: analysis_error_test src want_err
 
 let test_pipeline_redefined =
-  let src = "pipeline P() {}\n    pipeline P() {}" in
-  let want_err = `Redefinition "P" in
+  let src = "pipeline P() {}\npipeline P() {}" in
+  let want_loc = (loc 2 16 16, loc 2 16 31) in
+  let want_err = Located.{loc= want_loc; value= `Redefinition "P"} in
   "test_pipeline_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_param_redefined =
   let src = "pipeline P(x: int, x: float) {}" in
-  let want_err = `DuplicateParameter "x" in
+  let want_loc = (loc 1 0 0, loc 1 0 31) in
+  let want_err = Located.{loc= want_loc; value= `DuplicateParameter "x"} in
   "test_pipeline_param_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_function_redefined =
   let src = "pipeline P() {\n  def f() {}\n  def f() {}\n}" in
-  let want_err = `Redefinition "f" in
+  let want_loc = (loc 3 28 30, loc 3 28 40) in
+  let want_err = Located.{loc= want_loc; value= `Redefinition "f"} in
   "test_pipeline_function_redefined" >:: analysis_error_test src want_err
+
+(*   TODO: add test for AssignmentMismatch *)
 
 let tests =
   "analysis_suite"

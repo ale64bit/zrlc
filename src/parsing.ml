@@ -1,10 +1,10 @@
-type error =
-  [ `LexerError of Lexing.position * string
-  | `ParserError of Lexing.position * string ]
+type error = [`LexerError of string | `ParserError of string]
 
 let parse lexbuf =
   try Ok (Parser.program Lexer.read lexbuf) with
   | Lexer.Error msg ->
-      Error (`LexerError (lexbuf.lex_curr_p, msg))
+      let loc = (lexbuf.lex_curr_p, lexbuf.lex_curr_p) in
+      Error Located.{loc; value= `LexerError msg}
   | Parser.Error ->
-      Error (`ParserError (lexbuf.lex_curr_p, "TODO"))
+      let loc = (lexbuf.lex_curr_p, lexbuf.lex_curr_p) in
+      Error Located.{loc; value= `ParserError "parsing error"}
