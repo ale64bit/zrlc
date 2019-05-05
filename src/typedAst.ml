@@ -4,7 +4,7 @@ type expression = Type.t * Ast.expression [@@deriving to_yojson]
 
 (* Statements *)
 
-type var_declaration = {var_ids: string list; var_values: expression list}
+type var_declaration = {var_id: string; var_value: expression}
 [@@deriving to_yojson]
 
 and assignment =

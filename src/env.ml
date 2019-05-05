@@ -1,3 +1,4 @@
+open Monad
 module SymbolTable = Map.Make (String)
 
 type const_value = Bool of bool | Int of int | Float of float
@@ -46,20 +47,58 @@ let function_exists name env = SymbolTable.mem name env.functions
 
 let var_exists name env = SymbolTable.mem name env.vars
 
+let get_constant name env = SymbolTable.find_opt name env.constants
+
+let get_type name env = SymbolTable.find_opt name env.types
+
+let get_pipeline name env = SymbolTable.find_opt name env.pipelines
+
+let get_function name env = SymbolTable.find_opt name env.functions
+
+let get_var name env = SymbolTable.find_opt name env.vars
+
+let get_constant_type name env =
+  match get_constant name env with
+  | Some Located.{loc; value= Bool _} ->
+      Some Located.{loc; value= Type.TypeRef "bool"}
+  | Some Located.{loc; value= Int _} ->
+      Some Located.{loc; value= Type.TypeRef "int"}
+  | Some Located.{loc; value= Float _} ->
+      Some Located.{loc; value= Type.TypeRef "float"}
+  | None ->
+      None
+
+let find_name name env =
+  get_constant_type name env >? get_var name env >? get_function name env
+  >? get_pipeline name env
+
 let add_constant name value env =
+  let () = assert (find_name name env = None) in
   {env with constants= SymbolTable.add name value env.constants}
 
-let add_type name typ env = {env with types= SymbolTable.add name typ env.types}
+let add_type name typ env =
+  ( match typ.Located.value with
+  | Type.TypeRef refname ->
+      failwith
+        (Printf.sprintf
+           "Env.add_type: name=%s type=%s\n\
+            Type references should never be added to the environment directly"
+           name refname)
+  | _ ->
+      () ) ;
+  {env with types= SymbolTable.add name typ env.types}
 
 let add_pipeline name typ env =
+  let () = assert (find_name name env = None) in
   {env with pipelines= SymbolTable.add name typ env.pipelines}
 
 let add_function name typ env =
+  let () = assert (find_name name env = None) in
   {env with functions= SymbolTable.add name typ env.functions}
 
-let add_var name typ env = {env with vars= SymbolTable.add name typ env.vars}
-
-let get_constant name env = SymbolTable.find_opt name env.constants
+let add_var name typ env =
+  let () = assert (find_name name env = None) in
+  {env with vars= SymbolTable.add name typ env.vars}
 
 let enter_pipeline_scope id env =
   {env with id= Printf.sprintf "%s::p$%s" env.id id}
@@ -131,13 +170,13 @@ let global =
   in
   let builtin_loc = (builtin_pos, builtin_pos) in
   let builtins =
-    [ (* Basic types *)
+    [ (* Primitive types *)
       ("bool", Type.Primitive Bool)
     ; ("int", Type.Primitive Int)
     ; ("uint", Type.Primitive UInt)
     ; ("float", Type.Primitive Float)
     ; ("double", Type.Primitive Double)
-    ; (* Vector types *)
+    ; (* Built-in vector types *)
       ("bvec2", Type.Record (generate_fields 2 "bool" "bvec"))
     ; ("bvec3", Type.Record (generate_fields 3 "bool" "bvec"))
     ; ("bvec4", Type.Record (generate_fields 4 "bool" "bvec"))
@@ -153,7 +192,7 @@ let global =
     ; ("dvec2", Type.Record (generate_fields 2 "double" "dvec"))
     ; ("dvec3", Type.Record (generate_fields 3 "double" "dvec"))
     ; ("dvec4", Type.Record (generate_fields 4 "double" "dvec"))
-    ; (* Matrix types *)
+    ; (* Built-in matrix types *)
       ("mat2", Type.Array (Type.TypeRef "float", [OfInt 2; OfInt 2]))
     ; ("mat3", Type.Array (Type.TypeRef "float", [OfInt 3; OfInt 3]))
     ; ("mat4", Type.Array (Type.TypeRef "float", [OfInt 4; OfInt 4]))

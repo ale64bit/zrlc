@@ -37,6 +37,17 @@ val enter_renderer_scope : string -> t -> t
 
 val enter_function_scope : string -> t -> t
 
+(* Get *)
 val get_constant : string -> t -> const_value Located.t option
+
+val get_type : string -> t -> Type.t Located.t option
+
+val get_pipeline : string -> t -> Type.t Located.t option
+
+val get_function : string -> t -> Type.t Located.t option
+
+val get_var : string -> t -> Type.t Located.t option
+
+val find_name : string -> t -> Type.t Located.t option
 
 val string_of_env : t -> string

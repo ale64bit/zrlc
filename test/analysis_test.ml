@@ -39,7 +39,7 @@ let test_const_bool_true =
   let const_expr_true = Located.{loc= val_loc; value= Ast.BoolLiteral true} in
   let cd =
     TypedAst.ConstDecl
-      {cd_name= "b"; cd_value= (Type.Primitive Bool, const_expr_true)}
+      {cd_name= "b"; cd_value= (Type.TypeRef "bool", const_expr_true)}
   in
   let want_env =
     Env.(global |> add_constant "b" {loc= stmt_loc; value= Env.Bool true})
@@ -56,7 +56,7 @@ let test_const_bool_false =
   in
   let cd =
     TypedAst.ConstDecl
-      {cd_name= "b"; cd_value= (Type.Primitive Bool, const_expr_false)}
+      {cd_name= "b"; cd_value= (Type.TypeRef "bool", const_expr_false)}
   in
   let want_env =
     Env.(global |> add_constant "b" {loc= stmt_loc; value= Env.Bool false})
@@ -71,7 +71,7 @@ let test_const_int =
   let const_expr_42 = Located.{loc= val_loc; value= Ast.IntLiteral 42} in
   let cd =
     TypedAst.ConstDecl
-      {cd_name= "i"; cd_value= (Type.Primitive Int, const_expr_42)}
+      {cd_name= "i"; cd_value= (Type.TypeRef "int", const_expr_42)}
   in
   let want_env =
     Env.(global |> add_constant "i" {loc= stmt_loc; value= Env.Int 42})
@@ -86,7 +86,7 @@ let test_const_float =
   let const_expr_pi = Located.{loc= val_loc; value= Ast.FloatLiteral 3.14} in
   let cd =
     TypedAst.ConstDecl
-      {cd_name= "pi"; cd_value= (Type.Primitive Float, const_expr_pi)}
+      {cd_name= "pi"; cd_value= (Type.TypeRef "float", const_expr_pi)}
   in
   let want_env =
     Env.(global |> add_constant "pi" {loc= stmt_loc; value= Env.Float 3.14})
@@ -122,7 +122,10 @@ let test_empty_pipeline =
 let test_const_redefined =
   let src = "const i = 1\nconst i = 2" in
   let want_loc = (loc 2 12 12, loc 2 12 23) in
-  let want_err = Located.{loc= want_loc; value= `Redefinition "i"} in
+  let prev_loc = (loc 1 0 0, loc 1 0 11) in
+  let want_err =
+    Located.{loc= want_loc; value= `Redefinition ("i", prev_loc)}
+  in
   "test_const_redefined" >:: analysis_error_test src want_err
 
 let test_duplicate_member =
@@ -140,7 +143,10 @@ let test_unknown_type_name =
 let test_pipeline_redefined =
   let src = "pipeline P() {}\npipeline P() {}" in
   let want_loc = (loc 2 16 16, loc 2 16 31) in
-  let want_err = Located.{loc= want_loc; value= `Redefinition "P"} in
+  let prev_loc = (loc 1 0 0, loc 1 0 15) in
+  let want_err =
+    Located.{loc= want_loc; value= `Redefinition ("P", prev_loc)}
+  in
   "test_pipeline_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_param_redefined =
@@ -152,7 +158,10 @@ let test_pipeline_param_redefined =
 let test_pipeline_function_redefined =
   let src = "pipeline P() {\n  def f() {}\n  def f() {}\n}" in
   let want_loc = (loc 3 28 30, loc 3 28 40) in
-  let want_err = Located.{loc= want_loc; value= `Redefinition "f"} in
+  let prev_loc = (loc 2 15 17, loc 2 15 27) in
+  let want_err =
+    Located.{loc= want_loc; value= `Redefinition ("f", prev_loc)}
+  in
   "test_pipeline_function_redefined" >:: analysis_error_test src want_err
 
 (*   TODO: add test for AssignmentMismatch *)

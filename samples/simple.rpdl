@@ -10,9 +10,9 @@ pipeline Pipeline(): vec4 {
   }
 }
 
-renderer Simple(geometry: set, screen: crt) { 
+renderer Simple(geometry: set) { 
   for g in geometry {
-    screen += Pipeline(pos = g)
+    builtin.screen += Pipeline(pos = g)
   }  
 }
 
