@@ -17,4 +17,5 @@ let process cfg =
   lexbuf.lex_curr_p <- {lexbuf.lex_curr_p with pos_fname= cfg.source_file} ;
   Parsing.parse lexbuf >>= fun ast ->
   gen_dot cfg ast >>= fun ast ->
-  Analysis.check ast >>= fun {root_env; root_elems} -> Ok (root_env, root_elems)
+  Analysis.check ast >>= fun {root_env; root_module; root_elems} ->
+  Ok (root_env, root_module, root_elems)

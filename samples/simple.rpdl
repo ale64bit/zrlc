@@ -1,3 +1,5 @@
+module simple
+
 pipeline Pipeline(): vec4 {
 
   def vertex(pos: vec3): vec3 {

@@ -28,6 +28,7 @@ rule read =
   | white      { read lexbuf }
   | newline    { next_line lexbuf; read lexbuf }
   | "#"        { comment lexbuf }
+  | "module"   { MODULE }
   | "const"    { CONST }
   | "type"     { TYPE }
   | "pipeline" { PIPELINE }

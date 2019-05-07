@@ -1,3 +1,5 @@
+module specialization
+
 pipeline Pipeline[hasColor: bool](): vec4 {
 
   def vertex(pos, col1, col2: vec3): vec3 {

@@ -113,6 +113,7 @@ type raw_toplevel_elem =
 
 type toplevel_elem = raw_toplevel_elem Located.t [@@deriving to_yojson]
 
-type root = toplevel_elem list [@@deriving to_yojson]
+type root = {module_name: string; elements: toplevel_elem list}
+[@@deriving to_yojson]
 
 let string_of_ast root = Yojson.Safe.pretty_to_string (root_to_yojson root)

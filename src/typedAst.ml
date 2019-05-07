@@ -63,7 +63,8 @@ type toplevel_elem =
   | RendererDecl of renderer_declaration
 [@@deriving to_yojson]
 
-type root = {root_env: Env.t; root_elems: toplevel_elem list}
+type root =
+  {root_env: Env.t; root_module: string; root_elems: toplevel_elem list}
 [@@deriving to_yojson]
 
 let string_of_ast root = Yojson.Safe.pretty_to_string (root_to_yojson root)

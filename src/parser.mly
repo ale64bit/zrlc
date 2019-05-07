@@ -1,4 +1,4 @@
-%token CONST TYPE PIPELINE RENDERER DEF VAR
+%token MODULE CONST TYPE PIPELINE RENDERER DEF VAR
 %token IF FOR IN TO RETURN
 
 %token <bool> BOOL
@@ -47,7 +47,9 @@
 %%
 
 let program :=
-  ~ = toplevel_elem*; EOF; <>
+  MODULE; module_name = ID; elements = toplevel_elem*; EOF; {
+    Ast.{module_name; elements}
+  }
 
 let toplevel_elem := 
   located(

@@ -372,12 +372,14 @@ let check_renderer_declarations env _ =
   (*   TODO: implement *)
   Ok (env, [])
 
-let check ast =
+let check Ast.{module_name; elements} =
   let env = Env.global in
-  check_const_declarations env ast >>= fun (env, typed_cds) ->
-  check_type_declarations env ast >>= fun (env, typed_tds) ->
-  check_pipeline_declarations env ast >>= fun (env, typed_pds) ->
-  check_renderer_declarations env ast >>= fun (env, typed_rds) ->
+  check_const_declarations env elements >>= fun (env, typed_cds) ->
+  check_type_declarations env elements >>= fun (env, typed_tds) ->
+  check_pipeline_declarations env elements >>= fun (env, typed_pds) ->
+  check_renderer_declarations env elements >>= fun (env, typed_rds) ->
   Ok
     TypedAst.
-      {root_env= env; root_elems= typed_cds @ typed_tds @ typed_pds @ typed_rds}
+      { root_env= env
+      ; root_module= module_name
+      ; root_elems= typed_cds @ typed_tds @ typed_pds @ typed_rds }

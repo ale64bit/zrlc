@@ -17,25 +17,48 @@ let analysis_test src want =
   assert_equal ~printer:typed_ast_printer want got
 
 let analysis_ok_test src root_env root_elems _ =
-  analysis_test src (Ok {root_env; root_elems})
+  analysis_test src (Ok {root_env; root_module= "test"; root_elems})
 
 let analysis_error_test src want _ = analysis_test src (Error want)
 
 let loc lnum bol cnum =
   Lexing.{pos_fname= "test"; pos_lnum= lnum; pos_bol= bol; pos_cnum= cnum}
 
+let search s p n =
+  let re = Str.regexp_string p in
+  let rec aux start k =
+    let index = Str.search_forward re s start in
+    if k = 0 then index else aux (index + 1) (k - 1)
+  in
+  aux 0 n
+
+let loc_of ?(n = 0) s p =
+  let rec aux s from last (lnum, bol) =
+    match String.index_from_opt s from '\n' with
+    | Some i ->
+        if i >= last then (lnum, bol)
+        else aux s (i + 1) last (lnum + 1, bol + i - from + 1)
+    | None ->
+        (lnum, bol)
+  in
+  let first_cnum = search s p n in
+  let last_cnum = first_cnum + String.length p in
+  let first_lnum, first_bol = aux s 0 first_cnum (1, 0) in
+  let last_lnum, last_bol = aux s 0 last_cnum (1, 0) in
+  (loc first_lnum first_bol first_cnum, loc last_lnum last_bol last_cnum)
+
 (* Tests *)
 
 let test_empty =
-  let src = "" in
+  let src = "module test" in
   let want_env = Env.global in
   let want_ast = [] in
   "test_empty" >:: analysis_ok_test src want_env want_ast
 
 let test_const_bool_true =
-  let src = "const b = true" in
-  let stmt_loc = (loc 1 0 0, loc 1 0 14) in
-  let val_loc = (loc 1 0 10, loc 1 0 14) in
+  let src = "module test\nconst b = true" in
+  let stmt_loc = loc_of src "const b = true" in
+  let val_loc = loc_of src "true" in
   let const_expr_true = Located.{loc= val_loc; value= Ast.BoolLiteral true} in
   let cd =
     TypedAst.ConstDecl
@@ -48,9 +71,9 @@ let test_const_bool_true =
   "test_const_bool_true" >:: analysis_ok_test src want_env want_ast
 
 let test_const_bool_false =
-  let src = "const b = false" in
-  let stmt_loc = (loc 1 0 0, loc 1 0 15) in
-  let val_loc = (loc 1 0 10, loc 1 0 15) in
+  let src = "module test\nconst b = false" in
+  let stmt_loc = loc_of src "const b = false" in
+  let val_loc = loc_of src "false" in
   let const_expr_false =
     Located.{loc= val_loc; value= Ast.BoolLiteral false}
   in
@@ -65,9 +88,9 @@ let test_const_bool_false =
   "test_const_bool_false" >:: analysis_ok_test src want_env want_ast
 
 let test_const_int =
-  let src = "const i = 42" in
-  let stmt_loc = (loc 1 0 0, loc 1 0 12) in
-  let val_loc = (loc 1 0 10, loc 1 0 12) in
+  let src = "module test\nconst i = 42" in
+  let stmt_loc = loc_of src "const i = 42" in
+  let val_loc = loc_of src "42" in
   let const_expr_42 = Located.{loc= val_loc; value= Ast.IntLiteral 42} in
   let cd =
     TypedAst.ConstDecl
@@ -80,9 +103,9 @@ let test_const_int =
   "test_const_int" >:: analysis_ok_test src want_env want_ast
 
 let test_const_float =
-  let src = "const pi = 3.14" in
-  let stmt_loc = (loc 1 0 0, loc 1 0 15) in
-  let val_loc = (loc 1 0 11, loc 1 0 15) in
+  let src = "module test\nconst pi = 3.14" in
+  let stmt_loc = loc_of src "const pi = 3.14" in
+  let val_loc = loc_of src "3.14" in
   let const_expr_pi = Located.{loc= val_loc; value= Ast.FloatLiteral 3.14} in
   let cd =
     TypedAst.ConstDecl
@@ -95,8 +118,8 @@ let test_const_float =
   "test_const_float" >:: analysis_ok_test src want_env want_ast
 
 let test_empty_pipeline =
-  let src = "pipeline P(x: int): float {}" in
-  let stmt_loc = (loc 1 0 0, loc 1 0 28) in
+  let src = "module test\npipeline P(x: int): float {}" in
+  let stmt_loc = loc_of src "pipeline P(x: int): float {}" in
   let local_env =
     Env.(
       global
@@ -120,45 +143,45 @@ let test_empty_pipeline =
   "test_empty_pipeline" >:: analysis_ok_test src want_env want_ast
 
 let test_const_redefined =
-  let src = "const i = 1\nconst i = 2" in
-  let want_loc = (loc 2 12 12, loc 2 12 23) in
-  let prev_loc = (loc 1 0 0, loc 1 0 11) in
+  let src = "module test\nconst i = 1\nconst i = 2" in
+  let want_loc = loc_of src "const i = 2" in
+  let prev_loc = loc_of src "const i = 1" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("i", prev_loc)}
   in
   "test_const_redefined" >:: analysis_error_test src want_err
 
 let test_duplicate_member =
-  let src = "type T {\n  f: float\n  f: int\n}" in
-  let want_loc = (loc 1 0 0, loc 4 29 30) in
+  let src = "module test\ntype T {\n  f: float\n  f: int\n}" in
+  let want_loc = loc_of src "type T {\n  f: float\n  f: int\n}" in
   let want_err = Located.{loc= want_loc; value= `DuplicateMember "f"} in
   "test_duplicate_member" >:: analysis_error_test src want_err
 
 let test_unknown_type_name =
-  let src = "type T {\n  x: X\n}" in
-  let want_loc = (loc 1 0 0, loc 3 16 17) in
+  let src = "module test\ntype T {\n  x: X\n}" in
+  let want_loc = loc_of src "type T {\n  x: X\n}" in
   let want_err = Located.{loc= want_loc; value= `UnknownTypeName "X"} in
   "test_unknown_type_name" >:: analysis_error_test src want_err
 
 let test_pipeline_redefined =
-  let src = "pipeline P() {}\npipeline P() {}" in
-  let want_loc = (loc 2 16 16, loc 2 16 31) in
-  let prev_loc = (loc 1 0 0, loc 1 0 15) in
+  let src = "module test\npipeline P() {}\npipeline P() {}" in
+  let want_loc = loc_of ~n:1 src "pipeline P() {}" in
+  let prev_loc = loc_of ~n:0 src "pipeline P() {}" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("P", prev_loc)}
   in
   "test_pipeline_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_param_redefined =
-  let src = "pipeline P(x: int, x: float) {}" in
-  let want_loc = (loc 1 0 0, loc 1 0 31) in
+  let src = "module test\npipeline P(x: int, x: float) {}" in
+  let want_loc = loc_of src "pipeline P(x: int, x: float) {}" in
   let want_err = Located.{loc= want_loc; value= `DuplicateParameter "x"} in
   "test_pipeline_param_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_function_redefined =
-  let src = "pipeline P() {\n  def f() {}\n  def f() {}\n}" in
-  let want_loc = (loc 3 28 30, loc 3 28 40) in
-  let prev_loc = (loc 2 15 17, loc 2 15 27) in
+  let src = "module test\npipeline P() {\n  def f() {}\n  def f() {}\n}" in
+  let want_loc = loc_of src ~n:1 "def f() {}" in
+  let prev_loc = loc_of src ~n:0 "def f() {}" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("f", prev_loc)}
   in

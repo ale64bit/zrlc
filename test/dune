@@ -1,4 +1,4 @@
 (tests
   (names type_test analysis_test)
-  (libraries rpdl oUnit)
+  (libraries rpdl oUnit str)
 )

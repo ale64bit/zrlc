@@ -22,6 +22,7 @@ let const_value_symbol_table_to_yojson st =
 
 type t =
   { id: string
+  ; parent: t option
   ; types: type_symbol_table
   ; constants: const_value_symbol_table
   ; vars: type_symbol_table
@@ -31,6 +32,7 @@ type t =
 
 let empty id =
   { id
+  ; parent= None
   ; types= SymbolTable.empty
   ; constants= SymbolTable.empty
   ; vars= SymbolTable.empty
@@ -69,8 +71,8 @@ let get_constant_type name env =
       None
 
 let find_name name env =
-  get_constant_type name env >? get_var name env >? get_function name env
-  >? get_pipeline name env
+  get_constant_type name env >>? get_var name env >>? get_function name env
+  >>? get_pipeline name env
 
 let add_constant name value env =
   let () = assert (find_name name env = None) in
@@ -108,6 +110,13 @@ let enter_renderer_scope id env =
 
 let enter_function_scope id env =
   {env with id= Printf.sprintf "%s::f$%s" env.id id}
+
+let exit_scope env =
+  match env.parent with
+  | Some penv ->
+      penv
+  | None ->
+      failwith (Printf.sprintf "Trying to exit root scope: %s" env.id)
 
 let permutations l =
   let rec aux left right = function

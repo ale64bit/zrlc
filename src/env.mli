@@ -37,6 +37,8 @@ val enter_renderer_scope : string -> t -> t
 
 val enter_function_scope : string -> t -> t
 
+val exit_scope : t -> t
+
 (* Get *)
 val get_constant : string -> t -> const_value Located.t option
 

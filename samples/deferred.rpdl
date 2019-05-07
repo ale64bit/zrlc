@@ -1,3 +1,5 @@
+module deferred
+
 const kLightCount = 6
 const kAmbient = 0.0
 
