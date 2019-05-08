@@ -8,6 +8,7 @@ type error =
   | `UndeclaredIdentifier of string
   | `AssignmentMismatch of int * int
   | `InvalidUnaryOperation of Ast.unop * Type.t
-  | `InvalidBinaryOperation of Type.t * Ast.binop * Type.t ]
+  | `InvalidBinaryOperation of Type.t * Ast.binop * Type.t
+  | `NotAnExpression of string ]
 
 val check : Ast.root -> (TypedAst.root, [> error] Located.t) result

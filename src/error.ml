@@ -46,6 +46,8 @@ let string_of_error Located.{loc; value} =
       Printf.sprintf "%s: error: invalid operation: %s %s %s" pos
         (Type.string_of_type ltyp) (string_of_binop op)
         (Type.string_of_type rtyp)
+  | `NotAnExpression id ->
+      Printf.sprintf "%s: error: %s is not an expression" pos id
 
 let debug_string_of_error Located.{loc; value} =
   let loc = Located.string_of_location loc in
@@ -79,3 +81,5 @@ let debug_string_of_error Located.{loc; value} =
       Printf.sprintf "%s: InvalidBinaryOperation (ltyp=%s, op=%s, rtyp=%s)" loc
         (Type.string_of_type ltyp) (string_of_binop op)
         (Type.string_of_type rtyp)
+  | `NotAnExpression id ->
+      Printf.sprintf "%s: NotAnExpression id=%s" loc id

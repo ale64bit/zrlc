@@ -11,7 +11,8 @@ type error =
   | `UndeclaredIdentifier of string
   | `AssignmentMismatch of int * int
   | `InvalidUnaryOperation of Ast.unop * Type.t
-  | `InvalidBinaryOperation of Type.t * Ast.binop * Type.t ]
+  | `InvalidBinaryOperation of Type.t * Ast.binop * Type.t
+  | `NotAnExpression of string ]
 
 let check_unique idfn errfn elems =
   List.fold_left
@@ -221,8 +222,12 @@ let rec check_expr env expr =
     match Env.find_rvalue id env with
     | Some Located.{value= typ; _} ->
         Ok (typ, expr)
-    | None ->
-        Error Located.{loc; value= `UndeclaredIdentifier id} )
+    | None -> (
+      match Env.find_name ~local:false id env with
+      | Some _ ->
+          Error Located.{loc; value= `NotAnExpression id}
+      | None ->
+          Error Located.{loc; value= `UndeclaredIdentifier id} ) )
 
 let check_var_declaration env loc Ast.{var_ids; var_values} =
   let num_vars, num_values = List.(length var_ids, length var_values) in

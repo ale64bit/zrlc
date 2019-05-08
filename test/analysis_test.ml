@@ -151,6 +151,24 @@ let test_empty_pipeline =
   let want_ast = [pd] in
   "test_empty_pipeline" >:: analysis_ok_test src want_env want_ast
 
+let test_type_declaration =
+  let src = "module test\ntype T { x:int a:[64,132]vec4 }" in
+  let typ =
+    Type.(
+      Record
+        [ {name= "x"; t= TypeRef "int"}
+        ; {name= "a"; t= Array (TypeRef "vec4", [OfInt 64; OfInt 132])} ])
+  in
+  let typ_loc = loc_of src "type T { x:int a:[64,132]vec4 }" in
+  let td = TypedAst.TypeDecl {td_name= "T"; td_type= typ} in
+  let want_env =
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_type "T" Located.{loc= typ_loc; value= typ})
+  in
+  let want_ast = [td] in
+  "test_type_declaration" >:: analysis_ok_test src want_env want_ast
+
 let test_const_redefined =
   let src = "module test\nconst i = 1\nconst i = 2" in
   let prev_loc = loc_of src "const i = 1" in
@@ -197,6 +215,7 @@ let test_pipeline_function_redefined =
   "test_pipeline_function_redefined" >:: analysis_error_test src want_err
 
 (*   TODO: add test for AssignmentMismatch *)
+(*   TODO: add test for NotAnExpression *)
 
 let tests =
   "analysis_suite"
@@ -206,6 +225,7 @@ let tests =
        ; test_const_int
        ; test_const_float
        ; test_empty_pipeline
+       ; test_type_declaration
        ; test_const_redefined
        ; test_duplicate_member
        ; test_unknown_type_name

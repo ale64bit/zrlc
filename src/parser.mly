@@ -73,7 +73,7 @@ let field_decl :=
 
 let type_id :=
   | ~ = ID; <Type.TypeRef>
-  | LBRACKET; id = ID; COMMA; dims = separated_list(COMMA, array_dimension); RBRACKET; 
+  | LBRACKET; dims = separated_nonempty_list(COMMA, array_dimension); RBRACKET; id = ID;
     { Type.Array (Type.TypeRef id, dims) }
 
 let array_dimension ==
