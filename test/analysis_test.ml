@@ -1,6 +1,6 @@
 open OUnit2
 open Rpdl
-open Rpdl.Monad
+open Rpdl.Monad.Result
 
 (* Helpers *)
 
@@ -51,7 +51,7 @@ let loc_of ?(n = 0) s p =
 
 let test_empty =
   let src = "module test" in
-  let want_env = Env.global in
+  let want_env = Env.(global |> enter_module_scope "test") in
   let want_ast = [] in
   "test_empty" >:: analysis_ok_test src want_env want_ast
 
@@ -65,7 +65,9 @@ let test_const_bool_true =
       {cd_name= "b"; cd_value= (Type.TypeRef "bool", const_expr_true)}
   in
   let want_env =
-    Env.(global |> add_constant "b" {loc= stmt_loc; value= Env.Bool true})
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_constant "b" {loc= stmt_loc; value= Env.Bool true})
   in
   let want_ast = [cd] in
   "test_const_bool_true" >:: analysis_ok_test src want_env want_ast
@@ -82,7 +84,9 @@ let test_const_bool_false =
       {cd_name= "b"; cd_value= (Type.TypeRef "bool", const_expr_false)}
   in
   let want_env =
-    Env.(global |> add_constant "b" {loc= stmt_loc; value= Env.Bool false})
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_constant "b" {loc= stmt_loc; value= Env.Bool false})
   in
   let want_ast = [cd] in
   "test_const_bool_false" >:: analysis_ok_test src want_env want_ast
@@ -97,7 +101,9 @@ let test_const_int =
       {cd_name= "i"; cd_value= (Type.TypeRef "int", const_expr_42)}
   in
   let want_env =
-    Env.(global |> add_constant "i" {loc= stmt_loc; value= Env.Int 42})
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_constant "i" {loc= stmt_loc; value= Env.Int 42})
   in
   let want_ast = [cd] in
   "test_const_int" >:: analysis_ok_test src want_env want_ast
@@ -112,7 +118,9 @@ let test_const_float =
       {cd_name= "pi"; cd_value= (Type.TypeRef "float", const_expr_pi)}
   in
   let want_env =
-    Env.(global |> add_constant "pi" {loc= stmt_loc; value= Env.Float 3.14})
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_constant "pi" {loc= stmt_loc; value= Env.Float 3.14})
   in
   let want_ast = [cd] in
   "test_const_float" >:: analysis_ok_test src want_env want_ast
@@ -120,32 +128,33 @@ let test_const_float =
 let test_empty_pipeline =
   let src = "module test\npipeline P(x: int): float {}" in
   let stmt_loc = loc_of src "pipeline P(x: int): float {}" in
-  let local_env =
-    Env.(
-      global
-      |> add_var "x" {loc= stmt_loc; value= Type.TypeRef "int"}
-      |> enter_pipeline_scope "P")
-  in
   let args = [Type.{name= "x"; t= Type.TypeRef "int"}] in
   let rets = [Type.TypeRef "float"] in
   let pipeline_type = Type.Function (args, rets) in
+  let want_env =
+    Env.(
+      global |> enter_module_scope "test"
+      |> add_pipeline "P" {loc= stmt_loc; value= pipeline_type})
+  in
+  let pipeline_env =
+    Env.(
+      want_env |> enter_pipeline_scope "P"
+      |> add_var "x" {loc= stmt_loc; value= Type.TypeRef "int"})
+  in
   let pd =
     TypedAst.PipelineDecl
-      { pd_env= local_env
+      { pd_env= pipeline_env
       ; pd_name= "P"
       ; pd_type= pipeline_type
       ; pd_functions= [] }
-  in
-  let want_env =
-    Env.(global |> add_pipeline "P" {loc= stmt_loc; value= pipeline_type})
   in
   let want_ast = [pd] in
   "test_empty_pipeline" >:: analysis_ok_test src want_env want_ast
 
 let test_const_redefined =
   let src = "module test\nconst i = 1\nconst i = 2" in
-  let want_loc = loc_of src "const i = 2" in
   let prev_loc = loc_of src "const i = 1" in
+  let want_loc = loc_of src "const i = 2" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("i", prev_loc)}
   in
@@ -165,8 +174,8 @@ let test_unknown_type_name =
 
 let test_pipeline_redefined =
   let src = "module test\npipeline P() {}\npipeline P() {}" in
-  let want_loc = loc_of ~n:1 src "pipeline P() {}" in
   let prev_loc = loc_of ~n:0 src "pipeline P() {}" in
+  let want_loc = loc_of ~n:1 src "pipeline P() {}" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("P", prev_loc)}
   in
@@ -180,8 +189,8 @@ let test_pipeline_param_redefined =
 
 let test_pipeline_function_redefined =
   let src = "module test\npipeline P() {\n  def f() {}\n  def f() {}\n}" in
-  let want_loc = loc_of src ~n:1 "def f() {}" in
   let prev_loc = loc_of src ~n:0 "def f() {}" in
+  let want_loc = loc_of src ~n:1 "def f() {}" in
   let want_err =
     Located.{loc= want_loc; value= `Redefinition ("f", prev_loc)}
   in

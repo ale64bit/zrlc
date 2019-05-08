@@ -1,4 +1,3 @@
-open Monad
 module SymbolTable = Map.Make (String)
 
 type const_value = Bool of bool | Int of int | Float of float
@@ -29,94 +28,6 @@ type t =
   ; pipelines: type_symbol_table
   ; functions: type_symbol_table }
 [@@deriving to_yojson]
-
-let empty id =
-  { id
-  ; parent= None
-  ; types= SymbolTable.empty
-  ; constants= SymbolTable.empty
-  ; vars= SymbolTable.empty
-  ; pipelines= SymbolTable.empty
-  ; functions= SymbolTable.empty }
-
-let constant_exists name env = SymbolTable.mem name env.constants
-
-let type_exists name env = SymbolTable.mem name env.types
-
-let pipeline_exists name env = SymbolTable.mem name env.pipelines
-
-let function_exists name env = SymbolTable.mem name env.functions
-
-let var_exists name env = SymbolTable.mem name env.vars
-
-let get_constant name env = SymbolTable.find_opt name env.constants
-
-let get_type name env = SymbolTable.find_opt name env.types
-
-let get_pipeline name env = SymbolTable.find_opt name env.pipelines
-
-let get_function name env = SymbolTable.find_opt name env.functions
-
-let get_var name env = SymbolTable.find_opt name env.vars
-
-let get_constant_type name env =
-  match get_constant name env with
-  | Some Located.{loc; value= Bool _} ->
-      Some Located.{loc; value= Type.TypeRef "bool"}
-  | Some Located.{loc; value= Int _} ->
-      Some Located.{loc; value= Type.TypeRef "int"}
-  | Some Located.{loc; value= Float _} ->
-      Some Located.{loc; value= Type.TypeRef "float"}
-  | None ->
-      None
-
-let find_name name env =
-  get_constant_type name env >>? get_var name env >>? get_function name env
-  >>? get_pipeline name env
-
-let add_constant name value env =
-  let () = assert (find_name name env = None) in
-  {env with constants= SymbolTable.add name value env.constants}
-
-let add_type name typ env =
-  ( match typ.Located.value with
-  | Type.TypeRef refname ->
-      failwith
-        (Printf.sprintf
-           "Env.add_type: name=%s type=%s\n\
-            Type references should never be added to the environment directly"
-           name refname)
-  | _ ->
-      () ) ;
-  {env with types= SymbolTable.add name typ env.types}
-
-let add_pipeline name typ env =
-  let () = assert (find_name name env = None) in
-  {env with pipelines= SymbolTable.add name typ env.pipelines}
-
-let add_function name typ env =
-  let () = assert (find_name name env = None) in
-  {env with functions= SymbolTable.add name typ env.functions}
-
-let add_var name typ env =
-  let () = assert (find_name name env = None) in
-  {env with vars= SymbolTable.add name typ env.vars}
-
-let enter_pipeline_scope id env =
-  {env with id= Printf.sprintf "%s::p$%s" env.id id}
-
-let enter_renderer_scope id env =
-  {env with id= Printf.sprintf "%s::r$%s" env.id id}
-
-let enter_function_scope id env =
-  {env with id= Printf.sprintf "%s::f$%s" env.id id}
-
-let exit_scope env =
-  match env.parent with
-  | Some penv ->
-      penv
-  | None ->
-      failwith (Printf.sprintf "Trying to exit root scope: %s" env.id)
 
 let permutations l =
   let rec aux left right = function
@@ -172,6 +83,116 @@ let generate_fields size ptname tprefix =
       in
       {Type.name; t} )
     swizzles
+
+(* Find *)
+
+let rec find ~local name env f =
+  let open Monad.Option in
+  SymbolTable.find_opt name (f env)
+  >>?
+  match env.parent with
+  | Some penv when not local ->
+      find ~local name penv f
+  | _ ->
+      None
+
+let find_constant ~local name env =
+  let f env = env.constants in
+  find ~local name env f
+
+let find_constant_type ~local name env =
+  match find_constant ~local name env with
+  | Some Located.{loc; value= Bool _} ->
+      Some Located.{loc; value= Type.TypeRef "bool"}
+  | Some Located.{loc; value= Int _} ->
+      Some Located.{loc; value= Type.TypeRef "int"}
+  | Some Located.{loc; value= Float _} ->
+      Some Located.{loc; value= Type.TypeRef "float"}
+  | None ->
+      None
+
+let find_type ~local name env =
+  let f env = env.types in
+  find ~local name env f
+
+let find_pipeline ~local name env =
+  let f env = env.pipelines in
+  find ~local name env f
+
+let find_function ~local name env =
+  let f env = env.functions in
+  find ~local name env f
+
+let find_var ~local name env =
+  let f env = env.vars in
+  find ~local name env f
+
+let find_name ~local name env =
+  let open Monad.Option in
+  find_constant_type ~local name env
+  >>? find_type ~local name env >>? find_var ~local name env
+  >>? find_function ~local name env
+  >>? find_pipeline ~local name env
+
+let find_lvalue name env = find_var ~local:false name env
+
+let find_rvalue name env =
+  let open Monad.Option in
+  find_constant_type ~local:false name env
+  >>? find_var ~local:false name env
+  >>? find_function ~local:false name env
+  >>? find_pipeline ~local:false name env
+
+(* Exists *)
+let constant_exists name env = find_constant ~local:false name env <> None
+
+let type_exists name env = find_type ~local:false name env <> None
+
+let pipeline_exists name env = find_pipeline ~local:false name env <> None
+
+let function_exists name env = find_function ~local:false name env <> None
+
+let var_exists name env = find_var ~local:false name env <> None
+
+(* Add *)
+
+let add_constant name value env =
+  let () = assert (not (constant_exists name env)) in
+  {env with constants= SymbolTable.add name value env.constants}
+
+let add_type name typ env =
+  ( match typ.Located.value with
+  | Type.TypeRef refname ->
+      failwith
+        (Printf.sprintf
+           "Env.add_type: name=%s type=%s\n\
+            Type references should never be added to the environment directly"
+           name refname)
+  | _ ->
+      () ) ;
+  {env with types= SymbolTable.add name typ env.types}
+
+let add_pipeline name typ env =
+  let () = assert (not (pipeline_exists name env)) in
+  {env with pipelines= SymbolTable.add name typ env.pipelines}
+
+let add_function name typ env =
+  let () = assert (not (function_exists name env)) in
+  {env with functions= SymbolTable.add name typ env.functions}
+
+let add_var name typ env =
+  let () = assert (not (var_exists name env)) in
+  {env with vars= SymbolTable.add name typ env.vars}
+
+(* Constructors *)
+let empty id =
+  { id
+  ; parent= None
+  ; types= SymbolTable.empty
+  ; constants= SymbolTable.empty
+  ; vars= SymbolTable.empty
+  ; pipelines= SymbolTable.empty
+  ; functions= SymbolTable.empty }
 
 let global =
   let builtin_pos =
@@ -231,6 +252,31 @@ let global =
     (fun env (name, t) -> add_type name {loc= builtin_loc; value= t} env)
     (empty "global") builtins
 
+(* Scope *)
+let enter_module_scope id env =
+  let id = "module$" ^ id in
+  {(empty id) with parent= Some env}
+
+let enter_pipeline_scope id env =
+  let id = "pipeline$" ^ id in
+  {(empty id) with parent= Some env}
+
+let enter_renderer_scope id env =
+  let id = "renderer$" ^ id in
+  {(empty id) with parent= Some env}
+
+let enter_function_scope id env =
+  let id = "function$" ^ id in
+  {(empty id) with parent= Some env}
+
+let exit_scope env =
+  match env.parent with
+  | Some penv ->
+      penv
+  | None ->
+      failwith (Printf.sprintf "Trying to exit root scope: %s" env.id)
+
+(* Printing *)
 let filter_global env =
   SymbolTable.(
     let skip src k _ = not (mem k src) in

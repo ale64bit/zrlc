@@ -8,6 +8,17 @@ val global : t
 
 val empty : string -> t
 
+(* Scope *)
+val enter_module_scope : string -> t -> t
+
+val enter_pipeline_scope : string -> t -> t
+
+val enter_renderer_scope : string -> t -> t
+
+val enter_function_scope : string -> t -> t
+
+val exit_scope : t -> t
+
 (* Exists *)
 val constant_exists : string -> t -> bool
 
@@ -30,26 +41,24 @@ val add_function : string -> Type.t Located.t -> t -> t
 
 val add_var : string -> Type.t Located.t -> t -> t
 
-(* Scope *)
-val enter_pipeline_scope : string -> t -> t
+(* Find *)
+val find_constant : local:bool -> string -> t -> const_value Located.t option
 
-val enter_renderer_scope : string -> t -> t
+val find_constant_type : local:bool -> string -> t -> Type.t Located.t option
 
-val enter_function_scope : string -> t -> t
+val find_type : local:bool -> string -> t -> Type.t Located.t option
 
-val exit_scope : t -> t
+val find_pipeline : local:bool -> string -> t -> Type.t Located.t option
 
-(* Get *)
-val get_constant : string -> t -> const_value Located.t option
+val find_function : local:bool -> string -> t -> Type.t Located.t option
 
-val get_type : string -> t -> Type.t Located.t option
+val find_var : local:bool -> string -> t -> Type.t Located.t option
 
-val get_pipeline : string -> t -> Type.t Located.t option
+val find_name : local:bool -> string -> t -> Type.t Located.t option
 
-val get_function : string -> t -> Type.t Located.t option
+val find_lvalue : string -> t -> Type.t Located.t option
 
-val get_var : string -> t -> Type.t Located.t option
+val find_rvalue : string -> t -> Type.t Located.t option
 
-val find_name : string -> t -> Type.t Located.t option
-
+(* Printing *)
 val string_of_env : t -> string

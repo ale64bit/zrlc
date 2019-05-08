@@ -1,5 +1,5 @@
 open Lexing
-open Monad
+open Monad.Result
 
 type config = {source_file: string; verbose: bool; output_ast_file: string}
 
