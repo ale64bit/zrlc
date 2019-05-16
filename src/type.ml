@@ -6,7 +6,16 @@ type t =
   | Primitive of primitive_type
 [@@deriving to_yojson]
 
-and primitive_type = Bool | Int | UInt | Float | Double
+and primitive_type =
+  | Bool
+  | Int
+  | UInt
+  | Float
+  | Double
+  | Unit
+  | Atom
+  | AtomList
+  | AtomSet
 [@@deriving to_yojson]
 
 and field = {name: string; t: t} [@@deriving to_yojson]
@@ -63,3 +72,11 @@ let rec string_of_type = function
       "float"
   | Primitive Double ->
       "double"
+  | Primitive Unit ->
+      "unit"
+  | Primitive Atom ->
+      "atom"
+  | Primitive AtomList ->
+      "atomlist"
+  | Primitive AtomSet ->
+      "atomset"

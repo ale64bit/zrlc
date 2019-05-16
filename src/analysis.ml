@@ -8,11 +8,23 @@ type error =
   | `Unimplemented of string
   | `UnknownTypeName of string
   | `NonIntegerArraySize
+  | `NonIntegerArrayIndex of Ast.expression
   | `UndeclaredIdentifier of string
   | `AssignmentMismatch of int * int
   | `InvalidUnaryOperation of Ast.unop * Type.t
-  | `InvalidBinaryOperation of Type.t * Ast.binop * Type.t
-  | `NotAnExpression of string ]
+  | `InvalidBinaryOperation of Ast.expression * Type.t * Type.t
+  | `InvalidIndexOperation of Ast.expression * Type.t
+  | `InvalidCallOperation of Ast.expression * Type.t
+  | `NotAnExpression of string
+  | `NoSuchMember of Type.t * string
+  | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list
+  | `TooManyArguments of Ast.expression * Type.t list * Type.t list
+  | `NotEnoughIndices of Ast.expression * int * int
+  | `TooManyIndices of Ast.expression * int * int
+  | `MultipleValueInSingleValueContext of Ast.expression
+  | `MixedArgumentStyle of Ast.expression ]
+
+let error loc e = Error Located.{loc; value= e}
 
 let check_unique idfn errfn elems =
   List.fold_left
@@ -98,13 +110,13 @@ let build_function_environment env loc typ =
         (fun env Type.{name; t} -> Env.add_var name Located.{loc; value= t} env)
         env args
   | _ ->
-      failwith "Cannot build function environment from non-function type"
+      failwith "cannot build function environment from non-function type"
 
 let check_const_declaration env loc cd =
   let Ast.{cd_name; cd_value} = cd in
   match Env.find_name ~local:true cd_name env with
   | Some Located.{loc= prev_loc; _} ->
-      Error Located.{loc; value= `Redefinition (cd_name, prev_loc)}
+      error loc (`Redefinition (cd_name, prev_loc))
   | None -> (
     match cd_value.value with
     | Ast.BoolLiteral b ->
@@ -126,19 +138,16 @@ let check_const_declaration env loc cd =
         let cd = TypedAst.ConstDecl {cd_name; cd_value= (t, cd_value)} in
         Ok (env, cd)
     | _ ->
-        Error
-          Located.
-            { loc
-            ; value=
-                `Unimplemented
-                  "constant initializer must be a boolean, integer or float \
-                   literal" } )
+        error loc
+          (`Unimplemented
+            "constant initializer must be a boolean, integer or float literal")
+    )
 
 let check_type_declaration env loc td =
   let Ast.{td_name; td_type} = td in
   match Env.find_name ~local:true td_name env with
   | Some Located.{loc= prev_loc; _} ->
-      Error Located.{loc; value= `Redefinition (td_name, prev_loc)}
+      error loc (`Redefinition (td_name, prev_loc))
   | None -> (
     match td_type with
     | Record _ ->
@@ -146,59 +155,220 @@ let check_type_declaration env loc td =
         let env = Env.add_type td_name {loc; value= clean_type} env in
         let typed_td = TypedAst.TypeDecl {td_name; td_type= clean_type} in
         Ok (env, typed_td)
-    | TypeRef _ | Array _ | Function _ | Primitive _ ->
+    | _ ->
         failwith
           (Printf.sprintf
              "type %s: type declarations should always be Type.Record" td_name)
     )
 
 let check_unop loc op typ =
-  let err = Error Located.{loc; value= `InvalidUnaryOperation (op, typ)} in
+  let open Ast in
+  let open Type in
   match (op, typ) with
-  (* Unary Plus *)
-  | Ast.UPlus, Type.Primitive Bool ->
-      err
-  | Ast.UPlus, Type.Primitive pt ->
-      Ok (Type.Primitive pt)
-  (* Unary Minus *)
-  | Ast.UMinus, Type.Primitive Bool ->
-      err
-  | Ast.UMinus, Type.Primitive pt ->
-      Ok (Type.Primitive pt)
-  (* Logical Negation *)
-  | Ast.LogicalNot, Type.Primitive Bool ->
-      Ok (Type.Primitive Bool)
+  (* Unary Plus and Minus *)
+  | (UPlus | UMinus), TypeRef "int"
+  | (UPlus | UMinus), TypeRef "uint"
+  | (UPlus | UMinus), TypeRef "float"
+  | (UPlus | UMinus), TypeRef "double"
+  | (UPlus | UMinus), Primitive Int
+  | (UPlus | UMinus), Primitive UInt
+  | (UPlus | UMinus), Primitive Float
+  | (UPlus | UMinus), Primitive Double ->
+      Ok typ
+  (* Logical NOT *)
+  | LogicalNot, TypeRef "bool" | LogicalNot, Primitive Bool ->
+      Ok typ
   (* Bitwise Complement *)
-  | Ast.BitwiseComplement, Type.Primitive Int ->
-      Ok (Type.Primitive Int)
-  | Ast.BitwiseComplement, Type.Primitive UInt ->
-      Ok (Type.Primitive UInt)
-  (* Errors *)
+  | BitwiseComplement, TypeRef "int"
+  | BitwiseComplement, TypeRef "uint"
+  | BitwiseComplement, Primitive Int
+  | BitwiseComplement, Primitive UInt ->
+      Ok typ
   (* TODO: add cases for non-primitive builtin types *)
   | _, _ ->
+      error loc (`InvalidUnaryOperation (op, typ))
+
+let check_binop expr ltyp op rtyp =
+  let Located.{loc; _} = expr in
+  let open Ast in
+  let open Type in
+  match (ltyp, op, rtyp) with
+  (* Logical *)
+  | ( (Primitive Bool | TypeRef "bool")
+    , (LogicalOr | LogicalXor | LogicalAnd)
+    , (Primitive Bool | TypeRef "bool") ) ->
+      Ok (TypeRef "bool")
+  (* Bitwise *)
+  | ( (Primitive Int | TypeRef "int")
+    , (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight)
+    , (Primitive Int | TypeRef "int") ) ->
+      Ok (TypeRef "int")
+  (* Comparison *)
+  | ( (Primitive Bool | TypeRef "bool")
+    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
+    , (Primitive Bool | TypeRef "bool") )
+  | ( (Primitive Int | TypeRef "int")
+    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
+    , (Primitive Int | TypeRef "int") )
+  | ( (Primitive UInt | TypeRef "uint")
+    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
+    , (Primitive UInt | TypeRef "uint") )
+  | ( (Primitive Float | TypeRef "float")
+    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
+    , (Primitive Float | TypeRef "float") )
+  | ( (Primitive Double | TypeRef "double")
+    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
+    , (Primitive Double | TypeRef "double") ) ->
+      Ok (TypeRef "bool")
+  (* Arithmetic *)
+  | ( (Primitive Int | TypeRef "int")
+    , (Plus | Minus | Mult | Div | Mod)
+    , (Primitive Int | TypeRef "int") ) ->
+      Ok (TypeRef "int")
+  | ( (Primitive UInt | TypeRef "uint")
+    , (Plus | Minus | Mult | Div | Mod)
+    , (Primitive UInt | TypeRef "uint") ) ->
+      Ok (TypeRef "uint")
+  | ( (Primitive Float | TypeRef "float")
+    , (Plus | Minus | Mult | Div)
+    , (Primitive Float | TypeRef "float") ) ->
+      Ok (TypeRef "float")
+  | ( (Primitive Double | TypeRef "double")
+    , (Plus | Minus | Mult | Div)
+    , (Primitive Double | TypeRef "double") ) ->
+      Ok (TypeRef "double")
+  (* TODO: add cases for non-primitive builtin types *)
+  | _, _, _ ->
+      error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
+
+let check_access loc env typ id =
+  let err = error loc (`NoSuchMember (typ, id)) in
+  match typ with
+  | Type.TypeRef name -> (
+    match Env.find_name ~local:false name env with
+    | Some Located.{value= Type.Record fields; _} -> (
+      match List.find_opt (fun Type.{name; _} -> name = id) fields with
+      | Some Type.{t; _} ->
+          Ok t
+      | None ->
+          err )
+    | _ ->
+        err )
+  | _ ->
       err
 
-let check_binop loc ltyp op rtyp =
-  match (ltyp, op, rtyp) with
-  | _, _, _ ->
-      Error Located.{loc; value= `InvalidBinaryOperation (ltyp, op, rtyp)}
+let check_index expr a_expr a_type index_exprs index_types =
+  let Located.{loc; _} = expr in
+  match a_type with
+  | Type.Array (t, dims) ->
+      let have = List.length index_types in
+      let want = List.length dims in
+      if have < want then error loc (`NotEnoughIndices (a_expr, have, want))
+      else if have > want then error loc (`TooManyIndices (a_expr, have, want))
+      else
+        List.fold_left
+          (fun acc (index_expr, index_type) ->
+            acc >>= fun _ ->
+            match index_type with
+            | Type.(
+                Primitive Int | Primitive UInt | TypeRef "int" | TypeRef "uint")
+              ->
+                acc
+            | _ ->
+                let Located.{loc; _} = index_expr in
+                error loc (`NonIntegerArrayIndex index_expr) )
+          (Ok ())
+          (List.combine index_exprs index_types)
+        >>= fun _ -> Ok [t]
+  | _ ->
+      error loc (`InvalidIndexOperation (expr, a_type))
 
-let rec check_expr env expr =
+let check_call env expr f_expr f_type args_exprs args_types =
+  let Located.{loc; _} = expr in
+  match f_type with
+  | Type.Function (args, ret) -> (
+      let have = List.length args_types in
+      let want = List.length args in
+      let want_types = List.map (fun arg -> arg.Type.t) args in
+      if have < want then
+        error loc (`NotEnoughArguments (f_expr, args_types, want_types))
+      else if have > want then
+        error loc (`TooManyArguments (f_expr, args_types, want_types))
+      else
+        match f_expr with
+        | Located.{value= Ast.Id name; _} -> (
+            let is_function = Env.function_exists name env in
+            let is_pipeline = Env.pipeline_exists name env in
+            let is_named = function
+              | Located.{value= Ast.NamedArg _; _} ->
+                  true
+              | _ ->
+                  false
+            in
+            let all_named = List.for_all is_named args_exprs in
+            let all_unnamed =
+              List.exists (fun x -> not (is_named x)) args_exprs
+            in
+            match (is_function, is_pipeline, all_named, all_unnamed) with
+            | _, _, false, false ->
+                error loc (`MixedArgumentStyle expr)
+            | _ ->
+                (* 
+                 * TODO: implement 
+                 * Case #1: Actual function + unnamed arguments
+                 * Case #2: Actual function + named arguments
+                 * Case #3: Pipeline + unnamed arguments 
+                 * Case #4: Pipeline + named arguments
+                 * *)
+                Ok ret )
+        | _ ->
+            failwith
+              "function types should only be called from their IDs since they \
+               cannot be built anonymously" )
+  | _ ->
+      error loc (`InvalidCallOperation (f_expr, f_type))
+
+let rec check_single_value_expr env expr =
+  check_expr env expr >>= function
+  | [] ->
+      Ok (Type.Primitive Unit)
+  | [typ] ->
+      Ok typ
+  | _ ->
+      let Located.{loc; _} = expr in
+      error loc (`MultipleValueInSingleValueContext expr)
+
+and check_expr env expr =
   let Located.{loc; value} = expr in
   let err =
-    Error
-      Located.{loc; value= `Unimplemented "can't check this expression yet"}
+    error loc
+      (`Unimplemented
+        (Printf.sprintf "can't check this expression yet: %s"
+           (Ast.string_of_expression expr)))
   in
   match value with
-  | Ast.Access _ ->
-      (* TODO: implement *)
-      err
-  | Ast.Index _ ->
-      (* TODO: implement *)
-      err
-  | Ast.Call _ ->
-      (* TODO: implement *)
-      err
+  | Ast.Access (expr, id) ->
+      check_single_value_expr env expr >>= fun typ ->
+      check_access loc env typ id >>= fun typ -> Ok [typ]
+  | Ast.Index (a, indices) ->
+      check_single_value_expr env a >>= fun a_type ->
+      List.fold_left
+        (fun acc index ->
+          acc >>= fun indices ->
+          check_single_value_expr env index >>= fun index ->
+          Ok (index :: indices) )
+        (Ok []) indices
+      >>= fun indices_type ->
+      check_index expr a a_type indices (List.rev indices_type)
+  | Ast.Call (f, args) ->
+      check_single_value_expr env f >>= fun f_type ->
+      List.fold_left
+        (fun acc arg ->
+          acc >>= fun args ->
+          check_single_value_expr env arg >>= fun arg -> Ok (arg :: args) )
+        (Ok []) args
+      >>= fun args_type ->
+      check_call env expr f f_type args (List.rev args_type)
   | Ast.NamedArg _ ->
       (* TODO: implement *)
       err
@@ -206,45 +376,46 @@ let rec check_expr env expr =
       (* TODO: implement *)
       err
   | Ast.BinExpr (lhs, op, rhs) ->
-      check_expr env lhs >>= fun (ltyp, _) ->
-      check_expr env rhs >>= fun (rtyp, _) ->
-      check_binop loc ltyp op rtyp >>= fun typ -> Ok (typ, expr)
+      check_single_value_expr env lhs >>= fun ltyp ->
+      check_single_value_expr env rhs >>= fun rtyp ->
+      check_binop expr ltyp op rtyp >>= fun typ -> Ok [typ]
   | Ast.UnExpr (op, rhs) ->
-      check_expr env rhs >>= fun (typ, _) ->
-      check_unop loc op typ >>= fun typ -> Ok (typ, expr)
+      check_single_value_expr env rhs >>= fun typ ->
+      check_unop loc op typ >>= fun typ -> Ok [typ]
   | Ast.BoolLiteral _ ->
-      Ok (Type.TypeRef "bool", expr)
+      Ok [Type.TypeRef "bool"]
   | Ast.IntLiteral _ ->
-      Ok (Type.TypeRef "int", expr)
+      Ok [Type.TypeRef "int"]
   | Ast.FloatLiteral _ ->
-      Ok (Type.TypeRef "float", expr)
+      Ok [Type.TypeRef "float"]
   | Ast.Id id -> (
     match Env.find_rvalue id env with
     | Some Located.{value= typ; _} ->
-        Ok (typ, expr)
+        Ok [typ]
     | None -> (
       match Env.find_name ~local:false id env with
       | Some _ ->
-          Error Located.{loc; value= `NotAnExpression id}
+          error loc (`NotAnExpression id)
       | None ->
-          Error Located.{loc; value= `UndeclaredIdentifier id} ) )
+          error loc (`UndeclaredIdentifier id) ) )
 
 let check_var_declaration env loc Ast.{var_ids; var_values} =
   let num_vars, num_values = List.(length var_ids, length var_values) in
+  (* TODO: handle multiple-value functions *)
   if num_vars <> num_values then
-    Error Located.{loc; value= `AssignmentMismatch (num_vars, num_values)}
+    error loc (`AssignmentMismatch (num_vars, num_values))
   else
     let vvs = List.combine var_ids var_values in
     List.fold_left
       (fun acc (id, rhs) ->
         match Env.find_name ~local:true id env with
         | Some Located.{loc= prev_loc; _} ->
-            Error Located.{loc; value= `Redefinition (id, prev_loc)}
+            error loc (`Redefinition (id, prev_loc))
         | None ->
             acc >>= fun (env, typed_stmts) ->
-            check_expr env rhs >>= fun (typ, expr) ->
+            check_single_value_expr env rhs >>= fun typ ->
             let new_env = Env.(env |> add_var id Located.{loc; value= typ}) in
-            let stmt = TypedAst.Var {var_id= id; var_value= (typ, expr)} in
+            let stmt = TypedAst.Var {var_id= id; var_value= (typ, rhs)} in
             Ok (new_env, typed_stmts @ [(new_env, Located.{loc; value= stmt})])
         )
       (Ok (env, []))
@@ -272,7 +443,7 @@ let check_stmt env loc = function
 let check_function_declaration env loc fd =
   let Ast.{fd_name; fd_type; fd_body} = fd in
   check_type env loc fd_type >>= fun clean_type ->
-  let env = Env.enter_function_scope fd_name env in
+  let env = Env.enter_function_scope fd_name clean_type env in
   let env = build_function_environment env loc clean_type in
   List.fold_left
     (fun acc Located.{loc; value= stmt} ->
@@ -288,7 +459,7 @@ let check_pipeline_declaration_sig env loc pd =
   let Ast.{pd_name; pd_type; _} = pd in
   match Env.find_name ~local:true pd_name env with
   | Some Located.{loc= prev_loc; _} ->
-      Error Located.{loc; value= `Redefinition (pd_name, prev_loc)}
+      error loc (`Redefinition (pd_name, prev_loc))
   | None ->
       check_type env loc pd_type >>= fun clean_type ->
       Ok (Env.add_pipeline pd_name {loc; value= clean_type} env)
@@ -297,7 +468,7 @@ let check_function_sig env loc fd =
   let Ast.{fd_name; fd_type; _} = fd in
   match Env.find_name ~local:true fd_name env with
   | Some Located.{loc= prev_loc; _} ->
-      Error Located.{loc; value= `Redefinition (fd_name, prev_loc)}
+      error loc (`Redefinition (fd_name, prev_loc))
   | None ->
       check_type env loc fd_type >>= fun clean_type ->
       Ok (Env.add_function fd_name {loc; value= clean_type} env)
@@ -305,7 +476,7 @@ let check_function_sig env loc fd =
 let check_pipeline_declaration_body env loc pd =
   let Ast.{pd_name; pd_type; pd_functions} = pd in
   check_type env loc pd_type >>= fun clean_type ->
-  let env = Env.enter_pipeline_scope pd_name env in
+  let env = Env.enter_pipeline_scope pd_name clean_type env in
   let env = build_function_environment env loc clean_type in
   List.fold_left
     (fun acc Located.{loc; value} ->

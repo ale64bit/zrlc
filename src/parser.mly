@@ -42,7 +42,7 @@
 (* %right LOGICAL_NOT BITWISE_COMPLEMENT *)
 
 %start <Ast.root> program
-(* %{ open Ast %} *)
+(* %start <Ast.repl_elem> repl_elem *)
 
 %%
 
@@ -108,19 +108,42 @@ let func :=
   DEF; id = ID; fsign = function_signature; LBRACE; body = stmt*; RBRACE; 
     { {fd_name = id; fd_type = fsign; fd_body = body} }
 
+let var_declaration ==
+  VAR; 
+  var_ids=separated_nonempty_list(COMMA, ID); 
+  ASSIGN; 
+  var_values=separated_nonempty_list(COMMA, expr);
+    { Ast.Var {var_ids; var_values} }
+
+let assignment ==
+  lhs=separated_nonempty_list(COMMA, lvalue); 
+  op=assign_op; 
+  rhs=separated_nonempty_list(COMMA, expr);
+    { Ast.Assignment {asg_op=op; asg_lvalues=lhs; asg_rvalues=rhs} }
+
+let if_stmt ==
+  IF; cond=expr; LBRACE; stmts=stmt*; RBRACE;
+    { Ast.If {if_cond=cond; if_body=stmts} }
+
+let for_iter ==
+  FOR; id=ID; IN; it=expr; LBRACE; stmts=stmt*; RBRACE;
+    { Ast.ForIter {foriter_id=id; foriter_it=it; foriter_body=stmts} }  
+
+let for_range ==
+  FOR; id=ID; ASSIGN; lo=expr; TO; hi=expr; LBRACE; stmts=stmt*; RBRACE;
+    { Ast.ForRange {forrange_id=id; forrange_from=lo; forrange_to=hi; forrange_body=stmts} }
+
+let return ==
+  RETURN; ~ = separated_nonempty_list(COMMA, expr); <Ast.Return>
+
 let stmt :=
   located(
-  | VAR; ids=separated_nonempty_list(COMMA, ID); ASSIGN; rhs=separated_nonempty_list(COMMA, expr);
-    { Ast.Var {var_ids=ids; var_values=rhs} }
-  | lhs=separated_nonempty_list(COMMA, lvalue); op=assign_op; rhs=separated_nonempty_list(COMMA, expr);
-    { Ast.Assignment {asg_op=op; asg_lvalues=lhs; asg_rvalues=rhs} }
-  | IF; cond=expr; LBRACE; stmts=stmt*; RBRACE;
-    { Ast.If {if_cond=cond; if_body=stmts} }
-  | FOR; id=ID; IN; it=expr; LBRACE; stmts=stmt*; RBRACE;
-    { Ast.ForIter {foriter_id=id; foriter_it=it; foriter_body=stmts} }  
-  | FOR; id=ID; ASSIGN; lo=expr; TO; hi=expr; LBRACE; stmts=stmt*; RBRACE;
-    { Ast.ForRange {forrange_id=id; forrange_from=lo; forrange_to=hi; forrange_body=stmts} }
-  | RETURN; ~ = separated_nonempty_list(COMMA, expr); <Ast.Return>
+  | var_declaration
+  | assignment
+  | if_stmt
+  | for_iter
+  | for_range
+  | return
   )
 
 let expr :=

@@ -6,4 +6,6 @@ end
 
 module Result = struct
   let ( >>= ) m f = match m with Ok a -> f a | Error e -> Error e
+
+  let from_opt o err = match o with Some a -> Ok a | None -> err
 end

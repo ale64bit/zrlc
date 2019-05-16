@@ -1,6 +1,14 @@
 type const_value = Bool of bool | Int of int | Float of float
 [@@deriving to_yojson]
 
+type summary =
+  | Global
+  | Module of string
+  | Pipeline of Type.t
+  | Renderer of Type.t
+  | Function of Type.t
+[@@deriving to_yojson]
+
 type t [@@deriving to_yojson]
 
 (* Constructors *)
@@ -11,11 +19,11 @@ val empty : string -> t
 (* Scope *)
 val enter_module_scope : string -> t -> t
 
-val enter_pipeline_scope : string -> t -> t
+val enter_pipeline_scope : string -> Type.t -> t -> t
 
-val enter_renderer_scope : string -> t -> t
+val enter_renderer_scope : string -> Type.t -> t -> t
 
-val enter_function_scope : string -> t -> t
+val enter_function_scope : string -> Type.t -> t -> t
 
 val exit_scope : t -> t
 

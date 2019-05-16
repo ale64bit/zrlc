@@ -15,8 +15,19 @@ TODO
     - generate vertex input attributes & binding info
     - emit GLSL code and compile into spirv arrays
 
+How to optimize descriptor set allocation?
+===========================================================================
+def P(a: A, b: B, c: C) { ... }
+
+def main(xs: atomset) {
+  for x in xs {
+    rt += P(a=x, b=x, c=x)
+  }
+}
+
 Demo ideas
 ===========================================================================
+- hello world
 - deferred
 - culling (tiled deferred maybe?)
 - many/different lights

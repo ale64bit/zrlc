@@ -19,8 +19,17 @@ let const_value_symbol_table_to_yojson st =
   let f (k, v) = (k, located_const_value_to_yojson v) in
   `Assoc (List.map f (SymbolTable.bindings st))
 
+type summary =
+  | Global
+  | Module of string
+  | Pipeline of Type.t
+  | Renderer of Type.t
+  | Function of Type.t
+[@@deriving to_yojson]
+
 type t =
   { id: string
+  ; summary: summary
   ; parent: t option
   ; types: type_symbol_table
   ; constants: const_value_symbol_table
@@ -187,6 +196,7 @@ let add_var name typ env =
 (* Constructors *)
 let empty id =
   { id
+  ; summary= Global
   ; parent= None
   ; types= SymbolTable.empty
   ; constants= SymbolTable.empty
@@ -255,19 +265,19 @@ let global =
 (* Scope *)
 let enter_module_scope id env =
   let id = "module$" ^ id in
-  {(empty id) with parent= Some env}
+  {(empty id) with summary= Module id; parent= Some env}
 
-let enter_pipeline_scope id env =
+let enter_pipeline_scope id typ env =
   let id = "pipeline$" ^ id in
-  {(empty id) with parent= Some env}
+  {(empty id) with summary= Pipeline typ; parent= Some env}
 
-let enter_renderer_scope id env =
+let enter_renderer_scope id typ env =
   let id = "renderer$" ^ id in
-  {(empty id) with parent= Some env}
+  {(empty id) with summary= Renderer typ; parent= Some env}
 
-let enter_function_scope id env =
+let enter_function_scope id typ env =
   let id = "function$" ^ id in
-  {(empty id) with parent= Some env}
+  {(empty id) with summary= Function typ; parent= Some env}
 
 let exit_scope env =
   match env.parent with

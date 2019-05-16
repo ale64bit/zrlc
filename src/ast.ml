@@ -117,3 +117,82 @@ type root = {module_name: string; elements: toplevel_elem list}
 [@@deriving to_yojson]
 
 let string_of_ast root = Yojson.Safe.pretty_to_string (root_to_yojson root)
+
+let string_of_unop = function
+  | UPlus ->
+      "+"
+  | UMinus ->
+      "-"
+  | LogicalNot ->
+      "!"
+  | BitwiseComplement ->
+      "~"
+
+let string_of_binop = function
+  | LogicalOr ->
+      "||"
+  | LogicalXor ->
+      "^^"
+  | LogicalAnd ->
+      "&&"
+  | BitwiseOr ->
+      "|"
+  | BitwiseXor ->
+      "^"
+  | BitwiseAnd ->
+      "&"
+  | Equal ->
+      "=="
+  | NotEqual ->
+      "!="
+  | LessThan ->
+      "<"
+  | GreaterThan ->
+      ">"
+  | LessOrEqual ->
+      "<="
+  | GreaterOrEqual ->
+      ">="
+  | ShiftLeft ->
+      "<<"
+  | ShiftRight ->
+      ">>"
+  | Plus ->
+      "+"
+  | Minus ->
+      "-"
+  | Mult ->
+      "*"
+  | Div ->
+      "/"
+  | Mod ->
+      "%"
+
+let rec string_of_expression Located.{value= e; _} =
+  match e with
+  | Access (lhs, member) ->
+      Printf.sprintf "%s.%s" (string_of_expression lhs) member
+  | Index (lhs, indices) ->
+      Printf.sprintf "%s[%s]" (string_of_expression lhs)
+        (String.concat ", " (List.map string_of_expression indices))
+  | Call (lhs, args) ->
+      Printf.sprintf "%s(%s)" (string_of_expression lhs)
+        (String.concat ", " (List.map string_of_expression args))
+  | NamedArg (id, expr) ->
+      Printf.sprintf "%s = %s" id (string_of_expression expr)
+  | BundledArg exprs ->
+      Printf.sprintf "{%s}"
+        (String.concat ", " (List.map string_of_expression exprs))
+  | BinExpr (lhs, op, rhs) ->
+      Printf.sprintf "%s %s %s" (string_of_expression lhs) (string_of_binop op)
+        (string_of_expression rhs)
+  | UnExpr (op, rhs) ->
+      Printf.sprintf "%s %s" (string_of_unop op) (string_of_expression rhs)
+  | BoolLiteral b ->
+      string_of_bool b
+  | IntLiteral i ->
+      string_of_int i
+  | FloatLiteral f ->
+      string_of_float f
+  | Id id ->
+      id

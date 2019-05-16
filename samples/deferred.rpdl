@@ -23,7 +23,7 @@ type PerObject {
 }
 
 type Environment {
-  lights: [Light, kLightCount]
+  lights: [kLightCount]Light
   viewPos: vec4
 }
 
