@@ -1,10 +1,5 @@
 TODO
 ===========================================================================
-- analysis pass
-  - environment
-  - type check
-- unit test
-- error reporting
 - code generation (vulkan,dummy)
   - c++ equivalent types (how to statically check offsets+alignment?)
   - graphics pipeline
@@ -14,6 +9,12 @@ TODO
     - assign (set,binding) to descriptor sets
     - generate vertex input attributes & binding info
     - emit GLSL code and compile into spirv arrays
+
+Open Questions
+===========================================================================
+- how to deal with overloaded constructors for builtin types? e.g. vec4(vec3,float)
+- how to report multiple errors when possible? Need better transformer for result type
+- how to encode type invariants? (see https://discuss.ocaml.org/t/matching-incompatible-gadt-constructors/682/4)
 
 How to optimize descriptor set allocation?
 ===========================================================================
@@ -27,10 +28,10 @@ def main(xs: atomset) {
 
 Demo ideas
 ===========================================================================
-- hello world
+- hello world triangle
 - deferred
 - culling (tiled deferred maybe?)
-- many/different lights
+- many/different dynamic lights
 - post effect (bloom, or motion blur)
 - loaded model (Sponza?)
 

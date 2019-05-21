@@ -17,6 +17,8 @@ val global : t
 val empty : string -> t
 
 (* Scope *)
+val scope_summary : t -> summary
+
 val enter_module_scope : string -> t -> t
 
 val enter_pipeline_scope : string -> Type.t -> t -> t

@@ -20,10 +20,7 @@ let tests =
          >:: test_string_of_type (Type.Primitive Double) "double"
        ; "test_record"
          >:: test_string_of_type
-               Type.(
-                 Record
-                   [ {name= "x"; t= Primitive Int}
-                   ; {name= "f"; t= Primitive Float} ])
+               Type.(Record [("x", Primitive Int); ("f", Primitive Float)])
                "record { x: int; f: float }"
        ; "test_array"
          >:: test_string_of_type
@@ -33,8 +30,7 @@ let tests =
          >:: test_string_of_type
                Type.(
                  Function
-                   ( [ {name= "a"; t= Primitive Double}
-                     ; {name= "b"; t= Primitive Int} ]
+                   ( [("a", Primitive Double); ("b", Primitive Int)]
                    , [Primitive Double] ))
                "fun (a: double, b: int) -> (double)" ]
 

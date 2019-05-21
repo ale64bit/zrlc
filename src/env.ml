@@ -90,7 +90,7 @@ let generate_fields size ptname tprefix =
         if sz = 1 then Type.TypeRef ptname
         else Type.TypeRef (Printf.sprintf "%s%d" tprefix sz)
       in
-      {Type.name; t} )
+      (name, t) )
     swizzles
 
 (* Find *)
@@ -204,12 +204,18 @@ let empty id =
   ; pipelines= SymbolTable.empty
   ; functions= SymbolTable.empty }
 
+let generate_constructor_type base params ret =
+  Type.Function
+    ( List.init (String.length params) (fun i ->
+          (Char.escaped params.[i], Type.TypeRef base) )
+    , [Type.TypeRef ret] )
+
 let global =
   let builtin_pos =
     Lexing.{pos_fname= "builtin"; pos_lnum= 0; pos_cnum= 0; pos_bol= 0}
   in
   let builtin_loc = (builtin_pos, builtin_pos) in
-  let builtins =
+  let builtin_types =
     [ (* Primitive types *)
       ("bool", Type.Primitive Bool)
     ; ("int", Type.Primitive Int)
@@ -258,11 +264,44 @@ let global =
     ; ("dmat4x3", Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 3]))
     ; ("dmat4x4", Type.Array (Type.TypeRef "double", [OfInt 4; OfInt 4])) ]
   in
-  List.fold_left
-    (fun env (name, t) -> add_type name {loc= builtin_loc; value= t} env)
-    (empty "global") builtins
+  let builtin_functions =
+    [ (* Primitive types *)
+      ("uint", generate_constructor_type "int" "i" "uint")
+    ; ("double", generate_constructor_type "float" "f" "double")
+    ; (* Built-in vector types *)
+      ("bvec2", generate_constructor_type "bool" "xy" "bvec2")
+    ; ("bvec3", generate_constructor_type "bool" "xyz" "bvec3")
+    ; ("bvec4", generate_constructor_type "bool" "xyzw" "bvec4")
+    ; ("ivec2", generate_constructor_type "int" "xy" "ivec2")
+    ; ("ivec3", generate_constructor_type "int" "xyz" "ivec3")
+    ; ("ivec4", generate_constructor_type "int" "xyzw" "ivec4")
+    ; ("uvec2", generate_constructor_type "uint" "xy" "uvec2")
+    ; ("uvec3", generate_constructor_type "uint" "xyz" "uvec3")
+    ; ("uvec4", generate_constructor_type "uint" "xyzw" "uvec4")
+    ; ("vec2", generate_constructor_type "float" "xy" "vec2")
+    ; ("vec3", generate_constructor_type "float" "xyz" "vec3")
+    ; ("vec4", generate_constructor_type "float" "xyzw" "vec4")
+    ; ("dvec2", generate_constructor_type "double" "xy" "dvec2")
+    ; ("dvec3", generate_constructor_type "double" "xyz" "dvec3")
+    ; ("dvec4", generate_constructor_type "double" "xyzw" "dvec4")
+      (* TODO: Built-in matrix types *)
+     ]
+  in
+  let env =
+    List.fold_left
+      (fun env (name, t) -> add_type name {loc= builtin_loc; value= t} env)
+      (empty "global") builtin_types
+  in
+  let env =
+    List.fold_left
+      (fun env (name, f) -> add_function name {loc= builtin_loc; value= f} env)
+      env builtin_functions
+  in
+  env
 
 (* Scope *)
+let scope_summary env = env.summary
+
 let enter_module_scope id env =
   let id = "module$" ^ id in
   {(empty id) with summary= Module id; parent= Some env}

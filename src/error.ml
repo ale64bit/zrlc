@@ -69,6 +69,17 @@ let string_of_error Located.{loc; value} =
         (Ast.string_of_expression expr)
         (String.concat ", " (List.map Type.string_of_type have))
         (String.concat ", " (List.map Type.string_of_type want))
+  | `NotEnoughReturnArguments (have, want) ->
+      Printf.sprintf
+        "%s: error: not enough arguments to return\n\thave (%s)\n\twant (%s)"
+        pos
+        (String.concat ", " (List.map Type.string_of_type have))
+        (String.concat ", " (List.map Type.string_of_type want))
+  | `TooManyReturnArguments (have, want) ->
+      Printf.sprintf
+        "%s: error: too many arguments to return\n\thave (%s)\n\twant (%s)" pos
+        (String.concat ", " (List.map Type.string_of_type have))
+        (String.concat ", " (List.map Type.string_of_type want))
   | `NotEnoughIndices (expr, have, want) ->
       Printf.sprintf
         "%s: error: not enough indices when accessing %s: have %d, want %d" pos
@@ -85,6 +96,25 @@ let string_of_error Located.{loc; value} =
   | `MixedArgumentStyle expr ->
       Printf.sprintf
         "%s: error: cannot use both named and unnamed argument style in %s" pos
+        (Ast.string_of_expression expr)
+  | `InvalidArgument (expr, got, want, f) ->
+      Printf.sprintf
+        "%s: error: cannot use %s (type %s) as type %s in argument to %s" pos
+        (Ast.string_of_expression expr)
+        (Type.string_of_type got) (Type.string_of_type want) f
+  | `InvalidReturnArgument (expr, got, want) ->
+      Printf.sprintf
+        "%s: error: cannot use %s (type %s) as type %s in return argument" pos
+        (Ast.string_of_expression expr)
+        (Type.string_of_type got) (Type.string_of_type want)
+  | `MissingNamedArgument (name, f) ->
+      Printf.sprintf "%s: error: missing named argument '%s' in call to %s" pos
+        name f
+  | `UnexpectedNamedArgument (name, f) ->
+      Printf.sprintf "%s: error: unexpected named argument '%s' in call to %s"
+        pos name f
+  | `UnitUsedAsValue expr ->
+      Printf.sprintf "%s: error: %s used as value" pos
         (Ast.string_of_expression expr)
 
 let debug_string_of_error Located.{loc; value} =
@@ -146,6 +176,14 @@ let debug_string_of_error Located.{loc; value} =
         (Ast.string_of_expression expr)
         (String.concat ", " (List.map Type.string_of_type have))
         (String.concat ", " (List.map Type.string_of_type want))
+  | `NotEnoughReturnArguments (have, want) ->
+      Printf.sprintf "%s: NotEnoughReturnArguments (have=%s, want=%s)" loc
+        (String.concat ", " (List.map Type.string_of_type have))
+        (String.concat ", " (List.map Type.string_of_type want))
+  | `TooManyReturnArguments (have, want) ->
+      Printf.sprintf "%s: TooManyReturnArguments (have=%s, want=%s)" loc
+        (String.concat ", " (List.map Type.string_of_type have))
+        (String.concat ", " (List.map Type.string_of_type want))
   | `NotEnoughIndices (expr, have, want) ->
       Printf.sprintf "%s: NotEnoughIndices (expr=%s, have=%d, want=%d)" loc
         (Ast.string_of_expression expr)
@@ -159,4 +197,19 @@ let debug_string_of_error Located.{loc; value} =
         (Ast.string_of_expression expr)
   | `MixedArgumentStyle expr ->
       Printf.sprintf "%s: MixedArgumentStyle expr=%s" loc
+        (Ast.string_of_expression expr)
+  | `InvalidArgument (expr, got, want, f) ->
+      Printf.sprintf "%s: InvalidArgument (expr=%s, got=%s, want=%s, f=%s)" loc
+        (Ast.string_of_expression expr)
+        (Type.string_of_type got) (Type.string_of_type want) f
+  | `InvalidReturnArgument (expr, got, want) ->
+      Printf.sprintf "%s: InvalidReturnArgument (expr=%s, got=%s, want=%s)" loc
+        (Ast.string_of_expression expr)
+        (Type.string_of_type got) (Type.string_of_type want)
+  | `MissingNamedArgument (name, f) ->
+      Printf.sprintf "%s: MissingNamedArgument (name=%s, f=%s)" loc name f
+  | `UnexpectedNamedArgument (name, f) ->
+      Printf.sprintf "%s: UnexpectedNamedArgument (name=%s, f=%s)" loc name f
+  | `UnitUsedAsValue expr ->
+      Printf.sprintf "%s: UnitUsedAsValue expr=%s" loc
         (Ast.string_of_expression expr)

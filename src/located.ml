@@ -6,15 +6,6 @@ let string_of_position pos =
 
 let lexing_position_to_yojson pos = `String (string_of_position pos)
 
-(*
-let lexing_position_to_yojson Lexing.{pos_fname; pos_lnum; pos_bol; pos_cnum} =
-  `Assoc
-    [ ("pos_fname", `String pos_fname)
-    ; ("pos_lnum", `Int pos_lnum)
-    ; ("pos_bol", `Int pos_bol)
-    ; ("pos_cnum", `Int pos_cnum) ]
-*)
-
 type 'a t = {loc: lexing_position * lexing_position; value: 'a}
 [@@deriving to_yojson]
 

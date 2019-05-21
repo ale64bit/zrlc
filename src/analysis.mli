@@ -16,18 +16,16 @@ type error =
   | `NoSuchMember of Type.t * string
   | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list
   | `TooManyArguments of Ast.expression * Type.t list * Type.t list
+  | `NotEnoughReturnArguments of Type.t list * Type.t list
+  | `TooManyReturnArguments of Type.t list * Type.t list
   | `NotEnoughIndices of Ast.expression * int * int
   | `TooManyIndices of Ast.expression * int * int
   | `MultipleValueInSingleValueContext of Ast.expression
-  | `MixedArgumentStyle of Ast.expression ]
+  | `MixedArgumentStyle of Ast.expression
+  | `InvalidArgument of Ast.expression * Type.t * Type.t * string
+  | `InvalidReturnArgument of Ast.expression * Type.t * Type.t
+  | `MissingNamedArgument of string * string
+  | `UnexpectedNamedArgument of string * string
+  | `UnitUsedAsValue of Ast.expression ]
 
 val check : Ast.root -> (TypedAst.root, [> error] Located.t) result
-
-val check_expr :
-  Env.t -> Ast.expression -> (Type.t list, [> error] Located.t) result
-
-val check_stmt :
-     Env.t
-  -> Lexing.position * Lexing.position
-  -> Ast.raw_stmt
-  -> (Env.t * TypedAst.stmt list, [> error] Located.t) result

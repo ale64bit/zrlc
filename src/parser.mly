@@ -42,7 +42,6 @@
 (* %right LOGICAL_NOT BITWISE_COMPLEMENT *)
 
 %start <Ast.root> program
-(* %start <Ast.repl_elem> repl_elem *)
 
 %%
 
@@ -69,7 +68,7 @@ let type_def :=
 
 let field_decl :=
   ids = separated_list(COMMA, ID); COLON; t=type_id;
-    { List.map (fun id -> {Type.name=id; Type.t=t}) ids }
+    { List.map (fun id -> (id, t)) ids }
 
 let type_id :=
   | ~ = ID; <Type.TypeRef>

@@ -1,8 +1,8 @@
 type t =
   | TypeRef of string
-  | Record of field list
+  | Record of (string * t) list
   | Array of t * const list
-  | Function of field list * t list
+  | Function of (string * t) list * t list
   | Primitive of primitive_type
 [@@deriving to_yojson]
 
@@ -18,8 +18,6 @@ and primitive_type =
   | AtomSet
 [@@deriving to_yojson]
 
-and field = {name: string; t: t} [@@deriving to_yojson]
-
 and const =
   | OfBool of bool
   | OfInt of int
@@ -33,7 +31,7 @@ let rec string_of_type = function
   | Record fields ->
       let field_strs =
         List.map
-          (fun {name; t} -> Printf.sprintf "%s: %s" name (string_of_type t))
+          (fun (name, t) -> Printf.sprintf "%s: %s" name (string_of_type t))
           fields
       in
       "record { " ^ String.concat "; " field_strs ^ " }"
@@ -55,7 +53,7 @@ let rec string_of_type = function
   | Function (args, rets) ->
       let arg_strs =
         List.map
-          (fun {name; t} -> Printf.sprintf "%s: %s" name (string_of_type t))
+          (fun (name, t) -> Printf.sprintf "%s: %s" name (string_of_type t))
           args
       in
       let ret_strs = List.map string_of_type rets in

@@ -8,7 +8,7 @@ pipeline Pipeline(): vec4 {
   }
 
   def fragment(pos: vec3): vec4 {
-    return vec4(pos, 1.0)
+    return vec4(pos.x, pos.y, pos.z, 1.0)
   }
 }
 
