@@ -598,6 +598,7 @@ let check_return env loc exprs =
         error loc (`TooManyReturnArguments (have_types, ret_types))
       in
       let errfn have_expr have_type want_type =
+        let Located.{loc; _} = have_expr in
         error loc (`InvalidReturnArgument (have_expr, have_type, want_type))
       in
       check_expr_list env exprs ret_types less_errfn more_errfn errfn

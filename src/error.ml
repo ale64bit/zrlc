@@ -97,16 +97,16 @@ let string_of_error Located.{loc; value} =
       Printf.sprintf
         "%s: error: cannot use both named and unnamed argument style in %s" pos
         (Ast.string_of_expression expr)
-  | `InvalidArgument (expr, got, want, f) ->
+  | `InvalidArgument (expr, have, want, f) ->
       Printf.sprintf
         "%s: error: cannot use %s (type %s) as type %s in argument to %s" pos
         (Ast.string_of_expression expr)
-        (Type.string_of_type got) (Type.string_of_type want) f
-  | `InvalidReturnArgument (expr, got, want) ->
+        (Type.string_of_type have) (Type.string_of_type want) f
+  | `InvalidReturnArgument (expr, have, want) ->
       Printf.sprintf
         "%s: error: cannot use %s (type %s) as type %s in return argument" pos
         (Ast.string_of_expression expr)
-        (Type.string_of_type got) (Type.string_of_type want)
+        (Type.string_of_type have) (Type.string_of_type want)
   | `MissingNamedArgument (name, f) ->
       Printf.sprintf "%s: error: missing named argument '%s' in call to %s" pos
         name f
@@ -198,14 +198,16 @@ let debug_string_of_error Located.{loc; value} =
   | `MixedArgumentStyle expr ->
       Printf.sprintf "%s: MixedArgumentStyle expr=%s" loc
         (Ast.string_of_expression expr)
-  | `InvalidArgument (expr, got, want, f) ->
-      Printf.sprintf "%s: InvalidArgument (expr=%s, got=%s, want=%s, f=%s)" loc
+  | `InvalidArgument (expr, have, want, f) ->
+      Printf.sprintf "%s: InvalidArgument (expr=%s, have=%s, want=%s, f=%s)"
+        loc
         (Ast.string_of_expression expr)
-        (Type.string_of_type got) (Type.string_of_type want) f
-  | `InvalidReturnArgument (expr, got, want) ->
-      Printf.sprintf "%s: InvalidReturnArgument (expr=%s, got=%s, want=%s)" loc
+        (Type.string_of_type have) (Type.string_of_type want) f
+  | `InvalidReturnArgument (expr, have, want) ->
+      Printf.sprintf "%s: InvalidReturnArgument (expr=%s, have=%s, want=%s)"
+        loc
         (Ast.string_of_expression expr)
-        (Type.string_of_type got) (Type.string_of_type want)
+        (Type.string_of_type have) (Type.string_of_type want)
   | `MissingNamedArgument (name, f) ->
       Printf.sprintf "%s: MissingNamedArgument (name=%s, f=%s)" loc name f
   | `UnexpectedNamedArgument (name, f) ->

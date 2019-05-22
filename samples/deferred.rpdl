@@ -68,7 +68,7 @@ pipeline DeferredPass(gbuffer: GBuffer, env: Environment) {
     var fragPos = texture(gbuffer.samplerPosition, uv).rgb
     var normal = texture(gbuffer.samplerNormal, uv).rgb
     var albedo = texture(gbuffer.samplerAlbedo, uv)
-    
+
     var fragColor = albedo.rgb * kAmbient
     for l in env.lights {
       fragColor += contribution(l, fragPos, normal, ...)

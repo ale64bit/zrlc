@@ -1,5 +1,7 @@
 TODO
 ===========================================================================
+- analysis
+  - error: missing return statement
 - code generation (vulkan,dummy)
   - c++ equivalent types (how to statically check offsets+alignment?)
   - graphics pipeline
