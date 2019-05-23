@@ -8,7 +8,9 @@ type var_declaration = {var_ids: string list; var_values: expression list}
 [@@deriving to_yojson]
 
 and assignment =
-  {asg_op: Ast.assignop; asg_lvalue: expression; asg_rvalue: expression}
+  { asg_op: Ast.assignop
+  ; asg_lvalues: expression list
+  ; asg_rvalues: expression list }
 [@@deriving to_yojson]
 
 and if_stmt = {if_cond: expression; if_body: stmt list} [@@deriving to_yojson]

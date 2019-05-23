@@ -163,6 +163,8 @@ let function_exists name env = find_function ~local:false name env <> None
 
 let var_exists name env = find_var ~local:false name env <> None
 
+let name_exists name env = find_name ~local:false name env <> None
+
 (* Add *)
 
 let add_constant name value env =

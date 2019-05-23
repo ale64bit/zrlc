@@ -40,6 +40,8 @@ val function_exists : string -> t -> bool
 
 val var_exists : string -> t -> bool
 
+val name_exists : string -> t -> bool
+
 (* Add *)
 val add_constant : string -> const_value Located.t -> t -> t
 

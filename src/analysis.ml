@@ -30,7 +30,10 @@ type error =
   | `InvalidReturnArgument of Ast.expression * Type.t * Type.t
   | `MissingNamedArgument of string * string
   | `UnexpectedNamedArgument of string * string
-  | `UnitUsedAsValue of Ast.expression ]
+  | `UnitUsedAsValue of Ast.expression
+  | `NotAnLValue of Ast.expression
+  | `InvalidSingleAssignment of Ast.expression * Type.t * Type.t
+  | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t ]
 
 (* Helpers *)
 
@@ -198,9 +201,9 @@ let check_unop loc op typ =
       error loc (`InvalidUnaryOperation (op, typ))
 
 let check_binop expr ltyp op rtyp =
-  let Located.{loc; _} = expr in
   let open Ast in
   let open Type in
+  let Located.{loc; _} = expr in
   match (ltyp, op, rtyp) with
   (* Logical *)
   | ( (Primitive Bool | TypeRef "bool")
@@ -247,8 +250,28 @@ let check_binop expr ltyp op rtyp =
     , (Primitive Double | TypeRef "double") ) ->
       Ok (TypeRef "double")
   (* TODO: add cases for non-primitive builtin types *)
-  | _, _, _ ->
+  | _ ->
       error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
+
+let check_assignop ltyp op rtyp err =
+  let open Ast in
+  let open Type in
+  match (ltyp, op, rtyp) with
+  | (Primitive Int | TypeRef "int"), _, (Primitive Int | TypeRef "int") ->
+      Ok ()
+  | (Primitive UInt | TypeRef "uint"), _, (Primitive UInt | TypeRef "uint") ->
+      Ok ()
+  | ( (Primitive Float | TypeRef "float")
+    , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
+    , (Primitive Float | TypeRef "float") ) ->
+      Ok ()
+  | ( (Primitive Double | TypeRef "double")
+    , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
+    , (Primitive Double | TypeRef "double") ) ->
+      Ok ()
+  (* TODO: add cases for non-primitive builtin types *)
+  | _ ->
+      err
 
 let rec check_access env loc expr id =
   check_single_value_expr env expr >>= fun typ ->
@@ -259,7 +282,7 @@ let rec check_access env loc expr id =
     | Some Located.{value= Type.Record fields; _} -> (
       match List.find_opt (fun (name, _) -> name = id) fields with
       | Some (_, t) ->
-          Ok [t]
+          Ok t
       | None ->
           err )
     | _ ->
@@ -296,7 +319,7 @@ and check_index env loc expr index_exprs =
                 error loc (`NonIntegerArrayIndex index_expr) )
           (Ok ())
           (List.combine index_exprs index_types)
-        >>= fun () -> Ok [t]
+        >>= fun () -> Ok t
   | _ ->
       let expr = Located.{loc; value= Ast.Index (expr, index_exprs)} in
       error loc (`InvalidIndexOperation (expr, expr_type))
@@ -457,9 +480,9 @@ and check_expr env expr =
   let Located.{loc; value} = expr in
   match value with
   | Access (expr, id) ->
-      check_access env loc expr id
+      check_access env loc expr id >>= fun typ -> Ok [typ]
   | Index (expr, index_exprs) ->
-      check_index env loc expr index_exprs
+      check_index env loc expr index_exprs >>= fun typ -> Ok [typ]
   | Call (f_expr, arg_exprs) ->
       check_call env loc f_expr arg_exprs
   | NamedArg (_, expr) ->
@@ -485,7 +508,7 @@ and check_expr env expr =
 and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
   let num_have = List.length have_exprs in
   let num_want = List.length want_types in
-  if num_have = 1 then
+  if num_want > 1 && num_have = 1 then
     let have_expr = List.hd have_exprs in
     check_expr env have_expr >>= fun have_types ->
     let num_have = List.length have_types in
@@ -534,7 +557,7 @@ let check_var_declaration env loc ids exprs =
       (Ok env) (List.combine ids types)
   in
   match exprs with
-  | [expr] ->
+  | [expr] when List.length ids > 1 ->
       check_expr env expr >>= fun expr_types ->
       let num_vars, num_values = List.(length ids, length expr_types) in
       if num_values = 0 then error loc (`UnitUsedAsValue expr)
@@ -569,20 +592,97 @@ let check_var_declaration env loc ids exprs =
         in
         Ok (new_env, [(env, Located.{loc; value= typed_stmt})])
 
-(* TODO: check_assignment
-let check_assignment env loc Ast.{asg_op; asg_lvalues; asg_rvalues} =
-  let num_lhs = List.length asg_lvalues in
-  let num_rhs = List.length asg_rvalues in
-  if num_lhs <> num_rhs then error loc (`AssignmentMismatch (num_lhs, num_rhs))
-  else
-    List.fold_left
-    (fun acc (lhs, rhs) ->
-      acc >>= fun  (typed_lvals, typed_rvals) ->
-      check_single_value_expr 
-    )
-    (Ok ([], []))
-    (List.combine asg_lvalues asg_rvalues)
-*)
+let check_lvalue env expr =
+  let open Ast in
+  let Located.{loc; _} = expr in
+  match expr.value with
+  | Id id -> (
+    match Env.find_lvalue id env with
+    | Some Located.{value= expr_type; _} ->
+        Ok expr_type
+    | None ->
+        if Env.name_exists id env then error loc (`NotAnLValue expr)
+        else error loc (`UndeclaredIdentifier id) )
+  | Access (lhs, id) ->
+      check_access env loc lhs id
+  | Index (lhs, rhs) ->
+      check_index env loc lhs rhs
+  | _ ->
+      error loc (`NotAnLValue expr)
+
+let check_lvalues env exprs =
+  List.fold_results
+    (fun acc expr ->
+      acc >>= fun expr_types ->
+      check_lvalue env expr >>= fun expr_type -> Ok (expr_type :: expr_types)
+      )
+    (Ok []) exprs
+
+let check_single_assignment loc op lhs_types rhs_exprs rhs_types =
+  let () = assert (List.(length lhs_types = length rhs_types)) in
+  List.fold_left
+    (fun acc (lhs_type, (rhs_expr, rhs_type)) ->
+      acc >>= fun () ->
+      let err =
+        error loc (`InvalidSingleAssignment (rhs_expr, rhs_type, lhs_type))
+      in
+      check_assignop lhs_type op rhs_type err )
+    (Ok ())
+    List.(combine lhs_types (combine rhs_exprs rhs_types))
+
+let check_multiple_assignment loc op lhs_exprs lhs_types rhs_types =
+  let () = assert (List.(length lhs_types = length rhs_types)) in
+  List.fold_left
+    (fun acc ((lhs_expr, lhs_type), rhs_type) ->
+      acc >>= fun () ->
+      let err =
+        error loc (`InvalidMultipleAssignment (rhs_type, lhs_expr, lhs_type))
+      in
+      check_assignop lhs_type op rhs_type err )
+    (Ok ())
+    List.(combine (combine lhs_exprs lhs_types) rhs_types)
+
+let check_assignment env loc op lhs rhs =
+  let () = assert (List.length lhs > 0) in
+  let () = assert (List.length rhs > 0) in
+  match rhs with
+  | [expr] when List.length lhs > 1 ->
+      check_lvalues env lhs >>= fun lhs_types ->
+      check_expr env expr >>= fun rhs_types ->
+      let num_lhs, num_rhs = List.(length lhs_types, length rhs_types) in
+      if num_rhs = 0 then error loc (`UnitUsedAsValue expr)
+      else if num_lhs <> num_rhs then
+        error loc (`AssignmentMismatch (num_lhs, num_rhs))
+      else
+        check_multiple_assignment loc op lhs lhs_types rhs_types >>= fun () ->
+        let typed_stmt =
+          TypedAst.Assignment
+            { asg_op= op
+            ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
+            ; asg_rvalues= [(rhs_types, expr)] }
+        in
+        Ok (env, [(env, Located.{loc; value= typed_stmt})])
+  | _ ->
+      check_lvalues env lhs >>= fun lhs_types ->
+      List.fold_results
+        (fun acc expr ->
+          acc >>= fun expr_types ->
+          check_single_value_expr env expr >>= fun expr_type ->
+          Ok (expr_type :: expr_types) )
+        (Ok []) rhs
+      >>= fun rhs_types ->
+      let num_lhs, num_rhs = List.(length lhs_types, length rhs_types) in
+      if num_lhs <> num_rhs then
+        error loc (`AssignmentMismatch (num_lhs, num_rhs))
+      else
+        check_single_assignment loc op lhs_types rhs rhs_types >>= fun () ->
+        let typed_stmt =
+          TypedAst.Assignment
+            { asg_op= op
+            ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
+            ; asg_rvalues= List.(combine (map (fun t -> [t]) rhs_types) rhs) }
+        in
+        Ok (env, [(env, Located.{loc; value= typed_stmt})])
 
 (* TODO: check_if *)
 (* TODO: check_for_iter *)
@@ -616,9 +716,8 @@ let check_stmt env loc =
   function
   | Var {var_ids; var_values} ->
       check_var_declaration env loc var_ids var_values
-  | Assignment _ ->
-      (* TODO: implement *)
-      Ok (env, [])
+  | Assignment {asg_op; asg_lvalues; asg_rvalues} ->
+      check_assignment env loc asg_op asg_lvalues asg_rvalues
   | If _ ->
       (* TODO: implement *)
       Ok (env, [])

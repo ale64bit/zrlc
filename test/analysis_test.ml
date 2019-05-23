@@ -732,6 +732,70 @@ let test_unit_used_as_value =
   let want_err = Located.{loc= want_loc; value= `UnitUsedAsValue expr} in
   "test_unit_used_as_value" >:: analysis_error_test src want_err
 
+let test_not_an_lvalue =
+  let src =
+    {|
+    module test
+    pipeline P() {
+      def f1() {}
+      def f2() {
+        f1 = true
+      }
+    }
+    |}
+  in
+  let want_loc = loc_of ~n:1 src "f1" in
+  let expr = Located.{loc= want_loc; value= Ast.Id "f1"} in
+  let want_err = Located.{loc= want_loc; value= `NotAnLValue expr} in
+  "test_not_an_lvalue" >:: analysis_error_test src want_err
+
+let test_invalid_single_assignment =
+  let src =
+    {|
+    module test
+    pipeline P() {
+      def f() {
+        var x, y = 1, 2
+        x, y = 3, true
+      }
+    }
+    |}
+  in
+  let want_loc = loc_of src (Pcre.quote "x, y = 3, true") in
+  let have_type = Type.TypeRef "bool" in
+  let want_type = Type.TypeRef "int" in
+  let expr = Located.{loc= loc_of src "true"; value= Ast.BoolLiteral true} in
+  let want_err =
+    Located.
+      { loc= want_loc
+      ; value= `InvalidSingleAssignment (expr, have_type, want_type) }
+  in
+  "test_invalid_single_assignment" >:: analysis_error_test src want_err
+
+let test_invalid_multiple_assignment =
+  let src =
+    {|
+    module test
+    pipeline P() {
+      def f1(): (int, bool) { return 1, true }
+      def f2() {
+        var x, y = 1, 2
+        x, y = f1()
+      }
+    }
+    |}
+  in
+  let want_loc = loc_of src (Pcre.quote "x, y = f1()") in
+  let have_type = Type.TypeRef "bool" in
+  let expr = Located.{loc= loc_of ~n:1 src "y"; value= Ast.Id "y"} in
+  let want_type = Type.TypeRef "int" in
+  let want_err =
+    Located.
+      { loc= want_loc
+      ; value= `InvalidMultipleAssignment (have_type, expr, want_type) }
+  in
+  "test_invalid_multiple_assignment" >:: analysis_error_test src want_err
+
 let tests =
   "analysis_suite"
   >::: [ test_empty
@@ -768,6 +832,9 @@ let tests =
        ; test_invalid_return_argument
        ; test_missing_named_argument
        ; test_unexpected_named_argument
-       ; test_unit_used_as_value ]
+       ; test_unit_used_as_value
+       ; test_not_an_lvalue
+       ; test_invalid_single_assignment
+       ; test_invalid_multiple_assignment ]
 
 let _ = run_test_tt_main tests

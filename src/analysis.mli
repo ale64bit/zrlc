@@ -26,6 +26,9 @@ type error =
   | `InvalidReturnArgument of Ast.expression * Type.t * Type.t
   | `MissingNamedArgument of string * string
   | `UnexpectedNamedArgument of string * string
-  | `UnitUsedAsValue of Ast.expression ]
+  | `UnitUsedAsValue of Ast.expression
+  | `NotAnLValue of Ast.expression
+  | `InvalidSingleAssignment of Ast.expression * Type.t * Type.t
+  | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t ]
 
 val check : Ast.root -> (TypedAst.root, [> error] Located.t) result

@@ -116,6 +116,20 @@ let string_of_error Located.{loc; value} =
   | `UnitUsedAsValue expr ->
       Printf.sprintf "%s: error: %s used as value" pos
         (Ast.string_of_expression expr)
+  | `NotAnLValue expr ->
+      Printf.sprintf "%s: error: cannot assign to %s" pos
+        (Ast.string_of_expression expr)
+  | `InvalidSingleAssignment (expr, have, want) ->
+      Printf.sprintf
+        "%s: error: cannot use %s (type %s) as type %s in assignment" pos
+        (Ast.string_of_expression expr)
+        (Type.string_of_type have) (Type.string_of_type want)
+  | `InvalidMultipleAssignment (have, expr, want) ->
+      Printf.sprintf
+        "%s: error: cannot assign %s to %s (type %s) in multiple assignment"
+        pos (Type.string_of_type have)
+        (Ast.string_of_expression expr)
+        (Type.string_of_type want)
 
 let debug_string_of_error Located.{loc; value} =
   let loc = Located.string_of_location loc in
@@ -215,3 +229,17 @@ let debug_string_of_error Located.{loc; value} =
   | `UnitUsedAsValue expr ->
       Printf.sprintf "%s: UnitUsedAsValue expr=%s" loc
         (Ast.string_of_expression expr)
+  | `NotAnLValue expr ->
+      Printf.sprintf "%s: NotAnLValue expr=%s" loc
+        (Ast.string_of_expression expr)
+  | `InvalidSingleAssignment (expr, have, want) ->
+      Printf.sprintf "%s: InvalidSingleAssignment (expr=%s, have=%s, want=%s)"
+        loc
+        (Ast.string_of_expression expr)
+        (Type.string_of_type have) (Type.string_of_type want)
+  | `InvalidMultipleAssignment (have, expr, want) ->
+      Printf.sprintf
+        "%s: InvalidMultipleAssignment (expr=%s, have=%s, want=%s)" loc
+        (Type.string_of_type have)
+        (Ast.string_of_expression expr)
+        (Type.string_of_type want)

@@ -256,7 +256,7 @@ let dot_toplevel s g e = dot_raw_toplevel s g e.Located.value
 let dot ch Ast.{module_name; elements} =
   let ids = Stream.from (fun i -> Some i) in
   let g = G.create () in
-  let root_node = new_node ids g module_name in
+  let root_node = new_node ids g (Printf.sprintf "module$%s" module_name) in
   G.add_vertex g root_node ;
   List.iter (G.add_edge g root_node) (List.map (dot_toplevel ids g) elements) ;
   Dot.output_graph ch g
