@@ -1,4 +1,4 @@
 (lang dune 1.6)
-(name rpdl)
+(name zrl)
 (version 0.1)
 (using menhir 2.0)

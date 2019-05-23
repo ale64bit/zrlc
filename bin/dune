@@ -1,4 +1,4 @@
 (executables
- (names rpdlc repl)
- (libraries rpdl)
+ (names zrlc repl)
+ (libraries zrl)
 )

@@ -1,4 +1,4 @@
-open Rpdl
+open Zrl
 
 let rec repl_loop env =
   let () = print_string "#> " in

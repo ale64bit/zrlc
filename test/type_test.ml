@@ -1,5 +1,5 @@
 open OUnit2
-open Rpdl
+open Zrl
 
 let test_string_of_type typ want _ =
   assert_equal ~printer:(fun x -> x) want (Type.string_of_type typ)

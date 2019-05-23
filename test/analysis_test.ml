@@ -1,6 +1,6 @@
 open OUnit2
-open Rpdl
-open Rpdl.Monad.Result
+open Zrl
+open Zrl.Monad.Result
 
 (* Helpers *)
 
