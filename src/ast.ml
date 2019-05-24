@@ -59,7 +59,8 @@ and assignment =
   {asg_op: assignop; asg_lvalues: expression list; asg_rvalues: expression list}
 [@@deriving to_yojson]
 
-and if_stmt = {if_cond: expression; if_body: stmt list} [@@deriving to_yojson]
+and if_stmt = {if_cond: expression; if_true: stmt list; if_false: stmt list}
+[@@deriving to_yojson]
 
 and for_iter_stmt =
   {foriter_id: string; foriter_it: expression; foriter_body: stmt list}

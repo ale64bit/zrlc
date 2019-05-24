@@ -1,5 +1,5 @@
 %token MODULE CONST TYPE PIPELINE RENDERER DEF VAR
-%token IF FOR IN TO RETURN
+%token IF ELSE FOR IN TO RETURN
 
 %token <bool> BOOL
 %token <int> INT
@@ -121,8 +121,12 @@ let assignment ==
     { Ast.Assignment {asg_op=op; asg_lvalues=lhs; asg_rvalues=rhs} }
 
 let if_stmt ==
-  IF; cond=expr; LBRACE; stmts=stmt*; RBRACE;
-    { Ast.If {if_cond=cond; if_body=stmts} }
+  IF; cond=expr; LBRACE; true_stmts=stmt*; RBRACE; false_stmts=else_stmt;
+    { Ast.If {if_cond=cond; if_true=true_stmts; if_false=false_stmts} }
+
+let else_stmt :=
+  | { [] }
+  | ELSE; LBRACE; ~=stmt*; RBRACE; <>
 
 let for_iter ==
   FOR; id=ID; IN; it=expr; LBRACE; stmts=stmt*; RBRACE;

@@ -198,11 +198,16 @@ and dot_raw_stmt s g = function
       List.iter (G.add_edge g lhs_node) (List.map (dot_expr s g) asg_lvalues) ;
       List.iter (G.add_edge g rhs_node) (List.map (dot_expr s g) asg_rvalues) ;
       assign_node
-  | Ast.If {if_cond; if_body} ->
+  | Ast.If {if_cond; if_true; if_false} ->
       let if_node = new_node s g "if" in
       let cond_node = dot_expr s g if_cond in
+      let true_node = new_dummy_node s g "if_true" in
+      let false_node = new_dummy_node s g "if_false" in
       G.add_edge g if_node cond_node ;
-      List.iter (G.add_edge g if_node) (List.map (dot_stmt s g) if_body) ;
+      G.add_edge g if_node true_node ;
+      G.add_edge g if_node false_node ;
+      List.iter (G.add_edge g true_node) (List.map (dot_stmt s g) if_true) ;
+      List.iter (G.add_edge g false_node) (List.map (dot_stmt s g) if_false) ;
       if_node
   | Ast.ForIter {foriter_id; foriter_it; foriter_body} ->
       let for_node = new_node s g "for_iter" in

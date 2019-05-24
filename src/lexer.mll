@@ -36,6 +36,7 @@ rule read =
   | "def"      { DEF }
   | "var"      { VAR }
   | "if"       { IF }
+  | "else"     { ELSE }
   | "for"      { FOR }
   | "in"       { IN }
   | "to"       { TO }
