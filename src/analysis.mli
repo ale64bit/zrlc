@@ -30,6 +30,8 @@ type error =
   | `NotAnLValue of Ast.expression
   | `InvalidSingleAssignment of Ast.expression * Type.t * Type.t
   | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t
-  | `NonBoolIfCondition of Ast.expression * Type.t ]
+  | `NonBoolIfCondition of Ast.expression * Type.t
+  | `CannotRangeOver of Ast.expression * Type.t
+  | `NonIntegerRangeExpression of Ast.expression * Type.t ]
 
 val check : Ast.root -> (TypedAst.root, [> error] Located.t) result

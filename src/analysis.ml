@@ -34,7 +34,9 @@ type error =
   | `NotAnLValue of Ast.expression
   | `InvalidSingleAssignment of Ast.expression * Type.t * Type.t
   | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t
-  | `NonBoolIfCondition of Ast.expression * Type.t ]
+  | `NonBoolIfCondition of Ast.expression * Type.t
+  | `CannotRangeOver of Ast.expression * Type.t
+  | `NonIntegerRangeExpression of Ast.expression * Type.t ]
 
 (* Helpers *)
 
@@ -701,8 +703,57 @@ and check_if env loc if_cond if_true if_false =
       let Located.{loc; _} = if_cond in
       error loc (`NonBoolIfCondition (if_cond, t))
 
-(* TODO: check_for_iter *)
-(* TODO: check_for_range *)
+and check_iterable_type env expr =
+  let open Type in
+  let Located.{loc; _} = expr in
+  check_single_value_expr env expr >>= fun expr_typ ->
+  match expr_typ with
+  | Array (t, [_]) ->
+      Ok (expr_typ, t)
+  | Primitive AtomSet | TypeRef "atomset" ->
+      Ok (expr_typ, TypeRef "atom")
+  | Primitive AtomList | TypeRef "atomlist" ->
+      Ok (expr_typ, TypeRef "atom")
+  | _ as t ->
+      error loc (`CannotRangeOver (expr, t))
+
+and check_foriter env loc it_var it_expr body =
+  check_iterable_type env it_expr >>= fun (expr_typ, it_typ) ->
+  let env = Env.(env |> add_var it_var Located.{loc; value= it_typ}) in
+  check_stmt_list env body >>= fun (_, typed_body) ->
+  let typed_stmt =
+    TypedAst.ForIter
+      { foriter_id= it_var
+      ; foriter_it= ([expr_typ], it_expr)
+      ; foriter_body= typed_body }
+  in
+  Ok (env, [(env, Located.{loc; value= typed_stmt})])
+
+and check_range_expr env expr =
+  let open Type in
+  let Located.{loc; _} = expr in
+  check_single_value_expr env expr >>= fun expr_typ ->
+  match expr_typ with
+  | Primitive Int | TypeRef "int" ->
+      Ok ()
+  | _ ->
+      error loc (`NonIntegerRangeExpression (expr, expr_typ))
+
+and check_forrange env loc it_var from_expr to_expr body =
+  check_range_expr env from_expr >>= fun () ->
+  check_range_expr env to_expr >>= fun () ->
+  let int_typ = Type.TypeRef "int" in
+  let env = Env.(env |> add_var it_var Located.{loc; value= int_typ}) in
+  check_stmt_list env body >>= fun (_, typed_body) ->
+  let typed_stmt =
+    TypedAst.ForRange
+      { forrange_id= it_var
+      ; forrange_from= ([int_typ], from_expr)
+      ; forrange_to= ([int_typ], to_expr)
+      ; forrange_body= typed_body }
+  in
+  Ok (env, [(env, Located.{loc; value= typed_stmt})])
+
 and check_return env loc exprs =
   match Env.scope_summary env with
   | Env.Function (Type.Function (_, ret_types)) ->
@@ -744,12 +795,11 @@ and check_stmt env loc =
       check_assignment env loc asg_op asg_lvalues asg_rvalues
   | If {if_cond; if_true; if_false} ->
       check_if env loc if_cond if_true if_false
-  | ForIter _ ->
-      (* TODO: implement *)
-      Ok (env, [])
-  | ForRange _ ->
-      (* TODO: implement *)
-      Ok (env, [])
+  | ForIter {foriter_id; foriter_it; foriter_body} ->
+      check_foriter env loc foriter_id foriter_it foriter_body
+  | ForRange {forrange_id; forrange_from; forrange_to; forrange_body} ->
+      check_forrange env loc forrange_id forrange_from forrange_to
+        forrange_body
   | Return exprs ->
       check_return env loc exprs
 
