@@ -796,6 +796,25 @@ let test_invalid_multiple_assignment =
   in
   "test_invalid_multiple_assignment" >:: analysis_error_test src want_err
 
+let test_non_bool_if_condition =
+  let src =
+    {|
+    module test
+    pipeline P() {
+      def f() {
+        if 42 {}
+      }
+    }
+    |}
+  in
+  let want_loc = loc_of src "42" in
+  let expr = Located.{loc= want_loc; value= Ast.IntLiteral 42} in
+  let want_err =
+    Located.
+      {loc= want_loc; value= `NonBoolIfCondition (expr, Type.TypeRef "int")}
+  in
+  "test_non_bool_if_condition" >:: analysis_error_test src want_err
+
 let tests =
   "analysis_suite"
   >::: [ test_empty
@@ -835,6 +854,7 @@ let tests =
        ; test_unit_used_as_value
        ; test_not_an_lvalue
        ; test_invalid_single_assignment
-       ; test_invalid_multiple_assignment ]
+       ; test_invalid_multiple_assignment
+       ; test_non_bool_if_condition ]
 
 let _ = run_test_tt_main tests

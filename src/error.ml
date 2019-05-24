@@ -130,6 +130,11 @@ let string_of_error Located.{loc; value} =
         pos (Type.string_of_type have)
         (Ast.string_of_expression expr)
         (Type.string_of_type want)
+  | `NonBoolIfCondition (expr, t) ->
+      Printf.sprintf "%s: error: non-bool %s (type %s) used as if condition"
+        pos
+        (Ast.string_of_expression expr)
+        (Type.string_of_type t)
 
 let debug_string_of_error Located.{loc; value} =
   let loc = Located.string_of_location loc in
@@ -243,3 +248,7 @@ let debug_string_of_error Located.{loc; value} =
         (Type.string_of_type have)
         (Ast.string_of_expression expr)
         (Type.string_of_type want)
+  | `NonBoolIfCondition (expr, t) ->
+      Printf.sprintf "%s: NonBoolIfCondition (expr=%s, t=%s)" loc
+        (Ast.string_of_expression expr)
+        (Type.string_of_type t)

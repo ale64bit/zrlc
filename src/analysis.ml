@@ -33,7 +33,8 @@ type error =
   | `UnitUsedAsValue of Ast.expression
   | `NotAnLValue of Ast.expression
   | `InvalidSingleAssignment of Ast.expression * Type.t * Type.t
-  | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t ]
+  | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t
+  | `NonBoolIfCondition of Ast.expression * Type.t ]
 
 (* Helpers *)
 
@@ -544,7 +545,7 @@ and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
 
 (* Statements *)
 
-let check_var_declaration env loc ids exprs =
+let rec check_var_declaration env loc ids exprs =
   let declare_local_vars types =
     List.fold_left
       (fun acc (id, t) ->
@@ -592,7 +593,7 @@ let check_var_declaration env loc ids exprs =
         in
         Ok (new_env, [(env, Located.{loc; value= typed_stmt})])
 
-let check_lvalue env expr =
+and check_lvalue env expr =
   let open Ast in
   let Located.{loc; _} = expr in
   match expr.value with
@@ -610,7 +611,7 @@ let check_lvalue env expr =
   | _ ->
       error loc (`NotAnLValue expr)
 
-let check_lvalues env exprs =
+and check_lvalues env exprs =
   List.fold_results
     (fun acc expr ->
       acc >>= fun expr_types ->
@@ -618,7 +619,7 @@ let check_lvalues env exprs =
       )
     (Ok []) exprs
 
-let check_single_assignment loc op lhs_types rhs_exprs rhs_types =
+and check_single_assignment loc op lhs_types rhs_exprs rhs_types =
   let () = assert (List.(length lhs_types = length rhs_types)) in
   List.fold_left
     (fun acc (lhs_type, (rhs_expr, rhs_type)) ->
@@ -630,7 +631,7 @@ let check_single_assignment loc op lhs_types rhs_exprs rhs_types =
     (Ok ())
     List.(combine lhs_types (combine rhs_exprs rhs_types))
 
-let check_multiple_assignment loc op lhs_exprs lhs_types rhs_types =
+and check_multiple_assignment loc op lhs_exprs lhs_types rhs_types =
   let () = assert (List.(length lhs_types = length rhs_types)) in
   List.fold_left
     (fun acc ((lhs_expr, lhs_type), rhs_type) ->
@@ -642,7 +643,7 @@ let check_multiple_assignment loc op lhs_exprs lhs_types rhs_types =
     (Ok ())
     List.(combine (combine lhs_exprs lhs_types) rhs_types)
 
-let check_assignment env loc op lhs rhs =
+and check_assignment env loc op lhs rhs =
   let () = assert (List.length lhs > 0) in
   let () = assert (List.length rhs > 0) in
   match rhs with
@@ -684,11 +685,25 @@ let check_assignment env loc op lhs rhs =
         in
         Ok (env, [(env, Located.{loc; value= typed_stmt})])
 
-(* TODO: check_if *)
+and check_if env loc if_cond if_true if_false =
+  check_single_value_expr env if_cond >>= function
+  | Type.TypeRef "bool" | Type.Primitive Bool ->
+      check_stmt_list env if_true >>= fun (_, typed_if_true) ->
+      check_stmt_list env if_false >>= fun (_, typed_if_false) ->
+      let typed_stmt =
+        TypedAst.If
+          { if_cond= ([Type.TypeRef "bool"], if_cond)
+          ; if_true= typed_if_true
+          ; if_false= typed_if_false }
+      in
+      Ok (env, [(env, Located.{loc; value= typed_stmt})])
+  | _ as t ->
+      let Located.{loc; _} = if_cond in
+      error loc (`NonBoolIfCondition (if_cond, t))
+
 (* TODO: check_for_iter *)
 (* TODO: check_for_range *)
-
-let check_return env loc exprs =
+and check_return env loc exprs =
   match Env.scope_summary env with
   | Env.Function (Type.Function (_, ret_types)) ->
       let less_errfn have_types =
@@ -711,16 +726,24 @@ let check_return env loc exprs =
   | _ ->
       failwith "return can only appear in Function scopes"
 
-let check_stmt env loc =
+and check_stmt_list env stmts =
+  List.fold_left
+    (fun acc Located.{loc; value= stmt} ->
+      acc >>= fun (env, typed_stmts) ->
+      check_stmt env loc stmt >>= fun (env, typed_stmt) ->
+      Ok (env, typed_stmts @ typed_stmt) )
+    (Ok (env, []))
+    stmts
+
+and check_stmt env loc =
   let open Ast in
   function
   | Var {var_ids; var_values} ->
       check_var_declaration env loc var_ids var_values
   | Assignment {asg_op; asg_lvalues; asg_rvalues} ->
       check_assignment env loc asg_op asg_lvalues asg_rvalues
-  | If _ ->
-      (* TODO: implement *)
-      Ok (env, [])
+  | If {if_cond; if_true; if_false} ->
+      check_if env loc if_cond if_true if_false
   | ForIter _ ->
       (* TODO: implement *)
       Ok (env, [])
@@ -737,14 +760,7 @@ let check_function_declaration env loc fd =
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
   let env = build_function_environment env loc clean_type in
-  List.fold_left
-    (fun acc Located.{loc; value= stmt} ->
-      acc >>= fun (env, typed_stmts) ->
-      check_stmt env loc stmt >>= fun (env, typed_stmt) ->
-      Ok (env, typed_stmts @ typed_stmt) )
-    (Ok (env, []))
-    fd_body
-  >>= fun (env, typed_stmts) ->
+  check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
   Ok TypedAst.{fd_env= env; fd_name; fd_type= clean_type; fd_body= typed_stmts}
 
 let check_pipeline_declaration_sig env loc pd =

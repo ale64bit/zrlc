@@ -1,7 +1,5 @@
 TODO
 ===========================================================================
-- analysis
-  - error: missing return statement
 - code generation (vulkan,dummy)
   - c++ equivalent types (how to statically check offsets+alignment?)
   - graphics pipeline
@@ -15,7 +13,6 @@ TODO
 Open Questions
 ===========================================================================
 - how to deal with overloaded constructors for builtin types? e.g. vec4(vec3,float)
-- how to report multiple errors when possible? Need better transformer for result type
 - how to encode type invariants? (see https://discuss.ocaml.org/t/matching-incompatible-gadt-constructors/682/4)
 
 How to optimize descriptor set allocation?

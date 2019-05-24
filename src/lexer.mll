@@ -87,5 +87,5 @@ rule read =
 
 and comment = 
   parse
-  | newline    { read lexbuf }
+  | newline    { next_line lexbuf; read lexbuf }
   | _          { comment lexbuf }
