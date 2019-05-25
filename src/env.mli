@@ -36,6 +36,8 @@ val type_exists : string -> t -> bool
 
 val pipeline_exists : string -> t -> bool
 
+val renderer_exists : string -> t -> bool
+
 val function_exists : string -> t -> bool
 
 val var_exists : string -> t -> bool
@@ -49,6 +51,8 @@ val add_type : string -> Type.t Located.t -> t -> t
 
 val add_pipeline : string -> Type.t Located.t -> t -> t
 
+val add_renderer : string -> Type.t Located.t -> t -> t
+
 val add_function : string -> Type.t Located.t -> t -> t
 
 val add_var : string -> Type.t Located.t -> t -> t
@@ -61,6 +65,8 @@ val find_constant_type : local:bool -> string -> t -> Type.t Located.t option
 val find_type : local:bool -> string -> t -> Type.t Located.t option
 
 val find_pipeline : local:bool -> string -> t -> Type.t Located.t option
+
+val find_renderer : local:bool -> string -> t -> Type.t Located.t option
 
 val find_function : local:bool -> string -> t -> Type.t Located.t option
 

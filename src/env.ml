@@ -35,6 +35,7 @@ type t =
   ; constants: const_value_symbol_table
   ; vars: type_symbol_table
   ; pipelines: type_symbol_table
+  ; renderers: type_symbol_table
   ; functions: type_symbol_table }
 [@@deriving to_yojson]
 
@@ -128,6 +129,10 @@ let find_pipeline ~local name env =
   let f env = env.pipelines in
   find ~local name env f
 
+let find_renderer ~local name env =
+  let f env = env.renderers in
+  find ~local name env f
+
 let find_function ~local name env =
   let f env = env.functions in
   find ~local name env f
@@ -159,6 +164,8 @@ let type_exists name env = find_type ~local:false name env <> None
 
 let pipeline_exists name env = find_pipeline ~local:false name env <> None
 
+let renderer_exists name env = find_renderer ~local:false name env <> None
+
 let function_exists name env = find_function ~local:false name env <> None
 
 let var_exists name env = find_var ~local:false name env <> None
@@ -187,6 +194,10 @@ let add_pipeline name typ env =
   let () = assert (not (pipeline_exists name env)) in
   {env with pipelines= SymbolTable.add name typ env.pipelines}
 
+let add_renderer name typ env =
+  let () = assert (not (renderer_exists name env)) in
+  {env with renderers= SymbolTable.add name typ env.renderers}
+
 let add_function name typ env =
   let () = assert (not (function_exists name env)) in
   {env with functions= SymbolTable.add name typ env.functions}
@@ -204,6 +215,7 @@ let empty id =
   ; constants= SymbolTable.empty
   ; vars= SymbolTable.empty
   ; pipelines= SymbolTable.empty
+  ; renderers= SymbolTable.empty
   ; functions= SymbolTable.empty }
 
 let generate_constructor_type base params ret =
@@ -224,6 +236,9 @@ let global =
     ; ("uint", Type.Primitive UInt)
     ; ("float", Type.Primitive Float)
     ; ("double", Type.Primitive Double)
+    ; ("atom", Type.Primitive Atom)
+    ; ("atomlist", Type.Primitive AtomList)
+    ; ("atomset", Type.Primitive AtomSet)
     ; (* Built-in vector types *)
       ("bvec2", Type.Record (generate_fields 2 "bool" "bvec"))
     ; ("bvec3", Type.Record (generate_fields 3 "bool" "bvec"))

@@ -79,21 +79,22 @@ pipeline DeferredPass(gbuffer: GBuffer, env: Environment) {
 }
 
 renderer Main(lights, camera: single, opaqueGeometry: set, depth: dsrt, screen: crt) {
-  var black = vec3(0.0)
-  var position, normal, albedo = crt(black), crt(black), crt(black)
-  for g in opaqueGeometry {
-    position, normal, albedo += GBufferPass(
-        pos = g,
-        uv = g,
-        color = g,
-        normal = g,
-        cam = camera,
-        perMat = g,
-        perObj = g,
-    )
+
+  def main() {
+    var black = vec3(0.0)
+    var position, normal, albedo = crt(black), crt(black), crt(black)
+    for g in opaqueGeometry {
+      position, normal, albedo += GBufferPass(
+          pos = g,
+          uv = g,
+          color = g,
+          normal = g,
+          cam = camera,
+          perMat = g,
+          perObj = g)
+    }
+    screen += DeferredPass(
+        gbuffer = {position, normal, albedo},
+        env = {camera, lights})
   }
-  screen += DeferredPass(
-      gbuffer = {position, normal, albedo},
-      env = {camera, lights},
-  )
 }

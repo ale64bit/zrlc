@@ -831,23 +831,25 @@ let check_function_sig env loc fd =
       check_type env loc fd_type >>= fun clean_type ->
       Ok (Env.add_function fd_name {loc; value= clean_type} env)
 
-let check_pipeline_declaration_body env loc pd =
-  let Ast.{pd_name; pd_type; pd_functions} = pd in
-  check_type env loc pd_type >>= fun clean_type ->
-  let env = Env.enter_pipeline_scope pd_name clean_type env in
-  let env = build_function_environment env loc clean_type in
+let check_function_group env functions =
   List.fold_left
     (fun acc Located.{loc; value} ->
       acc >>= fun env -> check_function_sig env loc value )
-    (Ok env) pd_functions
+    (Ok env) functions
   >>= fun env ->
   List.fold_results
     (fun acc Located.{loc; value} ->
       acc >>= fun typed_functions ->
       check_function_declaration env loc value >>= fun typed_fd ->
       Ok (typed_fd :: typed_functions) )
-    (Ok []) pd_functions
-  >>= fun typed_functions ->
+    (Ok []) functions
+
+let check_pipeline_declaration_body env loc pd =
+  let Ast.{pd_name; pd_type; pd_functions} = pd in
+  check_type env loc pd_type >>= fun clean_type ->
+  let env = Env.enter_pipeline_scope pd_name clean_type env in
+  let env = build_function_environment env loc clean_type in
+  check_function_group env pd_functions >>= fun typed_functions ->
   Ok
     (TypedAst.PipelineDecl
        { pd_env= env
@@ -855,13 +857,27 @@ let check_pipeline_declaration_body env loc pd =
        ; pd_type= clean_type
        ; pd_functions= typed_functions })
 
-(* TODO: implement *)
-let check_renderer_declaration_sig env _ _ = Ok env
-
-(* TODO: implement *)
-let check_renderer_declaration_body env _ rd =
+let check_renderer_declaration_sig env loc rd =
   let Ast.{rd_name; rd_type; _} = rd in
-  Ok (TypedAst.RendererDecl {rd_env= env; rd_name; rd_type; rd_body= []})
+  match Env.find_name ~local:true rd_name env with
+  | Some Located.{loc= prev_loc; _} ->
+      error loc (`Redefinition (rd_name, prev_loc))
+  | None ->
+      check_type env loc rd_type >>= fun clean_type ->
+      Ok (Env.add_renderer rd_name {loc; value= clean_type} env)
+
+let check_renderer_declaration_body env loc rd =
+  let Ast.{rd_name; rd_type; rd_functions} = rd in
+  check_type env loc rd_type >>= fun clean_type ->
+  let env = Env.enter_pipeline_scope rd_name clean_type env in
+  let env = build_function_environment env loc clean_type in
+  check_function_group env rd_functions >>= fun typed_functions ->
+  Ok
+    (TypedAst.RendererDecl
+       { rd_env= env
+       ; rd_name
+       ; rd_type= clean_type
+       ; rd_functions= typed_functions })
 
 let check Ast.{module_name; elements} =
   let env = Env.(global |> enter_module_scope module_name) in

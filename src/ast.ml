@@ -102,7 +102,7 @@ type pipeline_declaration =
 [@@deriving to_yojson]
 
 type renderer_declaration =
-  {rd_name: string; rd_type: Type.t; rd_body: stmt list}
+  {rd_name: string; rd_type: Type.t; rd_functions: function_declaration list}
 [@@deriving to_yojson]
 
 type raw_toplevel_elem =

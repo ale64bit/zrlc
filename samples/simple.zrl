@@ -12,9 +12,12 @@ pipeline Pipeline(): vec4 {
   }
 }
 
-renderer Simple(geometry: set) { 
-  for g in geometry {
-    builtin.screen += Pipeline(pos = g)
-  }  
+renderer Simple() {
+
+  def draw(geometry: atomset) { 
+    for g in geometry {
+      builtin.screen += Pipeline(pos = g)
+    }  
+  }
 }
 

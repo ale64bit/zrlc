@@ -232,7 +232,7 @@ and dot_raw_stmt s g = function
       List.iter (G.add_edge g ret_node) (List.map (dot_expr s g) exprs) ;
       ret_node
 
-let dot_raw_func s g Ast.{fd_name; fd_type= _; fd_body} =
+let dot_raw_func s g Ast.{fd_name; fd_body; _} =
   let node = new_node s g (Printf.sprintf "func$%s" fd_name) in
   List.iter (G.add_edge g node) (List.map (dot_stmt s g) fd_body) ;
   node
@@ -244,16 +244,17 @@ let dot_raw_toplevel s g = function
       let node = new_node s g (Printf.sprintf "const$%s" cd_name) in
       let rhs_node = dot_expr s g cd_value in
       G.add_edge g node rhs_node ; node
-  | Ast.TypeDecl {td_name; td_type= _} ->
+  | Ast.TypeDecl {td_name; _} ->
       new_node s g (Printf.sprintf "type$%s" td_name)
-  | Ast.PipelineDecl {pd_name; pd_type= _; pd_functions} ->
+  | Ast.PipelineDecl {pd_name; pd_functions; _} ->
       let node = new_node s g (Printf.sprintf "pipeline$%s" pd_name) in
       let children = List.map (dot_func s g) pd_functions in
       List.iter (G.add_edge g node) children ;
       node
-  | Ast.RendererDecl {rd_name; rd_type= _; rd_body} ->
+  | Ast.RendererDecl {rd_name; rd_functions; _} ->
       let node = new_node s g (Printf.sprintf "renderer$%s" rd_name) in
-      List.iter (G.add_edge g node) (List.map (dot_stmt s g) rd_body) ;
+      let children = List.map (dot_func s g) rd_functions in
+      List.iter (G.add_edge g node) children ;
       node
 
 let dot_toplevel s g e = dot_raw_toplevel s g e.Located.value

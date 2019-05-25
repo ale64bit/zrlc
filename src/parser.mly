@@ -84,8 +84,8 @@ let pipeline_def :=
     { Ast.PipelineDecl {pd_name = id; pd_type = fsign; pd_functions = funcs} }
 
 let renderer_def :=
-  RENDERER; id = ID; fsign = function_signature; LBRACE; stmts = stmt*; RBRACE; 
-    { Ast.RendererDecl {rd_name = id; rd_type = fsign; rd_body = stmts} }
+  RENDERER; id = ID; fsign = function_signature; LBRACE; funcs = located(func)*; RBRACE; 
+    { Ast.RendererDecl {rd_name = id; rd_type = fsign; rd_functions = funcs} }
 
 let function_signature :=
   LPAREN; args = function_args; RPAREN; ret = function_ret_args?;
