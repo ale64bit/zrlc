@@ -3,7 +3,7 @@ module simple
 pipeline Pipeline(): vec4 {
 
   def vertex(pos: vec3): vec3 {
-    builtin.position = vec4(pos, 1.0)
+    builtin.position = vec4(pos.x, pos.y, pos.z, 1.0)
     return pos
   }
 
@@ -14,7 +14,7 @@ pipeline Pipeline(): vec4 {
 
 renderer Simple() {
 
-  def draw(geometry: atomset) { 
+  def main(geometry: atomset) { 
     for g in geometry {
       builtin.screen += Pipeline(pos = g)
     }  

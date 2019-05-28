@@ -11,6 +11,11 @@ type type_symbol_table = located_type SymbolTable.t
 
 type const_value_symbol_table = located_const_value SymbolTable.t
 
+let builtin_pos =
+  Lexing.{pos_fname= "builtin"; pos_lnum= 0; pos_cnum= 0; pos_bol= 0}
+
+let builtin_loc = (builtin_pos, builtin_pos)
+
 let type_symbol_table_to_yojson st =
   let f (k, v) = (k, located_type_to_yojson v) in
   `Assoc (List.map f (SymbolTable.bindings st))
@@ -225,10 +230,6 @@ let generate_constructor_type base params ret =
     , [Type.TypeRef ret] )
 
 let global =
-  let builtin_pos =
-    Lexing.{pos_fname= "builtin"; pos_lnum= 0; pos_cnum= 0; pos_bol= 0}
-  in
-  let builtin_loc = (builtin_pos, builtin_pos) in
   let builtin_types =
     [ (* Primitive types *)
       ("bool", Type.Primitive Bool)
@@ -239,6 +240,8 @@ let global =
     ; ("atom", Type.Primitive Atom)
     ; ("atomlist", Type.Primitive AtomList)
     ; ("atomset", Type.Primitive AtomSet)
+    ; ("crt", Type.Primitive Crt)
+    ; ("dsrt", Type.Primitive Dsrt)
     ; (* Built-in vector types *)
       ("bvec2", Type.Record (generate_fields 2 "bool" "bvec"))
     ; ("bvec3", Type.Record (generate_fields 3 "bool" "bvec"))
@@ -341,6 +344,41 @@ let exit_scope env =
       penv
   | None ->
       failwith (Printf.sprintf "Trying to exit root scope: %s" env.id)
+
+let rec is_pipeline_scope env =
+  match env.summary with
+  | Pipeline _ ->
+      true
+  | _ -> (
+    match env.parent with Some env -> is_pipeline_scope env | None -> false )
+
+let rec is_renderer_scope env =
+  match env.summary with
+  | Renderer _ ->
+      true
+  | _ -> (
+    match env.parent with Some env -> is_renderer_scope env | None -> false )
+
+(* Others *)
+let add_builtin name env =
+  match env.parent with
+  | Some penv -> (
+    match (scope_summary penv, name) with
+    | Pipeline _, "vertex" ->
+        let t = Type.Record [("position", Type.TypeRef "vec4")] in
+        add_var "builtin" Located.{loc= builtin_loc; value= t} env
+    | Pipeline _, "fragment" ->
+        (* TODO: implement *)
+        env
+    | Renderer _, "main" ->
+        let t = Type.Record [("screen", Type.Primitive Crt)] in
+        add_var "builtin" Located.{loc= builtin_loc; value= t} env
+    | _ ->
+        env )
+  | None ->
+      failwith
+        "builtin must be added in function scopes, which should be nested in \
+         pipeline or renderer scopes"
 
 (* Printing *)
 let filter_global env =

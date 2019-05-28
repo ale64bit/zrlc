@@ -16,6 +16,9 @@ and primitive_type =
   | Atom
   | AtomList
   | AtomSet
+  | Crt
+  | Dsrt
+  | PAction
 [@@deriving to_yojson]
 
 and const =
@@ -78,3 +81,9 @@ let rec string_of_type = function
       "atomlist"
   | Primitive AtomSet ->
       "atomset"
+  | Primitive Crt ->
+      "crt"
+  | Primitive Dsrt ->
+      "dsrt"
+  | Primitive PAction ->
+      "pipeline_action"

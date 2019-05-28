@@ -29,6 +29,10 @@ val enter_function_scope : string -> Type.t -> t -> t
 
 val exit_scope : t -> t
 
+val is_pipeline_scope : t -> bool
+
+val is_renderer_scope : t -> bool
+
 (* Exists *)
 val constant_exists : string -> t -> bool
 
@@ -77,6 +81,9 @@ val find_name : local:bool -> string -> t -> Type.t Located.t option
 val find_lvalue : string -> t -> Type.t Located.t option
 
 val find_rvalue : string -> t -> Type.t Located.t option
+
+(* Helpers *)
+val add_builtin : string -> t -> t
 
 (* Printing *)
 val string_of_env : t -> string

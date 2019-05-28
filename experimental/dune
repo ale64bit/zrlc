@@ -1,4 +1,4 @@
 (executable
- (name a)
+ (name tftypes)
  (libraries pcre)
 )

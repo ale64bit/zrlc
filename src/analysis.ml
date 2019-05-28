@@ -116,12 +116,15 @@ let rec check_type env ctx_loc t =
   | Type.Primitive _ ->
       Ok t
 
-let build_function_environment env loc typ =
+let build_function_environment env loc name typ =
   match typ with
   | Type.Function (args, _) ->
-      List.fold_left
-        (fun env (name, t) -> Env.add_var name Located.{loc; value= t} env)
-        env args
+      let env =
+        List.fold_left
+          (fun env (name, t) -> Env.add_var name Located.{loc; value= t} env)
+          env args
+      in
+      Env.add_builtin name env
   | _ ->
       failwith "cannot build function environment from non-function type"
 
@@ -181,25 +184,35 @@ let check_unop loc op typ =
   let open Type in
   match (op, typ) with
   (* Unary Plus and Minus *)
+  | (UPlus | UMinus), Primitive Int
+  | (UPlus | UMinus), Primitive UInt
+  | (UPlus | UMinus), Primitive Float
+  | (UPlus | UMinus), Primitive Double
   | (UPlus | UMinus), TypeRef "int"
   | (UPlus | UMinus), TypeRef "uint"
   | (UPlus | UMinus), TypeRef "float"
   | (UPlus | UMinus), TypeRef "double"
-  | (UPlus | UMinus), Primitive Int
-  | (UPlus | UMinus), Primitive UInt
-  | (UPlus | UMinus), Primitive Float
-  | (UPlus | UMinus), Primitive Double ->
-      Ok typ
+  | (UPlus | UMinus), TypeRef "ivec2"
+  | (UPlus | UMinus), TypeRef "ivec3"
+  | (UPlus | UMinus), TypeRef "ivec4"
+  | (UPlus | UMinus), TypeRef "uvec2"
+  | (UPlus | UMinus), TypeRef "uvec3"
+  | (UPlus | UMinus), TypeRef "uvec4"
+  | (UPlus | UMinus), TypeRef "vec2"
+  | (UPlus | UMinus), TypeRef "vec3"
+  | (UPlus | UMinus), TypeRef "vec4"
+  | (UPlus | UMinus), TypeRef "dvec2"
+  | (UPlus | UMinus), TypeRef "dvec3"
+  | (UPlus | UMinus), TypeRef "dvec4"
   (* Logical NOT *)
-  | LogicalNot, TypeRef "bool" | LogicalNot, Primitive Bool ->
-      Ok typ
+  | LogicalNot, Primitive Bool
+  | LogicalNot, TypeRef "bool"
   (* Bitwise Complement *)
-  | BitwiseComplement, TypeRef "int"
-  | BitwiseComplement, TypeRef "uint"
   | BitwiseComplement, Primitive Int
-  | BitwiseComplement, Primitive UInt ->
+  | BitwiseComplement, Primitive UInt
+  | BitwiseComplement, TypeRef "int"
+  | BitwiseComplement, TypeRef "uint" ->
       Ok typ
-  (* TODO: add cases for non-primitive builtin types *)
   | _, _ ->
       error loc (`InvalidUnaryOperation (op, typ))
 
@@ -252,7 +265,151 @@ let check_binop expr ltyp op rtyp =
     , (Plus | Minus | Mult | Div)
     , (Primitive Double | TypeRef "double") ) ->
       Ok (TypeRef "double")
-  (* TODO: add cases for non-primitive builtin types *)
+  | TypeRef "ivec2", (Plus | Minus), TypeRef "ivec2" ->
+      Ok (TypeRef "ivec2")
+  | TypeRef "ivec3", (Plus | Minus), TypeRef "ivec3" ->
+      Ok (TypeRef "ivec3")
+  | TypeRef "ivec4", (Plus | Minus), TypeRef "ivec4" ->
+      Ok (TypeRef "ivec4")
+  | TypeRef "uvec2", (Plus | Minus), TypeRef "uvec2" ->
+      Ok (TypeRef "uvec2")
+  | TypeRef "uvec3", (Plus | Minus), TypeRef "uvec3" ->
+      Ok (TypeRef "uvec3")
+  | TypeRef "uvec4", (Plus | Minus), TypeRef "uvec4" ->
+      Ok (TypeRef "uvec4")
+  | TypeRef "vec2", (Plus | Minus), TypeRef "vec2" ->
+      Ok (TypeRef "vec2")
+  | TypeRef "vec3", (Plus | Minus), TypeRef "vec3" ->
+      Ok (TypeRef "vec3")
+  | TypeRef "vec4", (Plus | Minus), TypeRef "vec4" ->
+      Ok (TypeRef "vec4")
+  | TypeRef "dvec2", (Plus | Minus), TypeRef "dvec2" ->
+      Ok (TypeRef "dvec2")
+  | TypeRef "dvec3", (Plus | Minus), TypeRef "dvec3" ->
+      Ok (TypeRef "dvec3")
+  | TypeRef "dvec4", (Plus | Minus), TypeRef "dvec4" ->
+      Ok (TypeRef "dvec4")
+  (* Matrix Multiplication *)
+  | TypeRef "mat2x2", Mult, TypeRef "vec2" ->
+      Ok (TypeRef "vec2")
+  | TypeRef "mat2", Mult, TypeRef "vec2" ->
+      Ok (TypeRef "vec2")
+  | TypeRef "mat2x2", Mult, TypeRef "mat2x2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2x2", Mult, TypeRef "mat2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2", Mult, TypeRef "mat2x2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2", Mult, TypeRef "mat2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2x2", Mult, TypeRef "mat2x3" ->
+      Ok (TypeRef "mat2x3")
+  | TypeRef "mat2", Mult, TypeRef "mat2x3" ->
+      Ok (TypeRef "mat2x3")
+  | TypeRef "mat2x2", Mult, TypeRef "mat2x4" ->
+      Ok (TypeRef "mat2x4")
+  | TypeRef "mat2", Mult, TypeRef "mat2x4" ->
+      Ok (TypeRef "mat2x4")
+  | TypeRef "mat2x3", Mult, TypeRef "vec3" ->
+      Ok (TypeRef "vec2")
+  | TypeRef "mat2x3", Mult, TypeRef "mat3x2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2x3", Mult, TypeRef "mat3x3" ->
+      Ok (TypeRef "mat2x3")
+  | TypeRef "mat2x3", Mult, TypeRef "mat3" ->
+      Ok (TypeRef "mat2x3")
+  | TypeRef "mat2x3", Mult, TypeRef "mat3x4" ->
+      Ok (TypeRef "mat2x4")
+  | TypeRef "mat2x4", Mult, TypeRef "vec4" ->
+      Ok (TypeRef "vec2")
+  | TypeRef "mat2x4", Mult, TypeRef "mat4x2" ->
+      Ok (TypeRef "mat2x2")
+  | TypeRef "mat2x4", Mult, TypeRef "mat4x3" ->
+      Ok (TypeRef "mat2x3")
+  | TypeRef "mat2x4", Mult, TypeRef "mat4x4" ->
+      Ok (TypeRef "mat2x4")
+  | TypeRef "mat2x4", Mult, TypeRef "mat4" ->
+      Ok (TypeRef "mat2x4")
+  | TypeRef "mat3x2", Mult, TypeRef "vec2" ->
+      Ok (TypeRef "vec3")
+  | TypeRef "mat3x2", Mult, TypeRef "mat2x2" ->
+      Ok (TypeRef "mat3x2")
+  | TypeRef "mat3x2", Mult, TypeRef "mat2" ->
+      Ok (TypeRef "mat3x2")
+  | TypeRef "mat3x2", Mult, TypeRef "mat2x3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3x2", Mult, TypeRef "mat2x4" ->
+      Ok (TypeRef "mat3x4")
+  | TypeRef "mat3x3", Mult, TypeRef "vec3" ->
+      Ok (TypeRef "vec3")
+  | TypeRef "mat3", Mult, TypeRef "vec3" ->
+      Ok (TypeRef "vec3")
+  | TypeRef "mat3x3", Mult, TypeRef "mat3x2" ->
+      Ok (TypeRef "mat3x2")
+  | TypeRef "mat3", Mult, TypeRef "mat3x2" ->
+      Ok (TypeRef "mat3x2")
+  | TypeRef "mat3x3", Mult, TypeRef "mat3x3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3x3", Mult, TypeRef "mat3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3", Mult, TypeRef "mat3x3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3", Mult, TypeRef "mat3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3x3", Mult, TypeRef "mat3x4" ->
+      Ok (TypeRef "mat3x4")
+  | TypeRef "mat3", Mult, TypeRef "mat3x4" ->
+      Ok (TypeRef "mat3x4")
+  | TypeRef "mat3x4", Mult, TypeRef "vec4" ->
+      Ok (TypeRef "vec3")
+  | TypeRef "mat3x4", Mult, TypeRef "mat4x2" ->
+      Ok (TypeRef "mat3x2")
+  | TypeRef "mat3x4", Mult, TypeRef "mat4x3" ->
+      Ok (TypeRef "mat3x3")
+  | TypeRef "mat3x4", Mult, TypeRef "mat4x4" ->
+      Ok (TypeRef "mat3x4")
+  | TypeRef "mat3x4", Mult, TypeRef "mat4" ->
+      Ok (TypeRef "mat3x4")
+  | TypeRef "mat4x2", Mult, TypeRef "vec2" ->
+      Ok (TypeRef "vec4")
+  | TypeRef "mat4x2", Mult, TypeRef "mat2x2" ->
+      Ok (TypeRef "mat4x2")
+  | TypeRef "mat4x2", Mult, TypeRef "mat2" ->
+      Ok (TypeRef "mat4x2")
+  | TypeRef "mat4x2", Mult, TypeRef "mat2x3" ->
+      Ok (TypeRef "mat4x3")
+  | TypeRef "mat4x2", Mult, TypeRef "mat2x4" ->
+      Ok (TypeRef "mat4x4")
+  | TypeRef "mat4x3", Mult, TypeRef "vec3" ->
+      Ok (TypeRef "vec4")
+  | TypeRef "mat4x3", Mult, TypeRef "mat3x2" ->
+      Ok (TypeRef "mat4x2")
+  | TypeRef "mat4x3", Mult, TypeRef "mat3x3" ->
+      Ok (TypeRef "mat4x3")
+  | TypeRef "mat4x3", Mult, TypeRef "mat3" ->
+      Ok (TypeRef "mat4x3")
+  | TypeRef "mat4x3", Mult, TypeRef "mat3x4" ->
+      Ok (TypeRef "mat4x4")
+  | TypeRef "mat4x4", Mult, TypeRef "vec4" ->
+      Ok (TypeRef "vec4")
+  | TypeRef "mat4", Mult, TypeRef "vec4" ->
+      Ok (TypeRef "vec4")
+  | TypeRef "mat4x4", Mult, TypeRef "mat4x2" ->
+      Ok (TypeRef "mat4x2")
+  | TypeRef "mat4", Mult, TypeRef "mat4x2" ->
+      Ok (TypeRef "mat4x2")
+  | TypeRef "mat4x4", Mult, TypeRef "mat4x3" ->
+      Ok (TypeRef "mat4x3")
+  | TypeRef "mat4", Mult, TypeRef "mat4x3" ->
+      Ok (TypeRef "mat4x3")
+  | TypeRef "mat4x4", Mult, TypeRef "mat4x4" ->
+      Ok (TypeRef "mat4x4")
+  | TypeRef "mat4x4", Mult, TypeRef "mat4" ->
+      Ok (TypeRef "mat4x4")
+  | TypeRef "mat4", Mult, TypeRef "mat4x4" ->
+      Ok (TypeRef "mat4x4")
+  | TypeRef "mat4", Mult, TypeRef "mat4" ->
+      Ok (TypeRef "mat4x4")
   | _ ->
       error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
 
@@ -272,22 +429,123 @@ let check_assignop ltyp op rtyp err =
     , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
     , (Primitive Double | TypeRef "double") ) ->
       Ok ()
-  (* TODO: add cases for non-primitive builtin types *)
+  | TypeRef "ivec2", (Assign | AssignPlus | AssignMinus), TypeRef "ivec2" ->
+      Ok ()
+  | TypeRef "ivec3", (Assign | AssignPlus | AssignMinus), TypeRef "ivec3" ->
+      Ok ()
+  | TypeRef "ivec4", (Assign | AssignPlus | AssignMinus), TypeRef "ivec4" ->
+      Ok ()
+  | TypeRef "uvec2", (Assign | AssignPlus | AssignMinus), TypeRef "uvec2" ->
+      Ok ()
+  | TypeRef "uvec3", (Assign | AssignPlus | AssignMinus), TypeRef "uvec3" ->
+      Ok ()
+  | TypeRef "uvec4", (Assign | AssignPlus | AssignMinus), TypeRef "uvec4" ->
+      Ok ()
+  | TypeRef "vec2", (Assign | AssignPlus | AssignMinus), TypeRef "vec2" ->
+      Ok ()
+  | TypeRef "vec3", (Assign | AssignPlus | AssignMinus), TypeRef "vec3" ->
+      Ok ()
+  | TypeRef "vec4", (Assign | AssignPlus | AssignMinus), TypeRef "vec4" ->
+      Ok ()
+  | TypeRef "dvec2", (Assign | AssignPlus | AssignMinus), TypeRef "dvec2" ->
+      Ok ()
+  | TypeRef "dvec3", (Assign | AssignPlus | AssignMinus), TypeRef "dvec3" ->
+      Ok ()
+  | TypeRef "dvec4", (Assign | AssignPlus | AssignMinus), TypeRef "dvec4" ->
+      Ok ()
+  | ( TypeRef "mat2"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "mat2" ) ->
+      Ok ()
+  | ( TypeRef "mat3"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "mat3" ) ->
+      Ok ()
+  | ( TypeRef "mat4"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "mat4" ) ->
+      Ok ()
+  | TypeRef "mat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x2" ->
+      Ok ()
+  | TypeRef "mat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x3" ->
+      Ok ()
+  | TypeRef "mat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x4" ->
+      Ok ()
+  | TypeRef "mat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x2" ->
+      Ok ()
+  | TypeRef "mat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x3" ->
+      Ok ()
+  | TypeRef "mat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x4" ->
+      Ok ()
+  | TypeRef "mat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x2" ->
+      Ok ()
+  | TypeRef "mat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x3" ->
+      Ok ()
+  | TypeRef "mat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x4" ->
+      Ok ()
+  | ( TypeRef "dmat2"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "dmat2" ) ->
+      Ok ()
+  | ( TypeRef "dmat3"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "dmat3" ) ->
+      Ok ()
+  | ( TypeRef "dmat4"
+    , (Assign | AssignPlus | AssignMinus | AssignMult)
+    , TypeRef "dmat4" ) ->
+      Ok ()
+  | TypeRef "dmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x2"
+    ->
+      Ok ()
+  | TypeRef "dmat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x3"
+    ->
+      Ok ()
+  | TypeRef "dmat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x4"
+    ->
+      Ok ()
+  | TypeRef "dmat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x2"
+    ->
+      Ok ()
+  | TypeRef "dmat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x3"
+    ->
+      Ok ()
+  | TypeRef "dmat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x4"
+    ->
+      Ok ()
+  | TypeRef "dmat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x2"
+    ->
+      Ok ()
+  | TypeRef "dmat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x3"
+    ->
+      Ok ()
+  | TypeRef "dmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x4"
+    ->
+      Ok ()
+  | ( (Primitive Crt | Primitive Dsrt | TypeRef "crt" | TypeRef "dsrt")
+    , AssignPlus
+    , Primitive PAction ) ->
+      Ok ()
   | _ ->
       err
 
 let rec check_access env loc expr id =
+  let check_field_exists id fields err =
+    match List.find_opt (fun (name, _) -> name = id) fields with
+    | Some (_, t) ->
+        Ok t
+    | None ->
+        err
+  in
   check_single_value_expr env expr >>= fun typ ->
   let err = error loc (`NoSuchMember (typ, id)) in
   match typ with
+  | Type.Record fields ->
+      check_field_exists id fields err
   | Type.TypeRef name -> (
     match Env.find_type ~local:false name env with
-    | Some Located.{value= Type.Record fields; _} -> (
-      match List.find_opt (fun (name, _) -> name = id) fields with
-      | Some (_, t) ->
-          Ok t
-      | None ->
-          err )
+    | Some Located.{value= Type.Record fields; _} ->
+        check_field_exists id fields err
     | _ ->
         failwith "name cannot exist in environment without a known type" )
   | _ ->
@@ -327,6 +585,12 @@ and check_index env loc expr index_exprs =
       let expr = Located.{loc; value= Ast.Index (expr, index_exprs)} in
       error loc (`InvalidIndexOperation (expr, expr_type))
 
+and check_pipeline_call env loc =
+  if Env.is_renderer_scope env then Ok [Type.Primitive PAction]
+  else
+    error loc
+      (`Unimplemented "pipelines can be called only from renderer scope")
+
 and check_call env loc f_expr arg_exprs =
   check_single_value_expr env f_expr >>= fun f_type ->
   List.fold_results
@@ -336,62 +600,55 @@ and check_call env loc f_expr arg_exprs =
       Ok (arg_type :: arg_types) )
     (Ok []) arg_exprs
   >>= fun arg_types ->
-  match f_type with
-  | Type.Function (args, ret) -> (
+  match (f_expr, f_type) with
+  | Located.{value= Ast.Id name; _}, Type.Function (args, ret) -> (
+      let is_function = Env.function_exists name env in
+      let is_pipeline = Env.pipeline_exists name env in
+      let is_named = function
+        | Located.{value= Ast.NamedArg _; _} ->
+            true
+        | _ ->
+            false
+      in
+      let all_named = List.for_all is_named arg_exprs in
+      let all_unnamed = List.for_all (fun x -> not (is_named x)) arg_exprs in
       let have = List.length arg_types in
       let want = List.length args in
       let want_types = List.map (fun (_, t) -> t) args in
-      if have < want then
+      if all_unnamed && have < want then
         error loc (`NotEnoughArguments (f_expr, arg_types, want_types))
-      else if have > want then
+      else if all_unnamed && have > want then
         error loc (`TooManyArguments (f_expr, arg_types, want_types))
       else
-        match f_expr with
-        | Located.{value= Ast.Id name; _} -> (
-            let is_function = Env.function_exists name env in
-            let is_pipeline = Env.pipeline_exists name env in
-            let is_named = function
-              | Located.{value= Ast.NamedArg _; _} ->
-                  true
-              | _ ->
-                  false
-            in
-            let all_named = List.for_all is_named arg_exprs in
-            let all_unnamed =
-              List.for_all (fun x -> not (is_named x)) arg_exprs
-            in
-            match (is_function, is_pipeline, all_named, all_unnamed) with
-            (* Case #0: function + no arguments *)
-            | true, false, true, true ->
-                let () = assert (List.length arg_exprs = 0) in
-                check_call_args name arg_exprs arg_types want_types
-                >>= fun _ -> Ok ret
-            (* Case #1: function + unnamed arguments *)
-            | true, false, false, true ->
-                check_call_args name arg_exprs arg_types want_types
-                >>= fun _ -> Ok ret
-            (* Case #2: function + named arguments *)
-            | true, false, true, false ->
-                check_call_named_args loc name f_type arg_exprs arg_types
-                  want_types
-                >>= fun _ -> Ok ret
-            | _, _, false, false ->
-                let expr =
-                  Located.{loc; value= Ast.Call (f_expr, arg_exprs)}
-                in
-                error loc (`MixedArgumentStyle expr)
-            | _ ->
-                error loc (`Unimplemented "not implemented")
-            (* 
-                 * TODO: implement 
-                 * Case #3: pipeline + unnamed arguments 
-                 * Case #4: pipeline + named arguments
-                 * *)
-            )
+        match (is_function, is_pipeline, all_named, all_unnamed) with
+        (* Case #0: function + no arguments *)
+        | true, false, true, true ->
+            let () = assert (List.length arg_exprs = 0) in
+            check_call_args name arg_exprs arg_types want_types >>= fun () ->
+            Ok ret
+        (* Case #1: function + unnamed arguments *)
+        | true, false, false, true ->
+            check_call_args name arg_exprs arg_types want_types >>= fun () ->
+            Ok ret
+        (* Case #2: function + named arguments *)
+        | true, false, true, false ->
+            check_call_named_args loc name f_type arg_exprs arg_types
+              want_types
+            >>= fun () -> Ok ret
+        (* Case #3: pipeline + unnamed arguments *)
+        | false, true, false, true ->
+            (* TODO: create custom error *)
+            error loc
+              (`Unimplemented
+                "pipelines can be called only with named parameters")
+        (* Case #4: pipeline + named arguments *)
+        | false, true, true, _ ->
+            check_pipeline_call env loc
+        | _, _, false, false ->
+            let expr = Located.{loc; value= Ast.Call (f_expr, arg_exprs)} in
+            error loc (`MixedArgumentStyle expr)
         | _ ->
-            failwith
-              "function types should only be called from their IDs since they \
-               cannot be built anonymously" )
+            error loc (`Unimplemented "not implemented") )
   | _ ->
       error loc (`InvalidCallOperation (f_expr, f_type))
 
@@ -809,7 +1066,7 @@ let check_function_declaration env loc fd =
   let Ast.{fd_name; fd_type; fd_body} = fd in
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
-  let env = build_function_environment env loc clean_type in
+  let env = build_function_environment env loc fd_name clean_type in
   check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
   Ok TypedAst.{fd_env= env; fd_name; fd_type= clean_type; fd_body= typed_stmts}
 
@@ -848,8 +1105,9 @@ let check_pipeline_declaration_body env loc pd =
   let Ast.{pd_name; pd_type; pd_functions} = pd in
   check_type env loc pd_type >>= fun clean_type ->
   let env = Env.enter_pipeline_scope pd_name clean_type env in
-  let env = build_function_environment env loc clean_type in
+  let env = build_function_environment env loc "" clean_type in
   check_function_group env pd_functions >>= fun typed_functions ->
+  (* TODO: check pipeline preconditions *)
   Ok
     (TypedAst.PipelineDecl
        { pd_env= env
@@ -869,8 +1127,8 @@ let check_renderer_declaration_sig env loc rd =
 let check_renderer_declaration_body env loc rd =
   let Ast.{rd_name; rd_type; rd_functions} = rd in
   check_type env loc rd_type >>= fun clean_type ->
-  let env = Env.enter_pipeline_scope rd_name clean_type env in
-  let env = build_function_environment env loc clean_type in
+  let env = Env.enter_renderer_scope rd_name clean_type env in
+  let env = build_function_environment env loc "" clean_type in
   check_function_group env rd_functions >>= fun typed_functions ->
   Ok
     (TypedAst.RendererDecl
