@@ -41,6 +41,7 @@ rule read =
   | "in"       { IN }
   | "to"       { TO }
   | "return"   { RETURN }
+  | "discard"  { DISCARD }
   | "true"     { BOOL true }
   | "false"    { BOOL false }
   | int        { INT (int_of_string (Lexing.lexeme lexbuf)) }

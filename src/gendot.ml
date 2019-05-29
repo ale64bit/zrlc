@@ -231,6 +231,8 @@ and dot_raw_stmt s g = function
       let ret_node = new_node s g "return" in
       List.iter (G.add_edge g ret_node) (List.map (dot_expr s g) exprs) ;
       ret_node
+  | Ast.Discard ->
+      new_node s g "discard"
 
 let dot_raw_func s g Ast.{fd_name; fd_body; _} =
   let node = new_node s g (Printf.sprintf "func$%s" fd_name) in

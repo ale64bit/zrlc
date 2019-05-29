@@ -1,5 +1,5 @@
 %token MODULE CONST TYPE PIPELINE RENDERER DEF VAR
-%token IF ELSE FOR IN TO RETURN
+%token IF ELSE FOR IN TO RETURN DISCARD
 
 %token <bool> BOOL
 %token <int> INT
@@ -139,6 +139,9 @@ let for_range ==
 let return ==
   RETURN; ~ = separated_nonempty_list(COMMA, expr); <Ast.Return>
 
+let discard ==
+  DISCARD; { Ast.Discard }
+
 let stmt :=
   located(
   | var_declaration
@@ -147,6 +150,7 @@ let stmt :=
   | for_iter
   | for_range
   | return
+  | discard
   )
 
 let expr :=

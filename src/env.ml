@@ -368,10 +368,14 @@ let add_builtin name env =
         let t = Type.Record [("position", Type.TypeRef "vec4")] in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | Pipeline _, "fragment" ->
-        (* TODO: implement *)
-        env
+        let t =
+          Type.Record
+            [ ("fragCoord", Type.TypeRef "vec4")
+            ; ("frontFacing", Type.TypeRef "bool") ]
+        in
+        add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | Renderer _, "main" ->
-        let t = Type.Record [("screen", Type.Primitive Crt)] in
+        let t = Type.Record [("screen", Type.TypeRef "crt")] in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | _ ->
         env )

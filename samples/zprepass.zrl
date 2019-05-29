@@ -1,0 +1,45 @@
+module zprepass
+
+pipeline PrePass(depth: depth, mvp: mat4): depth {
+
+  def vertex(pos: vec4) {
+    builtin.position = mvp * pos
+  }
+
+  def fragment(): depth {
+    if builtin.fragCoord.z > depth {
+      discard
+    }
+    return builtin.fragCoord.z
+  }
+}
+
+pipeline MainPass(depth: depth, mvp: mat4): vec4 {
+
+  def vertex(pos: vec4) {
+    builtin.position = mvp * pos
+  }
+
+  def fragment(): vec4 {
+    if builtin.fragCoord.z != depth {
+      discard
+    }
+    var red = vec4(1.0, 0.0, 0.0, 1.0)
+    return red
+  }
+}
+
+renderer Main(ds: dsrt) {
+
+  def main(view: atom, geometry: atomset) {
+    # TODO: rt<format>
+    # builtin.screen = crt(0.0) # TODO: image format?
+    # ds = dsrt(0.0) # TODO: image format?
+    for g in geometry {
+      ds += PrePass(mvp = view, pos = g)
+    }
+    for g in geometry {
+      builtin.screen += MainPass(depth = ds, mvp = view, pos = g)
+    }
+  }
+}

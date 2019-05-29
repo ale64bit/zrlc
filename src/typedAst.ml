@@ -36,6 +36,7 @@ and raw_stmt =
   | ForIter of for_iter_stmt
   | ForRange of for_range_stmt
   | Return of expression list
+  | Discard
 [@@deriving to_yojson]
 
 type const_declaration = {cd_name: string; cd_value: expression}

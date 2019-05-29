@@ -1034,6 +1034,13 @@ and check_return env loc exprs =
   | _ ->
       failwith "return can only appear in Function scopes"
 
+and check_discard env loc =
+  match Env.scope_summary env with
+  | Env.Function (Type.Function _) ->
+      Ok (env, [(env, Located.{loc; value= TypedAst.Discard})])
+  | _ ->
+      failwith "discard can only appear in Function scopes"
+
 and check_stmt_list env stmts =
   List.fold_left
     (fun acc Located.{loc; value= stmt} ->
@@ -1059,6 +1066,8 @@ and check_stmt env loc =
         forrange_body
   | Return exprs ->
       check_return env loc exprs
+  | Discard ->
+      check_discard env loc
 
 (* Top-Level Elements *)
 
