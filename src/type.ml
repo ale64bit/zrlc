@@ -3,8 +3,11 @@ type t =
   | Record of (string * t) list
   | Array of t * const list
   | Function of (string * t) list * t list
+  | RenderTarget of render_target_type
   | Primitive of primitive_type
 [@@deriving to_yojson]
+
+and render_target_type = RGB | RGBA | DS [@@deriving to_yojson]
 
 and primitive_type =
   | Bool
@@ -16,9 +19,6 @@ and primitive_type =
   | Atom
   | AtomList
   | AtomSet
-  | Crt
-  | Dsrt
-  | PAction
 [@@deriving to_yojson]
 
 and const =
@@ -63,6 +63,12 @@ let rec string_of_type = function
       Printf.sprintf "fun (%s) -> (%s)"
         (String.concat ", " arg_strs)
         (String.concat ", " ret_strs)
+  | RenderTarget RGB ->
+      "rt_rgb"
+  | RenderTarget RGBA ->
+      "rt_rgba"
+  | RenderTarget DS ->
+      "rt_ds"
   | Primitive Bool ->
       "bool"
   | Primitive Int ->
@@ -81,9 +87,3 @@ let rec string_of_type = function
       "atomlist"
   | Primitive AtomSet ->
       "atomset"
-  | Primitive Crt ->
-      "crt"
-  | Primitive Dsrt ->
-      "dsrt"
-  | Primitive PAction ->
-      "pipeline_action"

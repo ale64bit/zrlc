@@ -113,6 +113,8 @@ let rec check_type env ctx_loc t =
           check_type env ctx_loc t >>= fun nt -> Ok (nt :: new_rets) )
         (Ok []) rets
       >>= fun new_rets -> Ok (Type.Function (new_args, new_rets))
+  | Type.RenderTarget _ ->
+      Ok t
   | Type.Primitive _ ->
       Ok t
 
@@ -522,9 +524,17 @@ let check_assignop ltyp op rtyp err =
   | TypeRef "dmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x4"
     ->
       Ok ()
-  | ( (Primitive Crt | Primitive Dsrt | TypeRef "crt" | TypeRef "dsrt")
-    , AssignPlus
-    , Primitive PAction ) ->
+  | ( (TypeRef "rt_rgb" | RenderTarget RGB)
+    , (Assign | AssignPlus)
+    , TypeRef "vec3" ) ->
+      Ok ()
+  | ( (TypeRef "rt_rgba" | RenderTarget RGBA)
+    , (Assign | AssignPlus)
+    , TypeRef "vec4" ) ->
+      Ok ()
+  | ( (TypeRef "rt_ds" | RenderTarget DS)
+    , (Assign | AssignPlus)
+    , (TypeRef "float" | Primitive Float) ) ->
       Ok ()
   | _ ->
       err
@@ -586,7 +596,7 @@ and check_index env loc expr index_exprs =
       error loc (`InvalidIndexOperation (expr, expr_type))
 
 and check_pipeline_call env loc =
-  if Env.is_renderer_scope env then Ok [Type.Primitive PAction]
+  if Env.is_renderer_scope env then Ok ()
   else
     error loc
       (`Unimplemented "pipelines can be called only from renderer scope")
@@ -643,7 +653,7 @@ and check_call env loc f_expr arg_exprs =
                 "pipelines can be called only with named parameters")
         (* Case #4: pipeline + named arguments *)
         | false, true, true, _ ->
-            check_pipeline_call env loc
+            check_pipeline_call env loc >>= fun () -> Ok ret
         | _, _, false, false ->
             let expr = Located.{loc; value= Ast.Call (f_expr, arg_exprs)} in
             error loc (`MixedArgumentStyle expr)
@@ -976,15 +986,15 @@ and check_iterable_type env expr =
 
 and check_foriter env loc it_var it_expr body =
   check_iterable_type env it_expr >>= fun (expr_typ, it_typ) ->
-  let env = Env.(env |> add_var it_var Located.{loc; value= it_typ}) in
-  check_stmt_list env body >>= fun (_, typed_body) ->
+  let stmt_env = Env.(env |> add_var it_var Located.{loc; value= it_typ}) in
+  check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForIter
       { foriter_id= it_var
       ; foriter_it= ([expr_typ], it_expr)
       ; foriter_body= typed_body }
   in
-  Ok (env, [(env, Located.{loc; value= typed_stmt})])
+  Ok (env, [(stmt_env, Located.{loc; value= typed_stmt})])
 
 and check_range_expr env expr =
   let open Type in
@@ -1000,8 +1010,8 @@ and check_forrange env loc it_var from_expr to_expr body =
   check_range_expr env from_expr >>= fun () ->
   check_range_expr env to_expr >>= fun () ->
   let int_typ = Type.TypeRef "int" in
-  let env = Env.(env |> add_var it_var Located.{loc; value= int_typ}) in
-  check_stmt_list env body >>= fun (_, typed_body) ->
+  let stmt_env = Env.(env |> add_var it_var Located.{loc; value= int_typ}) in
+  check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForRange
       { forrange_id= it_var
@@ -1009,7 +1019,7 @@ and check_forrange env loc it_var from_expr to_expr body =
       ; forrange_to= ([int_typ], to_expr)
       ; forrange_body= typed_body }
   in
-  Ok (env, [(env, Located.{loc; value= typed_stmt})])
+  Ok (env, [(stmt_env, Located.{loc; value= typed_stmt})])
 
 and check_return env loc exprs =
   match Env.scope_summary env with

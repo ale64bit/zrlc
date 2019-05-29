@@ -1,12 +1,12 @@
 module zprepass
 
-pipeline PrePass(depth: depth, mvp: mat4): depth {
+pipeline PrePass(depth: float, mvp: mat4): float {
 
   def vertex(pos: vec4) {
     builtin.position = mvp * pos
   }
 
-  def fragment(): depth {
+  def fragment(): float {
     if builtin.fragCoord.z > depth {
       discard
     }
@@ -14,7 +14,7 @@ pipeline PrePass(depth: depth, mvp: mat4): depth {
   }
 }
 
-pipeline MainPass(depth: depth, mvp: mat4): vec4 {
+pipeline MainPass(depth: float, mvp: mat4): vec4 {
 
   def vertex(pos: vec4) {
     builtin.position = mvp * pos
@@ -29,12 +29,11 @@ pipeline MainPass(depth: depth, mvp: mat4): vec4 {
   }
 }
 
-renderer Main(ds: dsrt) {
+renderer Main(ds: rt_ds) {
 
   def main(view: atom, geometry: atomset) {
-    # TODO: rt<format>
-    # builtin.screen = crt(0.0) # TODO: image format?
-    # ds = dsrt(0.0) # TODO: image format?
+    ds = 0.0
+    builtin.screen = vec4(0.0, 0.0, 0.0, 1.0)
     for g in geometry {
       ds += PrePass(mvp = view, pos = g)
     }

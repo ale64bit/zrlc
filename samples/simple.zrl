@@ -15,6 +15,7 @@ pipeline Pipeline(): vec4 {
 renderer Simple() {
 
   def main(geometry: atomset) { 
+    builtin.screen = vec4(0.0, 0.0, 0.0, 1.0)
     for g in geometry {
       builtin.screen += Pipeline(pos = g)
     }  
