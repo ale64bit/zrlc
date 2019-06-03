@@ -407,6 +407,8 @@ let check_assignop ltyp op rtyp err =
   let () = assert (is_ref ltyp) in
   let () = assert (is_ref rtyp) in
   match (ltyp, op, rtyp) with
+  | TypeRef "bool", Assign, TypeRef "bool" ->
+      Ok ()
   | TypeRef "int", _, TypeRef "int" ->
       Ok ()
   | TypeRef "uint", _, TypeRef "uint" ->
@@ -578,8 +580,7 @@ and check_index env loc expr index_exprs =
           (fun acc (index_expr, index_type) ->
             acc >>= fun _ ->
             match index_type with
-            | Primitive Int | Primitive UInt | TypeRef "int" | TypeRef "uint"
-              ->
+            | TypeRef "int" | TypeRef "uint" ->
                 acc
             | _ ->
                 let Located.{loc; _} = index_expr in
@@ -590,13 +591,6 @@ and check_index env loc expr index_exprs =
   | _ ->
       let expr = Located.{loc; value= Ast.Index (expr, index_exprs)} in
       error loc (`InvalidIndexOperation (expr, expr_type))
-
-and check_pipeline_call env loc =
-  if Env.is_renderer_scope env then (* TODO: check argument types *)
-    Ok ()
-  else
-    error loc
-      (`Unimplemented "pipelines can be called only from renderer scope")
 
 and check_call env loc f_expr arg_exprs =
   check_single_value_expr env f_expr >>= fun f_type ->
@@ -657,7 +651,8 @@ and check_call env loc f_expr arg_exprs =
                 "pipelines can be called only with named parameters")
         (* Case #4: pipeline + named arguments *)
         | false, true, true, _ ->
-            check_pipeline_call env loc >>= fun () -> Ok ret
+            check_pipeline_call env loc name args arg_exprs arg_types
+            >>= fun () -> Ok ret
         | _, _, false, false ->
             let expr = Located.{loc; value= Ast.Call (f_expr, arg_exprs)} in
             error loc (`MixedArgumentStyle expr)
@@ -666,11 +661,25 @@ and check_call env loc f_expr arg_exprs =
   | _ ->
       error loc (`InvalidCallOperation (f_expr, f_type))
 
+and valid_arg arg_type want_type =
+  let open Type in
+  match (arg_type, want_type) with
+  | TypeRef "atom", _ ->
+      true
+  | TypeRef "rt_ds", TypeRef "depthBuffer" ->
+      true
+  | TypeRef "rt_rgb", TypeRef "texture2D" ->
+      true
+  | TypeRef "rt_rgba", TypeRef "texture2D" ->
+      true
+  | _ ->
+      arg_type = want_type
+
 and check_call_args f_name arg_exprs arg_types want_types =
   List.fold_left
     (fun acc ((arg_expr, arg_type), want_type) ->
       acc >>= fun _ ->
-      if arg_type <> want_type then
+      if not (valid_arg arg_type want_type) then
         let Located.{loc; _} = arg_expr in
         error loc (`InvalidArgument (arg_expr, arg_type, want_type, f_name))
       else Ok () )
@@ -715,6 +724,14 @@ and check_call_named_args loc f_name params arg_exprs arg_types =
     params
   >>= fun (new_arg_exprs, new_arg_types) ->
   check_call_args f_name new_arg_exprs new_arg_types want_types
+
+and check_pipeline_call env loc f_name params arg_exprs arg_types =
+  if Env.is_renderer_scope env then
+    (* TODO: modify params to include parameters to first stage *)
+    check_call_named_args loc f_name params arg_exprs arg_types
+  else
+    error loc
+      (`Unimplemented "pipelines can be called only from renderer scope")
 
 and check_bundled_arg env exprs =
   List.fold_results
@@ -958,9 +975,11 @@ and check_assignment env loc op lhs rhs =
 
 and check_if env loc if_cond if_true if_false =
   check_single_value_expr env if_cond >>= function
-  | Type.TypeRef "bool" | Type.Primitive Bool ->
-      check_stmt_list env if_true >>= fun (_, typed_if_true) ->
-      check_stmt_list env if_false >>= fun (_, typed_if_false) ->
+  | Type.TypeRef "bool" ->
+      let true_env = Env.enter_block_scope "if_true" loc env in
+      let false_env = Env.enter_block_scope "if_false" loc env in
+      check_stmt_list true_env if_true >>= fun (_, typed_if_true) ->
+      check_stmt_list false_env if_false >>= fun (_, typed_if_false) ->
       let typed_stmt =
         TypedAst.If
           { if_cond= ([Type.TypeRef "bool"], if_cond)
@@ -979,16 +998,21 @@ and check_iterable_type env expr =
   match expr_typ with
   | Array (t, [_]) ->
       Ok (expr_typ, t)
-  | Primitive AtomSet | TypeRef "atomset" ->
+  | TypeRef "atomset" ->
       Ok (expr_typ, TypeRef "atom")
-  | Primitive AtomList | TypeRef "atomlist" ->
+  | TypeRef "atomlist" ->
       Ok (expr_typ, TypeRef "atom")
   | _ as t ->
       error loc (`CannotRangeOver (expr, t))
 
 and check_foriter env loc it_var it_expr body =
   check_iterable_type env it_expr >>= fun (expr_typ, it_typ) ->
-  let stmt_env = Env.(env |> add_var it_var Located.{loc; value= it_typ}) in
+  let stmt_env =
+    Env.(
+      env
+      |> enter_block_scope "foriter" loc
+      |> add_var it_var Located.{loc; value= it_typ})
+  in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForIter
@@ -1003,7 +1027,7 @@ and check_range_expr env expr =
   let Located.{loc; _} = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
-  | Primitive Int | TypeRef "int" ->
+  | TypeRef "int" ->
       Ok ()
   | _ ->
       error loc (`NonIntegerRangeExpression (expr, expr_typ))
@@ -1012,7 +1036,12 @@ and check_forrange env loc it_var from_expr to_expr body =
   check_range_expr env from_expr >>= fun () ->
   check_range_expr env to_expr >>= fun () ->
   let int_typ = Type.TypeRef "int" in
-  let stmt_env = Env.(env |> add_var it_var Located.{loc; value= int_typ}) in
+  let stmt_env =
+    Env.(
+      env
+      |> enter_block_scope "forrange" loc
+      |> add_var it_var Located.{loc; value= int_typ})
+  in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForRange
@@ -1047,11 +1076,9 @@ and check_return env loc exprs =
       failwith "return can only appear in Function scopes"
 
 and check_discard env loc =
-  match Env.scope_summary env with
-  | Env.Function (Type.Function _) ->
-      Ok (env, [(env, Located.{loc; value= TypedAst.Discard})])
-  | _ ->
-      failwith "discard can only appear in Function scopes"
+  if Env.is_function_scope env then
+    Ok (env, [(env, Located.{loc; value= TypedAst.Discard})])
+  else error loc (`Unimplemented "discard can only appear in Function scopes")
 
 and check_stmt_list env stmts =
   List.fold_left
@@ -1091,15 +1118,6 @@ let check_function_declaration env loc fd =
   check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
   Ok TypedAst.{fd_env= env; fd_name; fd_type= clean_type; fd_body= typed_stmts}
 
-let check_pipeline_declaration_sig env loc pd =
-  let Ast.{pd_name; pd_type; _} = pd in
-  match Env.find_name ~local:true pd_name env with
-  | Some Located.{loc= prev_loc; _} ->
-      error loc (`Redefinition (pd_name, prev_loc))
-  | None ->
-      check_type env loc pd_type >>= fun clean_type ->
-      Ok (Env.add_pipeline pd_name {loc; value= clean_type} env)
-
 let check_function_sig env loc fd =
   let Ast.{fd_name; fd_type; _} = fd in
   match Env.find_name ~local:true fd_name env with
@@ -1122,13 +1140,52 @@ let check_function_group env functions =
       Ok (typed_fd :: typed_functions) )
     (Ok []) functions
 
+let expand_pipeline_type env loc t functions =
+  (* TODO: add strict check for pipeline stage invariants *)
+  match t with
+  | Type.Function (p_params, p_ret) -> (
+      List.fold_left
+        (fun acc Located.{loc; value} ->
+          acc >>= fun env -> check_function_sig env loc value )
+        (Ok env) functions
+      >>= fun env ->
+      let vertex = Env.find_function ~local:true "vertex" env in
+      let compute = Env.find_function ~local:true "compute" env in
+      match (vertex, compute) with
+      | Some _, Some _ ->
+          error loc
+            (`Unimplemented
+              "ambiguous pipeline entry stage: cannot have both vertex and \
+               compute functions")
+      | Some Located.{value= Type.Function (f_params, _); _}, None ->
+          Ok (Type.Function (p_params @ f_params, p_ret))
+      | None, Some _ ->
+          Ok t
+      | None, None ->
+          Ok t
+      | _ ->
+          failwith "functions should have Function type" )
+  | _ ->
+      failwith "pipelines should have Function type"
+
+let check_pipeline_declaration_sig env loc pd =
+  let Ast.{pd_name; pd_type; pd_functions} = pd in
+  match Env.find_name ~local:true pd_name env with
+  | Some Located.{loc= prev_loc; _} ->
+      error loc (`Redefinition (pd_name, prev_loc))
+  | None ->
+      check_type env loc pd_type >>= fun clean_type ->
+      expand_pipeline_type env loc clean_type pd_functions
+      >>= fun clean_type ->
+      Ok (Env.add_pipeline pd_name {loc; value= clean_type} env)
+
 let check_pipeline_declaration_body env loc pd =
   let Ast.{pd_name; pd_type; pd_functions} = pd in
   check_type env loc pd_type >>= fun clean_type ->
   let env = Env.enter_pipeline_scope pd_name clean_type env in
   let env = build_function_environment env loc "" clean_type in
   check_function_group env pd_functions >>= fun typed_functions ->
-  (* TODO: check pipeline preconditions *)
+  (* TODO: check pipeline preconditions? *)
   Ok
     (TypedAst.PipelineDecl
        { pd_env= env

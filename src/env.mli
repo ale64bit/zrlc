@@ -7,6 +7,7 @@ type summary =
   | Pipeline of Type.t
   | Renderer of Type.t
   | Function of Type.t
+  | Block of (Located.lexing_position * Located.lexing_position)
 [@@deriving to_yojson]
 
 type t [@@deriving to_yojson]
@@ -27,11 +28,15 @@ val enter_renderer_scope : string -> Type.t -> t -> t
 
 val enter_function_scope : string -> Type.t -> t -> t
 
+val enter_block_scope : string -> Lexing.position * Lexing.position -> t -> t
+
 val exit_scope : t -> t
 
 val is_pipeline_scope : t -> bool
 
 val is_renderer_scope : t -> bool
+
+val is_function_scope : t -> bool
 
 (* Exists *)
 val constant_exists : string -> t -> bool
@@ -44,7 +49,7 @@ val renderer_exists : string -> t -> bool
 
 val function_exists : string -> t -> bool
 
-val var_exists : string -> t -> bool
+val var_exists : local:bool -> string -> t -> bool
 
 val name_exists : string -> t -> bool
 

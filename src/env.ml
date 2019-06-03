@@ -30,6 +30,7 @@ type summary =
   | Pipeline of Type.t
   | Renderer of Type.t
   | Function of Type.t
+  | Block of (Located.lexing_position * Located.lexing_position)
 [@@deriving to_yojson]
 
 type t =
@@ -173,7 +174,7 @@ let renderer_exists name env = find_renderer ~local:false name env <> None
 
 let function_exists name env = find_function ~local:false name env <> None
 
-let var_exists name env = find_var ~local:false name env <> None
+let var_exists ~local name env = find_var ~local name env <> None
 
 let name_exists name env = find_name ~local:false name env <> None
 
@@ -208,7 +209,7 @@ let add_function name typ env =
   {env with functions= SymbolTable.add name typ env.functions}
 
 let add_var name typ env =
-  let () = assert (not (var_exists name env)) in
+  let () = assert (not (var_exists ~local:true name env)) in
   {env with vars= SymbolTable.add name typ env.vars}
 
 (* Constructors *)
@@ -371,6 +372,10 @@ let enter_function_scope id typ env =
   let id = "function$" ^ id in
   {(empty id) with summary= Function typ; parent= Some env}
 
+let enter_block_scope id loc env =
+  let id = "block$id" ^ id in
+  {(empty id) with summary= Block loc; parent= Some env}
+
 let exit_scope env =
   match env.parent with
   | Some penv ->
@@ -391,6 +396,13 @@ let rec is_renderer_scope env =
       true
   | _ -> (
     match env.parent with Some env -> is_renderer_scope env | None -> false )
+
+let rec is_function_scope env =
+  match env.summary with
+  | Function _ ->
+      true
+  | _ -> (
+    match env.parent with Some env -> is_function_scope env | None -> false )
 
 (* Others *)
 let add_builtin fname env =

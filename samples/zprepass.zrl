@@ -35,10 +35,10 @@ renderer Main(ds: rt_ds) {
     ds = 1.0
     builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0)
     for g in geometry {
-      ds += PrePass(curDepth = ds, mvp = view, pos = g)
+      ds += PrePass(depth = ds, mvp = view, pos = g)
     }
     for g in geometry {
-      builtin.screen += MainPass(curDepth = ds, mvp = view, pos = g)
+      builtin.screen += MainPass(depth = ds, mvp = view, pos = g)
     }
   }
 }
