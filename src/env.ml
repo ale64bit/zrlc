@@ -240,6 +240,17 @@ let generate_texture_type dim stype =
       , Function ([("p", TypeRef sptype); ("sampler", TypeRef stype)], ret) )
     ]
 
+let generate_vector_type ?(asint = false) dim base name =
+  let open Type in
+  let fields = generate_fields dim base name in
+  let fields =
+    if asint then
+      let f = Function ([], [TypeRef (Printf.sprintf "ivec%d" dim)]) in
+      ("asint", f) :: fields
+    else fields
+  in
+  Record fields
+
 let global =
   let open Type in
   let builtin_types =
@@ -257,21 +268,21 @@ let global =
     ; ("rt_rgba", RenderTarget RGBA)
     ; ("rt_ds", RenderTarget DS)
     ; (* Built-in vector types *)
-      ("bvec2", Record (generate_fields 2 "bool" "bvec"))
-    ; ("bvec3", Record (generate_fields 3 "bool" "bvec"))
-    ; ("bvec4", Record (generate_fields 4 "bool" "bvec"))
-    ; ("ivec2", Record (generate_fields 2 "int" "ivec"))
-    ; ("ivec3", Record (generate_fields 3 "int" "ivec"))
-    ; ("ivec4", Record (generate_fields 4 "int" "ivec"))
-    ; ("uvec2", Record (generate_fields 2 "uint" "uvec"))
-    ; ("uvec3", Record (generate_fields 3 "uint" "uvec"))
-    ; ("uvec4", Record (generate_fields 4 "uint" "uvec"))
-    ; ("fvec2", Record (generate_fields 2 "float" "fvec"))
-    ; ("fvec3", Record (generate_fields 3 "float" "fvec"))
-    ; ("fvec4", Record (generate_fields 4 "float" "fvec"))
-    ; ("dvec2", Record (generate_fields 2 "double" "dvec"))
-    ; ("dvec3", Record (generate_fields 3 "double" "dvec"))
-    ; ("dvec4", Record (generate_fields 4 "double" "dvec"))
+      ("bvec2", generate_vector_type 2 "bool" "bvec")
+    ; ("bvec3", generate_vector_type 3 "bool" "bvec")
+    ; ("bvec4", generate_vector_type 4 "bool" "bvec")
+    ; ("ivec2", generate_vector_type 2 "int" "ivec")
+    ; ("ivec3", generate_vector_type 3 "int" "ivec")
+    ; ("ivec4", generate_vector_type 4 "int" "ivec")
+    ; ("uvec2", generate_vector_type 2 "uint" "uvec")
+    ; ("uvec3", generate_vector_type 3 "uint" "uvec")
+    ; ("uvec4", generate_vector_type 4 "uint" "uvec")
+    ; ("fvec2", generate_vector_type ~asint:true 2 "float" "fvec")
+    ; ("fvec3", generate_vector_type ~asint:true 3 "float" "fvec")
+    ; ("fvec4", generate_vector_type ~asint:true 4 "float" "fvec")
+    ; ("dvec2", generate_vector_type ~asint:true 2 "double" "dvec")
+    ; ("dvec3", generate_vector_type ~asint:true 3 "double" "dvec")
+    ; ("dvec4", generate_vector_type ~asint:true 4 "double" "dvec")
     ; (* Built-in matrix types *)
       ("fmat2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
     ; ("fmat3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
@@ -382,22 +393,22 @@ let rec is_renderer_scope env =
     match env.parent with Some env -> is_renderer_scope env | None -> false )
 
 (* Others *)
-let add_builtin name env =
+let add_builtin fname env =
+  let open Type in
   match env.parent with
   | Some penv -> (
-    match (scope_summary penv, name) with
+    match (scope_summary penv, fname) with
     | Pipeline _, "vertex" ->
-        let t = Type.Record [("position", Type.TypeRef "fvec4")] in
+        let t = Record [("position", TypeRef "fvec4")] in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | Pipeline _, "fragment" ->
         let t =
-          Type.Record
-            [ ("fragCoord", Type.TypeRef "fvec4")
-            ; ("frontFacing", Type.TypeRef "bool") ]
+          Record
+            [("fragCoord", TypeRef "fvec4"); ("frontFacing", TypeRef "bool")]
         in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | Renderer _, "main" ->
-        let t = Type.Record [("screen", Type.RenderTarget RGBA)] in
+        let t = Record [("screen", TypeRef "rt_rgba")] in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | _ ->
         env )

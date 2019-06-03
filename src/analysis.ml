@@ -184,12 +184,9 @@ let check_type_declaration env loc td =
 let check_unop loc op typ =
   let open Ast in
   let open Type in
+  let () = assert (is_ref typ) in
   match (op, typ) with
   (* Unary Plus and Minus *)
-  | (UPlus | UMinus), Primitive Int
-  | (UPlus | UMinus), Primitive UInt
-  | (UPlus | UMinus), Primitive Float
-  | (UPlus | UMinus), Primitive Double
   | (UPlus | UMinus), TypeRef "int"
   | (UPlus | UMinus), TypeRef "uint"
   | (UPlus | UMinus), TypeRef "float"
@@ -207,11 +204,8 @@ let check_unop loc op typ =
   | (UPlus | UMinus), TypeRef "dvec3"
   | (UPlus | UMinus), TypeRef "dvec4"
   (* Logical NOT *)
-  | LogicalNot, Primitive Bool
   | LogicalNot, TypeRef "bool"
   (* Bitwise Complement *)
-  | BitwiseComplement, Primitive Int
-  | BitwiseComplement, Primitive UInt
   | BitwiseComplement, TypeRef "int"
   | BitwiseComplement, TypeRef "uint" ->
       Ok typ
@@ -221,51 +215,43 @@ let check_unop loc op typ =
 let check_binop expr ltyp op rtyp =
   let open Ast in
   let open Type in
+  let () = assert (is_ref ltyp) in
+  let () = assert (is_ref rtyp) in
   let Located.{loc; _} = expr in
   match (ltyp, op, rtyp) with
   (* Logical *)
-  | ( (Primitive Bool | TypeRef "bool")
-    , (LogicalOr | LogicalXor | LogicalAnd)
-    , (Primitive Bool | TypeRef "bool") ) ->
+  | TypeRef "bool", (LogicalOr | LogicalXor | LogicalAnd), TypeRef "bool" ->
       Ok (TypeRef "bool")
   (* Bitwise *)
-  | ( (Primitive Int | TypeRef "int")
+  | ( TypeRef "int"
     , (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight)
-    , (Primitive Int | TypeRef "int") ) ->
+    , TypeRef "int" ) ->
       Ok (TypeRef "int")
   (* Comparison *)
-  | ( (Primitive Bool | TypeRef "bool")
+  | ( TypeRef "bool"
     , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , (Primitive Bool | TypeRef "bool") )
-  | ( (Primitive Int | TypeRef "int")
+    , TypeRef "bool" )
+  | ( TypeRef "int"
     , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , (Primitive Int | TypeRef "int") )
-  | ( (Primitive UInt | TypeRef "uint")
+    , TypeRef "int" )
+  | ( TypeRef "uint"
     , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , (Primitive UInt | TypeRef "uint") )
-  | ( (Primitive Float | TypeRef "float")
+    , TypeRef "uint" )
+  | ( TypeRef "float"
     , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , (Primitive Float | TypeRef "float") )
-  | ( (Primitive Double | TypeRef "double")
+    , TypeRef "float" )
+  | ( TypeRef "double"
     , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , (Primitive Double | TypeRef "double") ) ->
+    , TypeRef "double" ) ->
       Ok (TypeRef "bool")
   (* Arithmetic *)
-  | ( (Primitive Int | TypeRef "int")
-    , (Plus | Minus | Mult | Div | Mod)
-    , (Primitive Int | TypeRef "int") ) ->
+  | TypeRef "int", (Plus | Minus | Mult | Div | Mod), TypeRef "int" ->
       Ok (TypeRef "int")
-  | ( (Primitive UInt | TypeRef "uint")
-    , (Plus | Minus | Mult | Div | Mod)
-    , (Primitive UInt | TypeRef "uint") ) ->
+  | TypeRef "uint", (Plus | Minus | Mult | Div | Mod), TypeRef "uint" ->
       Ok (TypeRef "uint")
-  | ( (Primitive Float | TypeRef "float")
-    , (Plus | Minus | Mult | Div)
-    , (Primitive Float | TypeRef "float") ) ->
+  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "float" ->
       Ok (TypeRef "float")
-  | ( (Primitive Double | TypeRef "double")
-    , (Plus | Minus | Mult | Div)
-    , (Primitive Double | TypeRef "double") ) ->
+  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "double" ->
       Ok (TypeRef "double")
   | TypeRef "ivec2", (Plus | Minus), TypeRef "ivec2" ->
       Ok (TypeRef "ivec2")
@@ -418,18 +404,20 @@ let check_binop expr ltyp op rtyp =
 let check_assignop ltyp op rtyp err =
   let open Ast in
   let open Type in
+  let () = assert (is_ref ltyp) in
+  let () = assert (is_ref rtyp) in
   match (ltyp, op, rtyp) with
-  | (Primitive Int | TypeRef "int"), _, (Primitive Int | TypeRef "int") ->
+  | TypeRef "int", _, TypeRef "int" ->
       Ok ()
-  | (Primitive UInt | TypeRef "uint"), _, (Primitive UInt | TypeRef "uint") ->
+  | TypeRef "uint", _, TypeRef "uint" ->
       Ok ()
-  | ( (Primitive Float | TypeRef "float")
+  | ( TypeRef "float"
     , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
-    , (Primitive Float | TypeRef "float") ) ->
+    , TypeRef "float" ) ->
       Ok ()
-  | ( (Primitive Double | TypeRef "double")
+  | ( TypeRef "double"
     , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
-    , (Primitive Double | TypeRef "double") ) ->
+    , TypeRef "double" ) ->
       Ok ()
   | TypeRef "ivec2", (Assign | AssignPlus | AssignMinus), TypeRef "ivec2" ->
       Ok ()
@@ -541,9 +529,8 @@ let check_assignop ltyp op rtyp err =
     , (Assign | AssignPlus)
     , TypeRef "fvec4" ) ->
       Ok ()
-  | ( (TypeRef "rt_ds" | RenderTarget DS)
-    , (Assign | AssignPlus)
-    , (TypeRef "float" | Primitive Float) ) ->
+  | (TypeRef "rt_ds" | RenderTarget DS), (Assign | AssignPlus), TypeRef "float"
+    ->
       Ok ()
   | _ ->
       err
@@ -605,7 +592,8 @@ and check_index env loc expr index_exprs =
       error loc (`InvalidIndexOperation (expr, expr_type))
 
 and check_pipeline_call env loc =
-  if Env.is_renderer_scope env then Ok ()
+  if Env.is_renderer_scope env then (* TODO: check argument types *)
+    Ok ()
   else
     error loc
       (`Unimplemented "pipelines can be called only from renderer scope")
@@ -659,8 +647,7 @@ and check_call env loc f_expr arg_exprs =
             Ok ret
         (* Case #2: function + named arguments *)
         | true, false, true, false ->
-            check_call_named_args loc name f_type arg_exprs arg_types
-              want_types
+            check_call_named_args loc name args arg_exprs arg_types
             >>= fun () -> Ok ret
         (* Case #3: pipeline + unnamed arguments *)
         | false, true, false, true ->
@@ -690,48 +677,44 @@ and check_call_args f_name arg_exprs arg_types want_types =
     (Ok ())
     (List.combine (List.combine arg_exprs arg_types) want_types)
 
-and check_call_named_args loc f_name f_type arg_exprs arg_types want_types =
-  match f_type with
-  | Type.Function (params, _) ->
-      let args = List.combine arg_exprs arg_types in
-      (* Check that there are no unexpected named arguments *)
-      List.fold_left
-        (fun acc Located.{value; _} ->
-          acc >>= fun _ ->
-          match value with
-          | Ast.NamedArg (arg_name, _) ->
-              if List.exists (fun (name, _) -> name = arg_name) params then
-                Ok ()
-              else error loc (`UnexpectedNamedArgument (arg_name, f_name))
-          | _ ->
-              failwith "expected all arguments to be named" )
-        (Ok ()) arg_exprs
-      >>= fun () ->
-      (* Check that all required named arguments are provided *)
-      List.fold_left
-        (fun acc (name, _) ->
-          acc >>= fun (new_arg_exprs, new_arg_types) ->
-          let arg =
-            List.find_opt
-              (fun (arg_expr, _) ->
-                match arg_expr with
-                | Located.{value= Ast.NamedArg (arg_name, _); _} ->
-                    name = arg_name
-                | _ ->
-                    failwith "expected all arguments to be named" )
-              args
-          in
-          match arg with
-          | Some (arg_expr, arg_type) ->
-              Ok (new_arg_exprs @ [arg_expr], new_arg_types @ [arg_type])
-          | None ->
-              error loc (`MissingNamedArgument (name, f_name)) )
-        (Ok ([], []))
-        params
-      >>= fun (new_arg_exprs, new_arg_types) ->
-      check_call_args f_name new_arg_exprs new_arg_types want_types
-  | _ ->
-      failwith "f_type must be a Function type"
+and check_call_named_args loc f_name params arg_exprs arg_types =
+  let want_types = List.map (fun (_, t) -> t) params in
+  let args = List.combine arg_exprs arg_types in
+  (* Check that there are no unexpected named arguments *)
+  List.fold_left
+    (fun acc Located.{value; _} ->
+      acc >>= fun _ ->
+      match value with
+      | Ast.NamedArg (arg_name, _) ->
+          if List.exists (fun (name, _) -> name = arg_name) params then Ok ()
+          else error loc (`UnexpectedNamedArgument (arg_name, f_name))
+      | _ ->
+          failwith "expected all arguments to be named" )
+    (Ok ()) arg_exprs
+  >>= fun () ->
+  (* Check that all required named arguments are provided *)
+  List.fold_left
+    (fun acc (name, _) ->
+      acc >>= fun (new_arg_exprs, new_arg_types) ->
+      let arg =
+        List.find_opt
+          (fun (arg_expr, _) ->
+            match arg_expr with
+            | Located.{value= Ast.NamedArg (arg_name, _); _} ->
+                name = arg_name
+            | _ ->
+                failwith "expected all arguments to be named" )
+          args
+      in
+      match arg with
+      | Some (arg_expr, arg_type) ->
+          Ok (new_arg_exprs @ [arg_expr], new_arg_types @ [arg_type])
+      | None ->
+          error loc (`MissingNamedArgument (name, f_name)) )
+    (Ok ([], []))
+    params
+  >>= fun (new_arg_exprs, new_arg_types) ->
+  check_call_args f_name new_arg_exprs new_arg_types want_types
 
 and check_bundled_arg env exprs =
   List.fold_results

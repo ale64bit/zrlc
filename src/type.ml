@@ -87,3 +87,5 @@ let rec string_of_type = function
       "atomlist"
   | Primitive AtomSet ->
       "atomset"
+
+let is_ref = function TypeRef _ -> true | _ -> false
