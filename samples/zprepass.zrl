@@ -1,30 +1,30 @@
 module zprepass
 
-pipeline PrePass(depth: float, mvp: mat4): float {
+pipeline PrePass(depth: depthBuffer, mvp: fmat4): float {
 
-  def vertex(pos: vec4) {
+  def vertex(pos: fvec4) {
     builtin.position = mvp * pos
   }
 
   def fragment(): float {
-    if builtin.fragCoord.z > depth {
+    if builtin.fragCoord.z > depth.load(builtin.fragCoord.xy) {
       discard
     }
     return builtin.fragCoord.z
   }
 }
 
-pipeline MainPass(depth: float, mvp: mat4): vec4 {
+pipeline MainPass(depth: depthBuffer, mvp: fmat4): fvec4 {
 
-  def vertex(pos: vec4) {
+  def vertex(pos: fvec4) {
     builtin.position = mvp * pos
   }
 
-  def fragment(): vec4 {
-    if builtin.fragCoord.z != depth {
+  def fragment(): fvec4 {
+    if builtin.fragCoord.z != depth.load(builtin.fragCoord.xy) {
       discard
     }
-    var red = vec4(1.0, 0.0, 0.0, 1.0)
+    var red = fvec4(1.0, 0.0, 0.0, 1.0)
     return red
   }
 }
@@ -32,13 +32,13 @@ pipeline MainPass(depth: float, mvp: mat4): vec4 {
 renderer Main(ds: rt_ds) {
 
   def main(view: atom, geometry: atomset) {
-    ds = 0.0
-    builtin.screen = vec4(0.0, 0.0, 0.0, 1.0)
+    ds = 1.0
+    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0)
     for g in geometry {
-      ds += PrePass(mvp = view, pos = g)
+      ds += PrePass(curDepth = ds, mvp = view, pos = g)
     }
     for g in geometry {
-      builtin.screen += MainPass(depth = ds, mvp = view, pos = g)
+      builtin.screen += MainPass(curDepth = ds, mvp = view, pos = g)
     }
   }
 }

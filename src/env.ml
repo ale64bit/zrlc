@@ -229,6 +229,17 @@ let generate_constructor_type base params ret =
           (Char.escaped params.[i], Type.TypeRef base) )
     , [Type.TypeRef ret] )
 
+let generate_texture_type dim stype =
+  let open Type in
+  let lptype = Printf.sprintf "ivec%d" dim in
+  let sptype = Printf.sprintf "fvec%d" dim in
+  let ret = [TypeRef "fvec4"] in
+  Record
+    [ ("load", Function ([("p", TypeRef lptype)], ret))
+    ; ( "sample"
+      , Function ([("p", TypeRef sptype); ("sampler", TypeRef stype)], ret) )
+    ]
+
 let global =
   let open Type in
   let builtin_types =
@@ -255,25 +266,25 @@ let global =
     ; ("uvec2", Record (generate_fields 2 "uint" "uvec"))
     ; ("uvec3", Record (generate_fields 3 "uint" "uvec"))
     ; ("uvec4", Record (generate_fields 4 "uint" "uvec"))
-    ; ("vec2", Record (generate_fields 2 "float" "vec"))
-    ; ("vec3", Record (generate_fields 3 "float" "vec"))
-    ; ("vec4", Record (generate_fields 4 "float" "vec"))
+    ; ("fvec2", Record (generate_fields 2 "float" "fvec"))
+    ; ("fvec3", Record (generate_fields 3 "float" "fvec"))
+    ; ("fvec4", Record (generate_fields 4 "float" "fvec"))
     ; ("dvec2", Record (generate_fields 2 "double" "dvec"))
     ; ("dvec3", Record (generate_fields 3 "double" "dvec"))
     ; ("dvec4", Record (generate_fields 4 "double" "dvec"))
     ; (* Built-in matrix types *)
-      ("mat2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
-    ; ("mat3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
-    ; ("mat4", Array (TypeRef "float", [OfInt 4; OfInt 4]))
-    ; ("mat2x2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
-    ; ("mat2x3", Array (TypeRef "float", [OfInt 2; OfInt 3]))
-    ; ("mat2x4", Array (TypeRef "float", [OfInt 2; OfInt 4]))
-    ; ("mat3x2", Array (TypeRef "float", [OfInt 3; OfInt 2]))
-    ; ("mat3x3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
-    ; ("mat3x4", Array (TypeRef "float", [OfInt 3; OfInt 4]))
-    ; ("mat4x2", Array (TypeRef "float", [OfInt 4; OfInt 2]))
-    ; ("mat4x3", Array (TypeRef "float", [OfInt 4; OfInt 3]))
-    ; ("mat4x4", Array (TypeRef "float", [OfInt 4; OfInt 4]))
+      ("fmat2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
+    ; ("fmat3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
+    ; ("fmat4", Array (TypeRef "float", [OfInt 4; OfInt 4]))
+    ; ("fmat2x2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
+    ; ("fmat2x3", Array (TypeRef "float", [OfInt 2; OfInt 3]))
+    ; ("fmat2x4", Array (TypeRef "float", [OfInt 2; OfInt 4]))
+    ; ("fmat3x2", Array (TypeRef "float", [OfInt 3; OfInt 2]))
+    ; ("fmat3x3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
+    ; ("fmat3x4", Array (TypeRef "float", [OfInt 3; OfInt 4]))
+    ; ("fmat4x2", Array (TypeRef "float", [OfInt 4; OfInt 2]))
+    ; ("fmat4x3", Array (TypeRef "float", [OfInt 4; OfInt 3]))
+    ; ("fmat4x4", Array (TypeRef "float", [OfInt 4; OfInt 4]))
     ; ("dmat2", Array (TypeRef "double", [OfInt 2; OfInt 2]))
     ; ("dmat3", Array (TypeRef "double", [OfInt 3; OfInt 3]))
     ; ("dmat4", Array (TypeRef "double", [OfInt 4; OfInt 4]))
@@ -285,7 +296,15 @@ let global =
     ; ("dmat3x4", Array (TypeRef "double", [OfInt 3; OfInt 4]))
     ; ("dmat4x2", Array (TypeRef "double", [OfInt 4; OfInt 2]))
     ; ("dmat4x3", Array (TypeRef "double", [OfInt 4; OfInt 3]))
-    ; ("dmat4x4", Array (TypeRef "double", [OfInt 4; OfInt 4])) ]
+    ; ("dmat4x4", Array (TypeRef "double", [OfInt 4; OfInt 4]))
+    ; (* Built-in opaque types *)
+      ("sampler", Record [])
+    ; ("sampler2D", Record [])
+    ; ("texture2D", generate_texture_type 2 "sampler2D")
+    ; ( "depthBuffer"
+      , Record
+          [("load", Function ([("p", TypeRef "ivec2")], [TypeRef "float"]))] )
+    ]
   in
   let builtin_functions =
     [ (* Primitive types *)
@@ -301,9 +320,9 @@ let global =
     ; ("uvec2", generate_constructor_type "uint" "xy" "uvec2")
     ; ("uvec3", generate_constructor_type "uint" "xyz" "uvec3")
     ; ("uvec4", generate_constructor_type "uint" "xyzw" "uvec4")
-    ; ("vec2", generate_constructor_type "float" "xy" "vec2")
-    ; ("vec3", generate_constructor_type "float" "xyz" "vec3")
-    ; ("vec4", generate_constructor_type "float" "xyzw" "vec4")
+    ; ("fvec2", generate_constructor_type "float" "xy" "fvec2")
+    ; ("fvec3", generate_constructor_type "float" "xyz" "fvec3")
+    ; ("fvec4", generate_constructor_type "float" "xyzw" "fvec4")
     ; ("dvec2", generate_constructor_type "double" "xy" "dvec2")
     ; ("dvec3", generate_constructor_type "double" "xyz" "dvec3")
     ; ("dvec4", generate_constructor_type "double" "xyzw" "dvec4")
@@ -368,12 +387,12 @@ let add_builtin name env =
   | Some penv -> (
     match (scope_summary penv, name) with
     | Pipeline _, "vertex" ->
-        let t = Type.Record [("position", Type.TypeRef "vec4")] in
+        let t = Type.Record [("position", Type.TypeRef "fvec4")] in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env
     | Pipeline _, "fragment" ->
         let t =
           Type.Record
-            [ ("fragCoord", Type.TypeRef "vec4")
+            [ ("fragCoord", Type.TypeRef "fvec4")
             ; ("frontFacing", Type.TypeRef "bool") ]
         in
         add_var "builtin" Located.{loc= builtin_loc; value= t} env

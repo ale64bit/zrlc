@@ -1,21 +1,21 @@
 module simple
 
-pipeline Pipeline(): vec4 {
+pipeline Pipeline(): fvec4 {
 
-  def vertex(pos: vec3): vec3 {
-    builtin.position = vec4(pos.x, pos.y, pos.z, 1.0)
+  def vertex(pos: fvec3): fvec3 {
+    builtin.position = fvec4(pos.x, pos.y, pos.z, 1.0)
     return pos
   }
 
-  def fragment(pos: vec3): vec4 {
-    return vec4(pos.x, pos.y, pos.z, 1.0)
+  def fragment(pos: fvec3): fvec4 {
+    return fvec4(pos.x, pos.y, pos.z, 1.0)
   }
 }
 
 renderer Simple() {
 
   def main(geometry: atomset) { 
-    builtin.screen = vec4(0.0, 0.0, 0.0, 1.0)
+    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0)
     for g in geometry {
       builtin.screen += Pipeline(pos = g)
     }  

@@ -168,7 +168,7 @@ let test_type_declaration =
     module test
     type T {
       x: int
-      a: [64,132]vec4
+      a: [64,132]fvec4
     }
     |}
   in
@@ -176,7 +176,7 @@ let test_type_declaration =
     Type.(
       Record
         [ ("x", TypeRef "int")
-        ; ("a", Array (TypeRef "vec4", [OfInt 64; OfInt 132])) ])
+        ; ("a", Array (TypeRef "fvec4", [OfInt 64; OfInt 132])) ])
   in
   let typ_loc = loc_of src "type T {.*}" in
   let td = TypedAst.TypeDecl {td_name= "T"; td_type= typ} in

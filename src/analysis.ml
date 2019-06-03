@@ -200,9 +200,9 @@ let check_unop loc op typ =
   | (UPlus | UMinus), TypeRef "uvec2"
   | (UPlus | UMinus), TypeRef "uvec3"
   | (UPlus | UMinus), TypeRef "uvec4"
-  | (UPlus | UMinus), TypeRef "vec2"
-  | (UPlus | UMinus), TypeRef "vec3"
-  | (UPlus | UMinus), TypeRef "vec4"
+  | (UPlus | UMinus), TypeRef "fvec2"
+  | (UPlus | UMinus), TypeRef "fvec3"
+  | (UPlus | UMinus), TypeRef "fvec4"
   | (UPlus | UMinus), TypeRef "dvec2"
   | (UPlus | UMinus), TypeRef "dvec3"
   | (UPlus | UMinus), TypeRef "dvec4"
@@ -279,12 +279,12 @@ let check_binop expr ltyp op rtyp =
       Ok (TypeRef "uvec3")
   | TypeRef "uvec4", (Plus | Minus), TypeRef "uvec4" ->
       Ok (TypeRef "uvec4")
-  | TypeRef "vec2", (Plus | Minus), TypeRef "vec2" ->
-      Ok (TypeRef "vec2")
-  | TypeRef "vec3", (Plus | Minus), TypeRef "vec3" ->
-      Ok (TypeRef "vec3")
-  | TypeRef "vec4", (Plus | Minus), TypeRef "vec4" ->
-      Ok (TypeRef "vec4")
+  | TypeRef "fvec2", (Plus | Minus), TypeRef "fvec2" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fvec3", (Plus | Minus), TypeRef "fvec3" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fvec4", (Plus | Minus), TypeRef "fvec4" ->
+      Ok (TypeRef "fvec4")
   | TypeRef "dvec2", (Plus | Minus), TypeRef "dvec2" ->
       Ok (TypeRef "dvec2")
   | TypeRef "dvec3", (Plus | Minus), TypeRef "dvec3" ->
@@ -292,126 +292,126 @@ let check_binop expr ltyp op rtyp =
   | TypeRef "dvec4", (Plus | Minus), TypeRef "dvec4" ->
       Ok (TypeRef "dvec4")
   (* Matrix Multiplication *)
-  | TypeRef "mat2x2", Mult, TypeRef "vec2" ->
-      Ok (TypeRef "vec2")
-  | TypeRef "mat2", Mult, TypeRef "vec2" ->
-      Ok (TypeRef "vec2")
-  | TypeRef "mat2x2", Mult, TypeRef "mat2x2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2x2", Mult, TypeRef "mat2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2", Mult, TypeRef "mat2x2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2", Mult, TypeRef "mat2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2x2", Mult, TypeRef "mat2x3" ->
-      Ok (TypeRef "mat2x3")
-  | TypeRef "mat2", Mult, TypeRef "mat2x3" ->
-      Ok (TypeRef "mat2x3")
-  | TypeRef "mat2x2", Mult, TypeRef "mat2x4" ->
-      Ok (TypeRef "mat2x4")
-  | TypeRef "mat2", Mult, TypeRef "mat2x4" ->
-      Ok (TypeRef "mat2x4")
-  | TypeRef "mat2x3", Mult, TypeRef "vec3" ->
-      Ok (TypeRef "vec2")
-  | TypeRef "mat2x3", Mult, TypeRef "mat3x2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2x3", Mult, TypeRef "mat3x3" ->
-      Ok (TypeRef "mat2x3")
-  | TypeRef "mat2x3", Mult, TypeRef "mat3" ->
-      Ok (TypeRef "mat2x3")
-  | TypeRef "mat2x3", Mult, TypeRef "mat3x4" ->
-      Ok (TypeRef "mat2x4")
-  | TypeRef "mat2x4", Mult, TypeRef "vec4" ->
-      Ok (TypeRef "vec2")
-  | TypeRef "mat2x4", Mult, TypeRef "mat4x2" ->
-      Ok (TypeRef "mat2x2")
-  | TypeRef "mat2x4", Mult, TypeRef "mat4x3" ->
-      Ok (TypeRef "mat2x3")
-  | TypeRef "mat2x4", Mult, TypeRef "mat4x4" ->
-      Ok (TypeRef "mat2x4")
-  | TypeRef "mat2x4", Mult, TypeRef "mat4" ->
-      Ok (TypeRef "mat2x4")
-  | TypeRef "mat3x2", Mult, TypeRef "vec2" ->
-      Ok (TypeRef "vec3")
-  | TypeRef "mat3x2", Mult, TypeRef "mat2x2" ->
-      Ok (TypeRef "mat3x2")
-  | TypeRef "mat3x2", Mult, TypeRef "mat2" ->
-      Ok (TypeRef "mat3x2")
-  | TypeRef "mat3x2", Mult, TypeRef "mat2x3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3x2", Mult, TypeRef "mat2x4" ->
-      Ok (TypeRef "mat3x4")
-  | TypeRef "mat3x3", Mult, TypeRef "vec3" ->
-      Ok (TypeRef "vec3")
-  | TypeRef "mat3", Mult, TypeRef "vec3" ->
-      Ok (TypeRef "vec3")
-  | TypeRef "mat3x3", Mult, TypeRef "mat3x2" ->
-      Ok (TypeRef "mat3x2")
-  | TypeRef "mat3", Mult, TypeRef "mat3x2" ->
-      Ok (TypeRef "mat3x2")
-  | TypeRef "mat3x3", Mult, TypeRef "mat3x3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3x3", Mult, TypeRef "mat3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3", Mult, TypeRef "mat3x3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3", Mult, TypeRef "mat3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3x3", Mult, TypeRef "mat3x4" ->
-      Ok (TypeRef "mat3x4")
-  | TypeRef "mat3", Mult, TypeRef "mat3x4" ->
-      Ok (TypeRef "mat3x4")
-  | TypeRef "mat3x4", Mult, TypeRef "vec4" ->
-      Ok (TypeRef "vec3")
-  | TypeRef "mat3x4", Mult, TypeRef "mat4x2" ->
-      Ok (TypeRef "mat3x2")
-  | TypeRef "mat3x4", Mult, TypeRef "mat4x3" ->
-      Ok (TypeRef "mat3x3")
-  | TypeRef "mat3x4", Mult, TypeRef "mat4x4" ->
-      Ok (TypeRef "mat3x4")
-  | TypeRef "mat3x4", Mult, TypeRef "mat4" ->
-      Ok (TypeRef "mat3x4")
-  | TypeRef "mat4x2", Mult, TypeRef "vec2" ->
-      Ok (TypeRef "vec4")
-  | TypeRef "mat4x2", Mult, TypeRef "mat2x2" ->
-      Ok (TypeRef "mat4x2")
-  | TypeRef "mat4x2", Mult, TypeRef "mat2" ->
-      Ok (TypeRef "mat4x2")
-  | TypeRef "mat4x2", Mult, TypeRef "mat2x3" ->
-      Ok (TypeRef "mat4x3")
-  | TypeRef "mat4x2", Mult, TypeRef "mat2x4" ->
-      Ok (TypeRef "mat4x4")
-  | TypeRef "mat4x3", Mult, TypeRef "vec3" ->
-      Ok (TypeRef "vec4")
-  | TypeRef "mat4x3", Mult, TypeRef "mat3x2" ->
-      Ok (TypeRef "mat4x2")
-  | TypeRef "mat4x3", Mult, TypeRef "mat3x3" ->
-      Ok (TypeRef "mat4x3")
-  | TypeRef "mat4x3", Mult, TypeRef "mat3" ->
-      Ok (TypeRef "mat4x3")
-  | TypeRef "mat4x3", Mult, TypeRef "mat3x4" ->
-      Ok (TypeRef "mat4x4")
-  | TypeRef "mat4x4", Mult, TypeRef "vec4" ->
-      Ok (TypeRef "vec4")
-  | TypeRef "mat4", Mult, TypeRef "vec4" ->
-      Ok (TypeRef "vec4")
-  | TypeRef "mat4x4", Mult, TypeRef "mat4x2" ->
-      Ok (TypeRef "mat4x2")
-  | TypeRef "mat4", Mult, TypeRef "mat4x2" ->
-      Ok (TypeRef "mat4x2")
-  | TypeRef "mat4x4", Mult, TypeRef "mat4x3" ->
-      Ok (TypeRef "mat4x3")
-  | TypeRef "mat4", Mult, TypeRef "mat4x3" ->
-      Ok (TypeRef "mat4x3")
-  | TypeRef "mat4x4", Mult, TypeRef "mat4x4" ->
-      Ok (TypeRef "mat4x4")
-  | TypeRef "mat4x4", Mult, TypeRef "mat4" ->
-      Ok (TypeRef "mat4x4")
-  | TypeRef "mat4", Mult, TypeRef "mat4x4" ->
-      Ok (TypeRef "mat4x4")
-  | TypeRef "mat4", Mult, TypeRef "mat4" ->
-      Ok (TypeRef "mat4x4")
+  | TypeRef "fmat2x2", Mult, TypeRef "fvec2" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fmat2", Mult, TypeRef "fvec2" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x3" ->
+      Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x3" ->
+      Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x4" ->
+      Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x4" ->
+      Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x3", Mult, TypeRef "fvec3" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x3" ->
+      Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3" ->
+      Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x4" ->
+      Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x4", Mult, TypeRef "fvec4" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x2" ->
+      Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x3" ->
+      Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x4" ->
+      Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4" ->
+      Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat3x2", Mult, TypeRef "fvec2" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x2" ->
+      Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2" ->
+      Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x4" ->
+      Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x3", Mult, TypeRef "fvec3" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fmat3", Mult, TypeRef "fvec3" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x2" ->
+      Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x2" ->
+      Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x4" ->
+      Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x4" ->
+      Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x4", Mult, TypeRef "fvec4" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x2" ->
+      Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x3" ->
+      Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x4" ->
+      Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4" ->
+      Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat4x2", Mult, TypeRef "fvec2" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x2" ->
+      Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2" ->
+      Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x3" ->
+      Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x4" ->
+      Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x3", Mult, TypeRef "fvec3" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x2" ->
+      Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x3" ->
+      Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3" ->
+      Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x4" ->
+      Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fvec4" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "fmat4", Mult, TypeRef "fvec4" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x2" ->
+      Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x2" ->
+      Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x3" ->
+      Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x3" ->
+      Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x4" ->
+      Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4" ->
+      Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x4" ->
+      Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4" ->
+      Ok (TypeRef "fmat4x4")
   | _ ->
       error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
 
@@ -443,11 +443,11 @@ let check_assignop ltyp op rtyp err =
       Ok ()
   | TypeRef "uvec4", (Assign | AssignPlus | AssignMinus), TypeRef "uvec4" ->
       Ok ()
-  | TypeRef "vec2", (Assign | AssignPlus | AssignMinus), TypeRef "vec2" ->
+  | TypeRef "fvec2", (Assign | AssignPlus | AssignMinus), TypeRef "fvec2" ->
       Ok ()
-  | TypeRef "vec3", (Assign | AssignPlus | AssignMinus), TypeRef "vec3" ->
+  | TypeRef "fvec3", (Assign | AssignPlus | AssignMinus), TypeRef "fvec3" ->
       Ok ()
-  | TypeRef "vec4", (Assign | AssignPlus | AssignMinus), TypeRef "vec4" ->
+  | TypeRef "fvec4", (Assign | AssignPlus | AssignMinus), TypeRef "fvec4" ->
       Ok ()
   | TypeRef "dvec2", (Assign | AssignPlus | AssignMinus), TypeRef "dvec2" ->
       Ok ()
@@ -455,35 +455,44 @@ let check_assignop ltyp op rtyp err =
       Ok ()
   | TypeRef "dvec4", (Assign | AssignPlus | AssignMinus), TypeRef "dvec4" ->
       Ok ()
-  | ( TypeRef "mat2"
+  | ( TypeRef "fmat2"
     , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "mat2" ) ->
+    , TypeRef "fmat2" ) ->
       Ok ()
-  | ( TypeRef "mat3"
+  | ( TypeRef "fmat3"
     , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "mat3" ) ->
+    , TypeRef "fmat3" ) ->
       Ok ()
-  | ( TypeRef "mat4"
+  | ( TypeRef "fmat4"
     , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "mat4" ) ->
+    , TypeRef "fmat4" ) ->
       Ok ()
-  | TypeRef "mat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x2" ->
+  | TypeRef "fmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x2"
+    ->
       Ok ()
-  | TypeRef "mat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x3" ->
+  | TypeRef "fmat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x3"
+    ->
       Ok ()
-  | TypeRef "mat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat2x4" ->
+  | TypeRef "fmat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x4"
+    ->
       Ok ()
-  | TypeRef "mat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x2" ->
+  | TypeRef "fmat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x2"
+    ->
       Ok ()
-  | TypeRef "mat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x3" ->
+  | TypeRef "fmat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x3"
+    ->
       Ok ()
-  | TypeRef "mat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat3x4" ->
+  | TypeRef "fmat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x4"
+    ->
       Ok ()
-  | TypeRef "mat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x2" ->
+  | TypeRef "fmat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x2"
+    ->
       Ok ()
-  | TypeRef "mat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x3" ->
+  | TypeRef "fmat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x3"
+    ->
       Ok ()
-  | TypeRef "mat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "mat4x4" ->
+  | TypeRef "fmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x4"
+    ->
       Ok ()
   | ( TypeRef "dmat2"
     , (Assign | AssignPlus | AssignMinus | AssignMult)
@@ -526,11 +535,11 @@ let check_assignop ltyp op rtyp err =
       Ok ()
   | ( (TypeRef "rt_rgb" | RenderTarget RGB)
     , (Assign | AssignPlus)
-    , TypeRef "vec3" ) ->
+    , TypeRef "fvec3" ) ->
       Ok ()
   | ( (TypeRef "rt_rgba" | RenderTarget RGBA)
     , (Assign | AssignPlus)
-    , TypeRef "vec4" ) ->
+    , TypeRef "fvec4" ) ->
       Ok ()
   | ( (TypeRef "rt_ds" | RenderTarget DS)
     , (Assign | AssignPlus)
@@ -610,10 +619,17 @@ and check_call env loc f_expr arg_exprs =
       Ok (arg_type :: arg_types) )
     (Ok []) arg_exprs
   >>= fun arg_types ->
-  match (f_expr, f_type) with
-  | Located.{value= Ast.Id name; _}, Type.Function (args, ret) -> (
-      let is_function = Env.function_exists name env in
-      let is_pipeline = Env.pipeline_exists name env in
+  match f_type with
+  | Type.Function (args, ret) -> (
+      let is_anonymous, name =
+        match f_expr with
+        | Located.{value= Ast.Id name; _} ->
+            (false, name)
+        | _ ->
+            (true, "")
+      in
+      let is_pipeline = (not is_anonymous) && Env.pipeline_exists name env in
+      let is_function = is_anonymous || Env.function_exists name env in
       let is_named = function
         | Located.{value= Ast.NamedArg _; _} ->
             true
@@ -630,6 +646,7 @@ and check_call env loc f_expr arg_exprs =
       else if all_unnamed && have > want then
         error loc (`TooManyArguments (f_expr, arg_types, want_types))
       else
+        let name = Ast.string_of_expression f_expr in
         match (is_function, is_pipeline, all_named, all_unnamed) with
         (* Case #0: function + no arguments *)
         | true, false, true, true ->
@@ -658,7 +675,7 @@ and check_call env loc f_expr arg_exprs =
             let expr = Located.{loc; value= Ast.Call (f_expr, arg_exprs)} in
             error loc (`MixedArgumentStyle expr)
         | _ ->
-            error loc (`Unimplemented "not implemented") )
+            error loc (`Unimplemented "not implemented: weird call") )
   | _ ->
       error loc (`InvalidCallOperation (f_expr, f_type))
 
@@ -823,7 +840,9 @@ let rec check_var_declaration env loc ids exprs =
         | Some Located.{loc= prev_loc; _} ->
             error loc (`Redefinition (id, prev_loc))
         | None ->
-            Ok Env.(env |> add_var id Located.{loc; value= t}) )
+            (* Ignore variables named _ *)
+            if id = "_" then Ok env
+            else Ok Env.(env |> add_var id Located.{loc; value= t}) )
       (Ok env) (List.combine ids types)
   in
   match exprs with
