@@ -1,0 +1,4 @@
+(tests
+  (names cpp_test)
+  (libraries oUnit backend)
+)

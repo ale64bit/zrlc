@@ -1,11 +1,12 @@
 module SymbolTable = Map.Make (String)
+module L = Located
 
 type const_value = Bool of bool | Int of int | Float of float
 [@@deriving to_yojson]
 
-type located_type = Type.t Located.t [@@deriving to_yojson]
+type located_type = Type.t L.t [@@deriving to_yojson]
 
-type located_const_value = const_value Located.t [@@deriving to_yojson]
+type located_const_value = const_value L.t [@@deriving to_yojson]
 
 type type_symbol_table = located_type SymbolTable.t
 
@@ -30,7 +31,7 @@ type summary =
   | Pipeline of Type.t
   | Renderer of Type.t
   | Function of Type.t
-  | Block of (Located.lexing_position * Located.lexing_position)
+  | Block of (L.lexing_position * L.lexing_position)
 [@@deriving to_yojson]
 
 type t =
@@ -40,6 +41,7 @@ type t =
   ; types: type_symbol_table
   ; constants: const_value_symbol_table
   ; vars: type_symbol_table
+  ; vals: type_symbol_table
   ; pipelines: type_symbol_table
   ; renderers: type_symbol_table
   ; functions: type_symbol_table }
@@ -118,12 +120,12 @@ let find_constant ~local name env =
 
 let find_constant_type ~local name env =
   match find_constant ~local name env with
-  | Some Located.{loc; value= Bool _} ->
-      Some Located.{loc; value= Type.TypeRef "bool"}
-  | Some Located.{loc; value= Int _} ->
-      Some Located.{loc; value= Type.TypeRef "int"}
-  | Some Located.{loc; value= Float _} ->
-      Some Located.{loc; value= Type.TypeRef "float"}
+  | Some L.{loc; value= Bool _} ->
+      Some L.{loc; value= Type.TypeRef "bool"}
+  | Some L.{loc; value= Int _} ->
+      Some L.{loc; value= Type.TypeRef "int"}
+  | Some L.{loc; value= Float _} ->
+      Some L.{loc; value= Type.TypeRef "float"}
   | None ->
       None
 
@@ -147,10 +149,15 @@ let find_var ~local name env =
   let f env = env.vars in
   find ~local name env f
 
+let find_val ~local name env =
+  let f env = env.vals in
+  find ~local name env f
+
 let find_name ~local name env =
   let open Monad.Option in
   find_constant_type ~local name env
   >>? find_type ~local name env >>? find_var ~local name env
+  >>? find_val ~local name env
   >>? find_function ~local name env
   >>? find_pipeline ~local name env
 
@@ -160,6 +167,7 @@ let find_rvalue name env =
   let open Monad.Option in
   find_constant_type ~local:false name env
   >>? find_var ~local:false name env
+  >>? find_val ~local:false name env
   >>? find_function ~local:false name env
   >>? find_pipeline ~local:false name env
 
@@ -176,6 +184,8 @@ let function_exists name env = find_function ~local:false name env <> None
 
 let var_exists ~local name env = find_var ~local name env <> None
 
+let val_exists ~local name env = find_val ~local name env <> None
+
 let name_exists name env = find_name ~local:false name env <> None
 
 (* Add *)
@@ -185,7 +195,7 @@ let add_constant name value env =
   {env with constants= SymbolTable.add name value env.constants}
 
 let add_type name typ env =
-  ( match typ.Located.value with
+  ( match typ.L.value with
   | Type.TypeRef refname ->
       failwith
         (Printf.sprintf
@@ -212,6 +222,10 @@ let add_var name typ env =
   let () = assert (not (var_exists ~local:true name env)) in
   {env with vars= SymbolTable.add name typ env.vars}
 
+let add_val name typ env =
+  let () = assert (not (val_exists ~local:true name env)) in
+  {env with vals= SymbolTable.add name typ env.vals}
+
 (* Constructors *)
 let empty id =
   { id
@@ -220,6 +234,7 @@ let empty id =
   ; types= SymbolTable.empty
   ; constants= SymbolTable.empty
   ; vars= SymbolTable.empty
+  ; vals= SymbolTable.empty
   ; pipelines= SymbolTable.empty
   ; renderers= SymbolTable.empty
   ; functions= SymbolTable.empty }
@@ -241,15 +256,9 @@ let generate_texture_type dim stype =
       , Function ([("p", TypeRef sptype); ("sampler", TypeRef stype)], ret) )
     ]
 
-let generate_vector_type ?(asint = false) dim base name =
+let generate_vector_type dim base name =
   let open Type in
   let fields = generate_fields dim base name in
-  let fields =
-    if asint then
-      let f = Function ([], [TypeRef (Printf.sprintf "ivec%d" dim)]) in
-      ("asint", f) :: fields
-    else fields
-  in
   Record fields
 
 let global =
@@ -265,8 +274,8 @@ let global =
     ; ("atomlist", Primitive AtomList)
     ; ("atomset", Primitive AtomSet)
     ; (* Built-in render target types *)
-      ("rt_rgb", RenderTarget RGB)
-    ; ("rt_rgba", RenderTarget RGBA)
+      (* ("rt_rgb", RenderTarget RGB) TODO: doesn't seem widely supported *)
+      ("rt_rgba", RenderTarget RGBA)
     ; ("rt_ds", RenderTarget DS)
     ; (* Built-in vector types *)
       ("bvec2", generate_vector_type 2 "bool" "bvec")
@@ -278,12 +287,12 @@ let global =
     ; ("uvec2", generate_vector_type 2 "uint" "uvec")
     ; ("uvec3", generate_vector_type 3 "uint" "uvec")
     ; ("uvec4", generate_vector_type 4 "uint" "uvec")
-    ; ("fvec2", generate_vector_type ~asint:true 2 "float" "fvec")
-    ; ("fvec3", generate_vector_type ~asint:true 3 "float" "fvec")
-    ; ("fvec4", generate_vector_type ~asint:true 4 "float" "fvec")
-    ; ("dvec2", generate_vector_type ~asint:true 2 "double" "dvec")
-    ; ("dvec3", generate_vector_type ~asint:true 3 "double" "dvec")
-    ; ("dvec4", generate_vector_type ~asint:true 4 "double" "dvec")
+    ; ("fvec2", generate_vector_type 2 "float" "fvec")
+    ; ("fvec3", generate_vector_type 3 "float" "fvec")
+    ; ("fvec4", generate_vector_type 4 "float" "fvec")
+    ; ("dvec2", generate_vector_type 2 "double" "dvec")
+    ; ("dvec3", generate_vector_type 3 "double" "dvec")
+    ; ("dvec4", generate_vector_type 4 "double" "dvec")
     ; (* Built-in matrix types *)
       ("fmat2", Array (TypeRef "float", [OfInt 2; OfInt 2]))
     ; ("fmat3", Array (TypeRef "float", [OfInt 3; OfInt 3]))
@@ -411,17 +420,22 @@ let add_builtin fname env =
   | Some penv -> (
     match (scope_summary penv, fname) with
     | Pipeline _, "vertex" ->
-        let t = Record [("position", TypeRef "fvec4")] in
-        add_var "builtin" Located.{loc= builtin_loc; value= t} env
+        let t =
+          Record
+            [ ("position", TypeRef "fvec4")
+            ; ("vertexID", TypeRef "int")
+            ; ("instanceID", TypeRef "int") ]
+        in
+        add_var "builtin" L.{loc= builtin_loc; value= t} env
     | Pipeline _, "fragment" ->
         let t =
           Record
             [("fragCoord", TypeRef "fvec4"); ("frontFacing", TypeRef "bool")]
         in
-        add_var "builtin" Located.{loc= builtin_loc; value= t} env
+        add_var "builtin" L.{loc= builtin_loc; value= t} env
     | Renderer _, "main" ->
         let t = Record [("screen", TypeRef "rt_rgba")] in
-        add_var "builtin" Located.{loc= builtin_loc; value= t} env
+        add_var "builtin" L.{loc= builtin_loc; value= t} env
     | _ ->
         env )
   | None ->

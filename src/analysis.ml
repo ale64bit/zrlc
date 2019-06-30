@@ -1,6 +1,7 @@
 open Monad.Result
 open Extensions
 module SS = Set.Make (String)
+module L = Located
 
 type error =
   [ `Redefinition of string * (Lexing.position * Lexing.position)
@@ -16,6 +17,7 @@ type error =
   | `InvalidBinaryOperation of Ast.expression * Type.t * Type.t
   | `InvalidIndexOperation of Ast.expression * Type.t
   | `InvalidCallOperation of Ast.expression * Type.t
+  | `InvalidCast of Type.t * Type.t
   | `NotAnExpression of string
   | `NoSuchMember of Type.t * string
   | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list
@@ -40,7 +42,7 @@ type error =
 
 (* Helpers *)
 
-let error loc e = Error Located.{loc; value= e}
+let error loc e = Error L.{loc; value= e}
 
 let check_unique idfn errfn elems =
   List.fold_left
@@ -61,22 +63,22 @@ let check_array_dim env loc dim =
     | Some {value= Env.Int i; _} ->
         Ok (Type.OfInt i)
     | Some _ ->
-        Error Located.{loc; value= `NonIntegerArraySize}
+        Error L.{loc; value= `NonIntegerArraySize}
     | None ->
-        Error Located.{loc; value= `UndeclaredIdentifier name} )
+        Error L.{loc; value= `UndeclaredIdentifier name} )
   | Type.OfFloat _ | Type.OfBool _ ->
-      Error Located.{loc; value= `NonIntegerArraySize}
+      Error L.{loc; value= `NonIntegerArraySize}
 
 (* Checks the given type against the environment *)
 let rec check_type env ctx_loc t =
   match t with
   | Type.TypeRef name ->
       if Env.type_exists name env then Ok t
-      else Error Located.{loc= ctx_loc; value= `UnknownTypeName name}
+      else Error L.{loc= ctx_loc; value= `UnknownTypeName name}
   | Type.Record fields ->
       let idfn (name, _) = name in
       let errfn field =
-        Located.{loc= ctx_loc; value= `DuplicateMember (idfn field)}
+        L.{loc= ctx_loc; value= `DuplicateMember (idfn field)}
       in
       check_unique idfn errfn fields >>= fun _ ->
       List.fold_results
@@ -98,7 +100,7 @@ let rec check_type env ctx_loc t =
   | Type.Function (args, rets) ->
       let idfn (name, _) = name in
       let errfn arg =
-        Located.{loc= ctx_loc; value= `DuplicateParameter (idfn arg)}
+        L.{loc= ctx_loc; value= `DuplicateParameter (idfn arg)}
       in
       check_unique idfn errfn args >>= fun _ ->
       List.fold_results
@@ -123,7 +125,7 @@ let build_function_environment env loc name typ =
   | Type.Function (args, _) ->
       let env =
         List.fold_left
-          (fun env (name, t) -> Env.add_var name Located.{loc; value= t} env)
+          (fun env (name, t) -> Env.add_var name L.{loc; value= t} env)
           env args
       in
       Env.add_builtin name env
@@ -133,28 +135,28 @@ let build_function_environment env loc name typ =
 let check_const_declaration env loc cd =
   let Ast.{cd_name; cd_value} = cd in
   match Env.find_name ~local:true cd_name env with
-  | Some Located.{loc= prev_loc; _} ->
+  | Some L.{loc= prev_loc; _} ->
       error loc (`Redefinition (cd_name, prev_loc))
   | None -> (
     match cd_value.value with
     | Ast.BoolLiteral b ->
-        let value = Located.{loc; value= Env.Bool b} in
+        let value = L.{loc; value= Env.Bool b} in
         let env = Env.add_constant cd_name value env in
         let t = Type.TypeRef "bool" in
         let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, cd)
+        Ok (env, L.{loc; value= cd})
     | Ast.IntLiteral i ->
-        let value = Located.{loc; value= Env.Int i} in
+        let value = L.{loc; value= Env.Int i} in
         let env = Env.add_constant cd_name value env in
         let t = Type.TypeRef "int" in
         let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, cd)
+        Ok (env, L.{loc; value= cd})
     | Ast.FloatLiteral f ->
-        let value = Located.{loc; value= Env.Float f} in
+        let value = L.{loc; value= Env.Float f} in
         let env = Env.add_constant cd_name value env in
         let t = Type.TypeRef "float" in
         let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, cd)
+        Ok (env, L.{loc; value= cd})
     | _ ->
         error loc
           (`Unimplemented
@@ -164,7 +166,7 @@ let check_const_declaration env loc cd =
 let check_type_declaration env loc td =
   let Ast.{td_name; td_type} = td in
   match Env.find_name ~local:true td_name env with
-  | Some Located.{loc= prev_loc; _} ->
+  | Some L.{loc= prev_loc; _} ->
       error loc (`Redefinition (td_name, prev_loc))
   | None -> (
     match td_type with
@@ -172,7 +174,7 @@ let check_type_declaration env loc td =
         check_type env loc td_type >>= fun clean_type ->
         let env = Env.add_type td_name {loc; value= clean_type} env in
         let typed_td = TypedAst.TypeDecl {td_name; td_type= clean_type} in
-        Ok (env, typed_td)
+        Ok (env, L.{loc; value= typed_td})
     | _ ->
         failwith
           (Printf.sprintf
@@ -217,7 +219,7 @@ let check_binop expr ltyp op rtyp =
   let open Type in
   let () = assert (is_ref ltyp) in
   let () = assert (is_ref rtyp) in
-  let Located.{loc; _} = expr in
+  let L.{loc; _} = expr in
   match (ltyp, op, rtyp) with
   (* Logical *)
   | TypeRef "bool", (LogicalOr | LogicalXor | LogicalAnd), TypeRef "bool" ->
@@ -552,7 +554,7 @@ let rec check_access env loc expr id =
       check_field_exists id fields err
   | Type.TypeRef name -> (
     match Env.find_type ~local:false name env with
-    | Some Located.{value= Type.Record fields; _} ->
+    | Some L.{value= Type.Record fields; _} ->
         check_field_exists id fields err
     | _ ->
         failwith "name cannot exist in environment without a known type" )
@@ -583,13 +585,13 @@ and check_index env loc expr index_exprs =
             | TypeRef "int" | TypeRef "uint" ->
                 acc
             | _ ->
-                let Located.{loc; _} = index_expr in
+                let L.{loc; _} = index_expr in
                 error loc (`NonIntegerArrayIndex index_expr) )
           (Ok ())
           (List.combine index_exprs index_types)
         >>= fun () -> Ok t
   | _ ->
-      let expr = Located.{loc; value= Ast.Index (expr, index_exprs)} in
+      let expr = L.{loc; value= Ast.Index (expr, index_exprs)} in
       error loc (`InvalidIndexOperation (expr, expr_type))
 
 and check_call env loc f_expr arg_exprs =
@@ -605,7 +607,7 @@ and check_call env loc f_expr arg_exprs =
   | Type.Function (args, ret) -> (
       let is_anonymous, name =
         match f_expr with
-        | Located.{value= Ast.Id name; _} ->
+        | L.{value= Ast.Id name; _} ->
             (false, name)
         | _ ->
             (true, "")
@@ -613,7 +615,7 @@ and check_call env loc f_expr arg_exprs =
       let is_pipeline = (not is_anonymous) && Env.pipeline_exists name env in
       let is_function = is_anonymous || Env.function_exists name env in
       let is_named = function
-        | Located.{value= Ast.NamedArg _; _} ->
+        | L.{value= Ast.NamedArg _; _} ->
             true
         | _ ->
             false
@@ -641,7 +643,8 @@ and check_call env loc f_expr arg_exprs =
             Ok ret
         (* Case #2: function + named arguments *)
         | true, false, true, false ->
-            check_call_named_args loc name args arg_exprs arg_types
+            check_call_named_args ~strict:true loc name args arg_exprs
+              arg_types
             >>= fun () -> Ok ret
         (* Case #3: pipeline + unnamed arguments *)
         | false, true, false, true ->
@@ -654,7 +657,7 @@ and check_call env loc f_expr arg_exprs =
             check_pipeline_call env loc name args arg_exprs arg_types
             >>= fun () -> Ok ret
         | _, _, false, false ->
-            let expr = Located.{loc; value= Ast.Call (f_expr, arg_exprs)} in
+            let expr = L.{loc; value= Ast.Call (f_expr, arg_exprs)} in
             error loc (`MixedArgumentStyle expr)
         | _ ->
             error loc (`Unimplemented "not implemented: weird call") )
@@ -680,26 +683,28 @@ and check_call_args f_name arg_exprs arg_types want_types =
     (fun acc ((arg_expr, arg_type), want_type) ->
       acc >>= fun _ ->
       if not (valid_arg arg_type want_type) then
-        let Located.{loc; _} = arg_expr in
+        let L.{loc; _} = arg_expr in
         error loc (`InvalidArgument (arg_expr, arg_type, want_type, f_name))
       else Ok () )
     (Ok ())
     (List.combine (List.combine arg_exprs arg_types) want_types)
 
-and check_call_named_args loc f_name params arg_exprs arg_types =
+and check_call_named_args ~strict loc f_name params arg_exprs arg_types =
   let want_types = List.map (fun (_, t) -> t) params in
   let args = List.combine arg_exprs arg_types in
-  (* Check that there are no unexpected named arguments *)
-  List.fold_left
-    (fun acc Located.{value; _} ->
-      acc >>= fun _ ->
-      match value with
-      | Ast.NamedArg (arg_name, _) ->
-          if List.exists (fun (name, _) -> name = arg_name) params then Ok ()
-          else error loc (`UnexpectedNamedArgument (arg_name, f_name))
-      | _ ->
-          failwith "expected all arguments to be named" )
-    (Ok ()) arg_exprs
+  (* Check that there are no unexpected named arguments if strict mode is enabled *)
+  ( if strict then
+    List.fold_left
+      (fun acc L.{value; _} ->
+        acc >>= fun _ ->
+        match value with
+        | Ast.NamedArg (arg_name, _) ->
+            if List.exists (fun (name, _) -> name = arg_name) params then Ok ()
+            else error loc (`UnexpectedNamedArgument (arg_name, f_name))
+        | _ ->
+            failwith "expected all arguments to be named" )
+      (Ok ()) arg_exprs
+  else Ok () )
   >>= fun () ->
   (* Check that all required named arguments are provided *)
   List.fold_left
@@ -709,7 +714,7 @@ and check_call_named_args loc f_name params arg_exprs arg_types =
         List.find_opt
           (fun (arg_expr, _) ->
             match arg_expr with
-            | Located.{value= Ast.NamedArg (arg_name, _); _} ->
+            | L.{value= Ast.NamedArg (arg_name, _); _} ->
                 name = arg_name
             | _ ->
                 failwith "expected all arguments to be named" )
@@ -727,8 +732,7 @@ and check_call_named_args loc f_name params arg_exprs arg_types =
 
 and check_pipeline_call env loc f_name params arg_exprs arg_types =
   if Env.is_renderer_scope env then
-    (* TODO: modify params to include parameters to first stage *)
-    check_call_named_args loc f_name params arg_exprs arg_types
+    check_call_named_args ~strict:false loc f_name params arg_exprs arg_types
   else
     error loc
       (`Unimplemented "pipelines can be called only from renderer scope")
@@ -743,7 +747,7 @@ and check_bundled_arg env exprs =
 
 and check_id env loc id =
   match Env.find_rvalue id env with
-  | Some Located.{value= typ; _} ->
+  | Some L.{value= typ; _} ->
       Ok [typ]
   | None -> (
     match Env.find_name ~local:false id env with
@@ -752,8 +756,99 @@ and check_id env loc id =
     | None ->
         error loc (`UndeclaredIdentifier id) )
 
+and check_cast env loc t expr =
+  let open Type in
+  check_type env loc t >>= fun to_type ->
+  check_single_value_expr env expr >>= fun from_type ->
+  match (from_type, to_type) with
+  (* Primitive Types *)
+  | TypeRef "int", TypeRef "uint"
+  | TypeRef "int", TypeRef "float"
+  | TypeRef "int", TypeRef "double"
+  | TypeRef "int", TypeRef "bool"
+  | TypeRef "uint", TypeRef "int"
+  | TypeRef "uint", TypeRef "float"
+  | TypeRef "uint", TypeRef "double"
+  | TypeRef "uint", TypeRef "bool"
+  | TypeRef "float", TypeRef "int"
+  | TypeRef "float", TypeRef "uint"
+  | TypeRef "float", TypeRef "double"
+  | TypeRef "float", TypeRef "bool"
+  | TypeRef "double", TypeRef "int"
+  | TypeRef "double", TypeRef "uint"
+  | TypeRef "double", TypeRef "float"
+  | TypeRef "double", TypeRef "bool"
+  | TypeRef "bool", TypeRef "int"
+  | TypeRef "bool", TypeRef "uint"
+  | TypeRef "bool", TypeRef "float"
+  | TypeRef "bool", TypeRef "double"
+  (* Vector Types *)
+  | TypeRef "ivec2", TypeRef "uvec2"
+  | TypeRef "ivec2", TypeRef "fvec2"
+  | TypeRef "ivec2", TypeRef "dvec2"
+  | TypeRef "ivec2", TypeRef "bvec2"
+  | TypeRef "ivec3", TypeRef "uvec3"
+  | TypeRef "ivec3", TypeRef "fvec3"
+  | TypeRef "ivec3", TypeRef "dvec3"
+  | TypeRef "ivec3", TypeRef "bvec3"
+  | TypeRef "ivec4", TypeRef "uvec4"
+  | TypeRef "ivec4", TypeRef "fvec4"
+  | TypeRef "ivec4", TypeRef "dvec4"
+  | TypeRef "ivec4", TypeRef "bvec4"
+  | TypeRef "uvec2", TypeRef "ivec2"
+  | TypeRef "uvec2", TypeRef "fvec2"
+  | TypeRef "uvec2", TypeRef "dvec2"
+  | TypeRef "uvec2", TypeRef "bvec2"
+  | TypeRef "uvec3", TypeRef "ivec3"
+  | TypeRef "uvec3", TypeRef "fvec3"
+  | TypeRef "uvec3", TypeRef "dvec3"
+  | TypeRef "uvec3", TypeRef "bvec3"
+  | TypeRef "uvec4", TypeRef "ivec4"
+  | TypeRef "uvec4", TypeRef "fvec4"
+  | TypeRef "uvec4", TypeRef "dvec4"
+  | TypeRef "uvec4", TypeRef "bvec4"
+  | TypeRef "fvec2", TypeRef "ivec2"
+  | TypeRef "fvec2", TypeRef "uvec2"
+  | TypeRef "fvec2", TypeRef "dvec2"
+  | TypeRef "fvec2", TypeRef "bvec2"
+  | TypeRef "fvec3", TypeRef "ivec3"
+  | TypeRef "fvec3", TypeRef "uvec3"
+  | TypeRef "fvec3", TypeRef "dvec3"
+  | TypeRef "fvec3", TypeRef "bvec3"
+  | TypeRef "fvec4", TypeRef "ivec4"
+  | TypeRef "fvec4", TypeRef "uvec4"
+  | TypeRef "fvec4", TypeRef "dvec4"
+  | TypeRef "fvec4", TypeRef "bvec4"
+  | TypeRef "dvec2", TypeRef "ivec2"
+  | TypeRef "dvec2", TypeRef "uvec2"
+  | TypeRef "dvec2", TypeRef "fvec2"
+  | TypeRef "dvec2", TypeRef "bvec2"
+  | TypeRef "dvec3", TypeRef "ivec3"
+  | TypeRef "dvec3", TypeRef "uvec3"
+  | TypeRef "dvec3", TypeRef "fvec3"
+  | TypeRef "dvec3", TypeRef "bvec3"
+  | TypeRef "dvec4", TypeRef "ivec4"
+  | TypeRef "dvec4", TypeRef "uvec4"
+  | TypeRef "dvec4", TypeRef "fvec4"
+  | TypeRef "dvec4", TypeRef "bvec4"
+  | TypeRef "bvec2", TypeRef "ivec2"
+  | TypeRef "bvec2", TypeRef "uvec2"
+  | TypeRef "bvec2", TypeRef "fvec2"
+  | TypeRef "bvec2", TypeRef "dvec2"
+  | TypeRef "bvec3", TypeRef "ivec3"
+  | TypeRef "bvec3", TypeRef "uvec3"
+  | TypeRef "bvec3", TypeRef "fvec3"
+  | TypeRef "bvec3", TypeRef "dvec3"
+  | TypeRef "bvec4", TypeRef "ivec4"
+  | TypeRef "bvec4", TypeRef "uvec4"
+  | TypeRef "bvec4", TypeRef "fvec4"
+  | TypeRef "bvec4", TypeRef "dvec4" ->
+      Ok to_type
+  | _ ->
+      error loc (`InvalidCast (from_type, to_type))
+
 and check_single_value_expr env expr =
-  let Located.{loc; _} = expr in
+  let L.{loc; _} = expr in
   check_expr env expr >>= function
   | [] ->
       error loc (`UnitUsedAsValue expr)
@@ -764,7 +859,7 @@ and check_single_value_expr env expr =
 
 and check_expr env expr =
   let open Ast in
-  let Located.{loc; value} = expr in
+  let L.{loc; value} = expr in
   match value with
   | Access (expr, id) ->
       check_access env loc expr id >>= fun typ -> Ok [typ]
@@ -772,6 +867,8 @@ and check_expr env expr =
       check_index env loc expr index_exprs >>= fun typ -> Ok [typ]
   | Call (f_expr, arg_exprs) ->
       check_call env loc f_expr arg_exprs
+  | Cast (t, expr) ->
+      check_cast env loc t expr >>= fun typ -> Ok [typ]
   | NamedArg (_, expr) ->
       check_single_value_expr env expr >>= fun typ -> Ok [typ]
   | BundledArg exprs ->
@@ -831,18 +928,18 @@ and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
 
 (* Statements *)
 
-let rec check_var_declaration env loc ids exprs =
-  let declare_local_vars types =
+let rec check_binding env loc ids exprs env_add_fn typed_ctor =
+  let add_bindings_to_env types =
     List.fold_left
       (fun acc (id, t) ->
         acc >>= fun env ->
         match Env.find_name ~local:true id env with
-        | Some Located.{loc= prev_loc; _} ->
+        | Some L.{loc= prev_loc; _} ->
             error loc (`Redefinition (id, prev_loc))
         | None ->
             (* Ignore variables named _ *)
             if id = "_" then Ok env
-            else Ok Env.(env |> add_var id Located.{loc; value= t}) )
+            else Ok (env_add_fn id L.{loc; value= t} env) )
       (Ok env) (List.combine ids types)
   in
   match exprs with
@@ -853,11 +950,12 @@ let rec check_var_declaration env loc ids exprs =
       else if num_vars <> num_values then
         error loc (`AssignmentMismatch (num_vars, num_values))
       else
-        declare_local_vars expr_types >>= fun new_env ->
+        add_bindings_to_env expr_types >>= fun new_env ->
         let typed_stmt =
-          TypedAst.Var {var_ids= ids; var_values= [(expr_types, expr)]}
+          typed_ctor
+            TypedAst.{bind_ids= ids; bind_values= [(expr_types, expr)]}
         in
-        Ok (new_env, [(env, Located.{loc; value= typed_stmt})])
+        Ok (new_env, [(env, L.{loc; value= typed_stmt})])
   | _ ->
       List.fold_results
         (fun acc expr ->
@@ -870,24 +968,25 @@ let rec check_var_declaration env loc ids exprs =
       if num_vars <> num_values then
         error loc (`AssignmentMismatch (num_vars, num_values))
       else
-        declare_local_vars expr_types >>= fun new_env ->
+        add_bindings_to_env expr_types >>= fun new_env ->
         let typed_stmt =
-          TypedAst.Var
-            { var_ids= ids
-            ; var_values=
-                List.map
-                  (fun (t, e) -> ([t], e))
-                  (List.combine expr_types exprs) }
+          typed_ctor
+            TypedAst.
+              { bind_ids= ids
+              ; bind_values=
+                  List.map
+                    (fun (t, e) -> ([t], e))
+                    (List.combine expr_types exprs) }
         in
-        Ok (new_env, [(env, Located.{loc; value= typed_stmt})])
+        Ok (new_env, [(env, L.{loc; value= typed_stmt})])
 
 and check_lvalue env expr =
   let open Ast in
-  let Located.{loc; _} = expr in
+  let L.{loc; _} = expr in
   match expr.value with
   | Id id -> (
     match Env.find_lvalue id env with
-    | Some Located.{value= expr_type; _} ->
+    | Some L.{value= expr_type; _} ->
         Ok expr_type
     | None ->
         if Env.name_exists id env then error loc (`NotAnLValue expr)
@@ -950,7 +1049,7 @@ and check_assignment env loc op lhs rhs =
             ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
             ; asg_rvalues= [(rhs_types, expr)] }
         in
-        Ok (env, [(env, Located.{loc; value= typed_stmt})])
+        Ok (env, [(env, L.{loc; value= typed_stmt})])
   | _ ->
       check_lvalues env lhs >>= fun lhs_types ->
       List.fold_results
@@ -971,7 +1070,7 @@ and check_assignment env loc op lhs rhs =
             ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
             ; asg_rvalues= List.(combine (map (fun t -> [t]) rhs_types) rhs) }
         in
-        Ok (env, [(env, Located.{loc; value= typed_stmt})])
+        Ok (env, [(env, L.{loc; value= typed_stmt})])
 
 and check_if env loc if_cond if_true if_false =
   check_single_value_expr env if_cond >>= function
@@ -986,14 +1085,14 @@ and check_if env loc if_cond if_true if_false =
           ; if_true= typed_if_true
           ; if_false= typed_if_false }
       in
-      Ok (env, [(env, Located.{loc; value= typed_stmt})])
+      Ok (env, [(env, L.{loc; value= typed_stmt})])
   | _ as t ->
-      let Located.{loc; _} = if_cond in
+      let L.{loc; _} = if_cond in
       error loc (`NonBoolIfCondition (if_cond, t))
 
 and check_iterable_type env expr =
   let open Type in
-  let Located.{loc; _} = expr in
+  let L.{loc; _} = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
   | Array (t, [_]) ->
@@ -1011,7 +1110,7 @@ and check_foriter env loc it_var it_expr body =
     Env.(
       env
       |> enter_block_scope "foriter" loc
-      |> add_var it_var Located.{loc; value= it_typ})
+      |> add_var it_var L.{loc; value= it_typ})
   in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
@@ -1020,11 +1119,11 @@ and check_foriter env loc it_var it_expr body =
       ; foriter_it= ([expr_typ], it_expr)
       ; foriter_body= typed_body }
   in
-  Ok (env, [(stmt_env, Located.{loc; value= typed_stmt})])
+  Ok (env, [(stmt_env, L.{loc; value= typed_stmt})])
 
 and check_range_expr env expr =
   let open Type in
-  let Located.{loc; _} = expr in
+  let L.{loc; _} = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
   | TypeRef "int" ->
@@ -1040,7 +1139,7 @@ and check_forrange env loc it_var from_expr to_expr body =
     Env.(
       env
       |> enter_block_scope "forrange" loc
-      |> add_var it_var Located.{loc; value= int_typ})
+      |> add_var it_var L.{loc; value= int_typ})
   in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
@@ -1050,7 +1149,7 @@ and check_forrange env loc it_var from_expr to_expr body =
       ; forrange_to= ([int_typ], to_expr)
       ; forrange_body= typed_body }
   in
-  Ok (env, [(stmt_env, Located.{loc; value= typed_stmt})])
+  Ok (env, [(stmt_env, L.{loc; value= typed_stmt})])
 
 and check_return env loc exprs =
   match Env.scope_summary env with
@@ -1062,7 +1161,7 @@ and check_return env loc exprs =
         error loc (`TooManyReturnArguments (have_types, ret_types))
       in
       let errfn have_expr have_type want_type =
-        let Located.{loc; _} = have_expr in
+        let L.{loc; _} = have_expr in
         error loc (`InvalidReturnArgument (have_expr, have_type, want_type))
       in
       check_expr_list env exprs ret_types less_errfn more_errfn errfn
@@ -1071,18 +1170,18 @@ and check_return env loc exprs =
         TypedAst.Return
           (List.map (fun (t, e) -> ([t], e)) (List.combine ret_types exprs))
       in
-      Ok (env, [(env, Located.{loc; value= stmt})])
+      Ok (env, [(env, L.{loc; value= stmt})])
   | _ ->
       failwith "return can only appear in Function scopes"
 
 and check_discard env loc =
   if Env.is_function_scope env then
-    Ok (env, [(env, Located.{loc; value= TypedAst.Discard})])
+    Ok (env, [(env, L.{loc; value= TypedAst.Discard})])
   else error loc (`Unimplemented "discard can only appear in Function scopes")
 
 and check_stmt_list env stmts =
   List.fold_left
-    (fun acc Located.{loc; value= stmt} ->
+    (fun acc L.{loc; value= stmt} ->
       acc >>= fun (env, typed_stmts) ->
       check_stmt env loc stmt >>= fun (env, typed_stmt) ->
       Ok (env, typed_stmts @ typed_stmt) )
@@ -1092,8 +1191,12 @@ and check_stmt_list env stmts =
 and check_stmt env loc =
   let open Ast in
   function
-  | Var {var_ids; var_values} ->
-      check_var_declaration env loc var_ids var_values
+  | Var {bind_ids; bind_values} ->
+      check_binding env loc bind_ids bind_values Env.add_var (fun b ->
+          TypedAst.Var b )
+  | Val {bind_ids; bind_values} ->
+      check_binding env loc bind_ids bind_values Env.add_val (fun b ->
+          TypedAst.Val b )
   | Assignment {asg_op; asg_lvalues; asg_rvalues} ->
       check_assignment env loc asg_op asg_lvalues asg_rvalues
   | If {if_cond; if_true; if_false} ->
@@ -1121,7 +1224,7 @@ let check_function_declaration env loc fd =
 let check_function_sig env loc fd =
   let Ast.{fd_name; fd_type; _} = fd in
   match Env.find_name ~local:true fd_name env with
-  | Some Located.{loc= prev_loc; _} ->
+  | Some L.{loc= prev_loc; _} ->
       error loc (`Redefinition (fd_name, prev_loc))
   | None ->
       check_type env loc fd_type >>= fun clean_type ->
@@ -1129,54 +1232,24 @@ let check_function_sig env loc fd =
 
 let check_function_group env functions =
   List.fold_left
-    (fun acc Located.{loc; value} ->
+    (fun acc L.{loc; value} ->
       acc >>= fun env -> check_function_sig env loc value )
     (Ok env) functions
   >>= fun env ->
   List.fold_results
-    (fun acc Located.{loc; value} ->
+    (fun acc L.{loc; value} ->
       acc >>= fun typed_functions ->
       check_function_declaration env loc value >>= fun typed_fd ->
       Ok (typed_fd :: typed_functions) )
     (Ok []) functions
 
-let expand_pipeline_type env loc t functions =
-  (* TODO: add strict check for pipeline stage invariants *)
-  match t with
-  | Type.Function (p_params, p_ret) -> (
-      List.fold_left
-        (fun acc Located.{loc; value} ->
-          acc >>= fun env -> check_function_sig env loc value )
-        (Ok env) functions
-      >>= fun env ->
-      let vertex = Env.find_function ~local:true "vertex" env in
-      let compute = Env.find_function ~local:true "compute" env in
-      match (vertex, compute) with
-      | Some _, Some _ ->
-          error loc
-            (`Unimplemented
-              "ambiguous pipeline entry stage: cannot have both vertex and \
-               compute functions")
-      | Some Located.{value= Type.Function (f_params, _); _}, None ->
-          Ok (Type.Function (p_params @ f_params, p_ret))
-      | None, Some _ ->
-          Ok t
-      | None, None ->
-          Ok t
-      | _ ->
-          failwith "functions should have Function type" )
-  | _ ->
-      failwith "pipelines should have Function type"
-
 let check_pipeline_declaration_sig env loc pd =
-  let Ast.{pd_name; pd_type; pd_functions} = pd in
+  let Ast.{pd_name; pd_type; _} = pd in
   match Env.find_name ~local:true pd_name env with
-  | Some Located.{loc= prev_loc; _} ->
+  | Some L.{loc= prev_loc; _} ->
       error loc (`Redefinition (pd_name, prev_loc))
   | None ->
       check_type env loc pd_type >>= fun clean_type ->
-      expand_pipeline_type env loc clean_type pd_functions
-      >>= fun clean_type ->
       Ok (Env.add_pipeline pd_name {loc; value= clean_type} env)
 
 let check_pipeline_declaration_body env loc pd =
@@ -1185,18 +1258,20 @@ let check_pipeline_declaration_body env loc pd =
   let env = Env.enter_pipeline_scope pd_name clean_type env in
   let env = build_function_environment env loc "" clean_type in
   check_function_group env pd_functions >>= fun typed_functions ->
-  (* TODO: check pipeline preconditions? *)
   Ok
-    (TypedAst.PipelineDecl
-       { pd_env= env
-       ; pd_name
-       ; pd_type= clean_type
-       ; pd_functions= typed_functions })
+    L.
+      { loc
+      ; value=
+          TypedAst.PipelineDecl
+            { pd_env= env
+            ; pd_name
+            ; pd_type= clean_type
+            ; pd_functions= typed_functions } }
 
 let check_renderer_declaration_sig env loc rd =
   let Ast.{rd_name; rd_type; _} = rd in
   match Env.find_name ~local:true rd_name env with
-  | Some Located.{loc= prev_loc; _} ->
+  | Some L.{loc= prev_loc; _} ->
       error loc (`Redefinition (rd_name, prev_loc))
   | None ->
       check_type env loc rd_type >>= fun clean_type ->
@@ -1209,17 +1284,20 @@ let check_renderer_declaration_body env loc rd =
   let env = build_function_environment env loc "" clean_type in
   check_function_group env rd_functions >>= fun typed_functions ->
   Ok
-    (TypedAst.RendererDecl
-       { rd_env= env
-       ; rd_name
-       ; rd_type= clean_type
-       ; rd_functions= typed_functions })
+    L.
+      { loc
+      ; value=
+          TypedAst.RendererDecl
+            { rd_env= env
+            ; rd_name
+            ; rd_type= clean_type
+            ; rd_functions= typed_functions } }
 
 let check Ast.{module_name; elements} =
   let env = Env.(global |> enter_module_scope module_name) in
   (* First check all signatures and populate the module scope *)
   List.fold_left
-    (fun acc Located.{loc; value} ->
+    (fun acc L.{loc; value} ->
       acc >>= fun (env, typed_root_elems) ->
       match value with
       | Ast.ConstDecl cd ->
@@ -1239,7 +1317,7 @@ let check Ast.{module_name; elements} =
   >>= fun (env, typed_root_elems) ->
   (* Then check the actual bodies of pipelines and renderers *)
   List.fold_left
-    (fun acc Located.{loc; value} ->
+    (fun acc L.{loc; value} ->
       acc >>= fun typed_root_elems ->
       match value with
       | Ast.ConstDecl _ ->

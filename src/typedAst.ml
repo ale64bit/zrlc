@@ -4,7 +4,7 @@ type expression = Type.t list * Ast.expression [@@deriving to_yojson]
 
 (* Statements *)
 
-type var_declaration = {var_ids: string list; var_values: expression list}
+type binding = {bind_ids: string list; bind_values: expression list}
 [@@deriving to_yojson]
 
 and assignment =
@@ -30,7 +30,8 @@ and for_range_stmt =
 and stmt = Env.t * raw_stmt Located.t [@@deriving to_yojson]
 
 and raw_stmt =
-  | Var of var_declaration
+  | Var of binding
+  | Val of binding
   | Assignment of assignment
   | If of if_stmt
   | ForIter of for_iter_stmt
@@ -63,12 +64,14 @@ type renderer_declaration =
   ; rd_functions: function_declaration list }
 [@@deriving to_yojson]
 
-type toplevel_elem =
+type raw_toplevel_elem =
   | ConstDecl of const_declaration
   | TypeDecl of type_declaration
   | PipelineDecl of pipeline_declaration
   | RendererDecl of renderer_declaration
 [@@deriving to_yojson]
+
+type toplevel_elem = raw_toplevel_elem Located.t [@@deriving to_yojson]
 
 type root =
   {root_env: Env.t; root_module: string; root_elems: toplevel_elem list}

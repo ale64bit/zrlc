@@ -12,6 +12,7 @@ type error =
   | `InvalidBinaryOperation of Ast.expression * Type.t * Type.t
   | `InvalidIndexOperation of Ast.expression * Type.t
   | `InvalidCallOperation of Ast.expression * Type.t
+  | `InvalidCast of Type.t * Type.t
   | `NotAnExpression of string
   | `NoSuchMember of Type.t * string
   | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list

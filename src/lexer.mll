@@ -28,22 +28,24 @@ rule read =
   | white      { read lexbuf }
   | newline    { next_line lexbuf; read lexbuf }
   | "#"        { comment lexbuf }
-  | "module"   { MODULE }
+  | "cast"     { CAST }
   | "const"    { CONST }
-  | "type"     { TYPE }
+  | "def"      { DEF }
+  | "discard"  { DISCARD }
+  | "else"     { ELSE }
+  | "false"    { BOOL false }
+  | "for"      { FOR }
+  | "if"       { IF }
+  | "in"       { IN }
+  | "module"   { MODULE }
   | "pipeline" { PIPELINE }
   | "renderer" { RENDERER }
-  | "def"      { DEF }
-  | "var"      { VAR }
-  | "if"       { IF }
-  | "else"     { ELSE }
-  | "for"      { FOR }
-  | "in"       { IN }
-  | "to"       { TO }
   | "return"   { RETURN }
-  | "discard"  { DISCARD }
+  | "to"       { TO }
   | "true"     { BOOL true }
-  | "false"    { BOOL false }
+  | "type"     { TYPE }
+  | "val"      { VAL }
+  | "var"      { VAR }
   | int        { INT (int_of_string (Lexing.lexeme lexbuf)) }
   | float      { FLOAT (float_of_string (Lexing.lexeme lexbuf)) }
   | id         { ID (Lexing.lexeme lexbuf) }

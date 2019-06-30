@@ -12,13 +12,13 @@ pipeline Pipeline(): fvec4 {
   }
 }
 
-renderer Simple() {
+renderer Simple(tmp: rt_rgba) {
 
-  def main(geometry: atomset) { 
-    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0)
-    for g in geometry {
-      builtin.screen += Pipeline(pos = g)
-    }  
+  def main(geometry: atomlist, col: float) {
+    builtin.screen = fvec4(col, 1.0 - col, 0.0, 1.0)
+    # for g in geometry {
+    #   builtin.screen += Pipeline(pos = g)
+    # }  
   }
 }
 

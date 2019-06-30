@@ -144,6 +144,13 @@ and dot_raw_expr s g = function
       G.add_edge g call_node args_node ;
       List.iter (G.add_edge g args_node) (List.map (dot_expr s g) rhs) ;
       call_node
+  | Ast.Cast (t, expr) ->
+      let cast_node = new_node s g "cast" in
+      let t_node = new_node s g (Type.string_of_type t) in
+      let expr_node = dot_expr s g expr in
+      G.add_edge g cast_node t_node ;
+      G.add_edge g cast_node expr_node ;
+      cast_node
   | Ast.NamedArg (id, expr) ->
       let named_node = new_node s g "named_arg" in
       let id_node = new_node s g id in
@@ -180,15 +187,24 @@ and dot_raw_expr s g = function
 let rec dot_stmt s g e = dot_raw_stmt s g e.Located.value
 
 and dot_raw_stmt s g = function
-  | Ast.Var {var_ids; var_values} ->
+  | Ast.Var {bind_ids; bind_values} ->
       let var_node = new_node s g "var" in
       let id_node = new_dummy_node s g "ids" in
       let rhs_node = new_dummy_node s g "exprs" in
       G.add_edge g var_node id_node ;
       G.add_edge g var_node rhs_node ;
-      List.iter (G.add_edge g id_node) (List.map (new_ident_node s g) var_ids) ;
-      List.iter (G.add_edge g rhs_node) (List.map (dot_expr s g) var_values) ;
+      List.iter (G.add_edge g id_node) (List.map (new_ident_node s g) bind_ids) ;
+      List.iter (G.add_edge g rhs_node) (List.map (dot_expr s g) bind_values) ;
       var_node
+  | Ast.Val {bind_ids; bind_values} ->
+      let val_node = new_node s g "val" in
+      let id_node = new_dummy_node s g "ids" in
+      let rhs_node = new_dummy_node s g "exprs" in
+      G.add_edge g val_node id_node ;
+      G.add_edge g val_node rhs_node ;
+      List.iter (G.add_edge g id_node) (List.map (new_ident_node s g) bind_ids) ;
+      List.iter (G.add_edge g rhs_node) (List.map (dot_expr s g) bind_values) ;
+      val_node
   | Ast.Assignment {asg_op; asg_lvalues; asg_rvalues} ->
       let assign_node = new_op_node s g (string_of_assignop asg_op) in
       let lhs_node = new_dummy_node s g "lhs" in

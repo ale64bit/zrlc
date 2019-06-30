@@ -37,7 +37,7 @@ module Examples (T : Types) = struct
 end
 
 module Print = struct
-  type 'dv repr = 'dv
+  type 'dv repr = string
 
   type basic = string
 
@@ -57,7 +57,7 @@ module Print = struct
 end
 
 module Sizeof = struct
-  type 'dv repr = 'dv
+  type 'dv repr = int
 
   type basic = int
 

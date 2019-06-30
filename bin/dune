@@ -1,4 +1,4 @@
 (executables
  (names zrlc repl)
- (libraries zrl)
+ (libraries zrl backend)
 )

@@ -1,5 +1,5 @@
-%token MODULE CONST TYPE PIPELINE RENDERER DEF VAR
-%token IF ELSE FOR IN TO RETURN DISCARD
+%token CAST CONST DEF DISCARD ELSE FOR IF IN MODULE PIPELINE RENDERER RETURN TO 
+%token TYPE VAL VAR 
 
 %token <bool> BOOL
 %token <int> INT
@@ -109,10 +109,17 @@ let func :=
 
 let var_declaration ==
   VAR; 
-  var_ids=separated_nonempty_list(COMMA, ID); 
+  bind_ids=separated_nonempty_list(COMMA, ID); 
   ASSIGN; 
-  var_values=separated_nonempty_list(COMMA, expr);
-    { Ast.Var {var_ids; var_values} }
+  bind_values=separated_nonempty_list(COMMA, expr);
+    { Ast.Var {bind_ids; bind_values} }
+
+let val_declaration ==
+  VAL; 
+  bind_ids=separated_nonempty_list(COMMA, ID); 
+  ASSIGN; 
+  bind_values=separated_nonempty_list(COMMA, expr);
+    { Ast.Val {bind_ids; bind_values} }
 
 let assignment ==
   lhs=separated_nonempty_list(COMMA, lvalue); 
@@ -145,6 +152,7 @@ let discard ==
 let stmt :=
   located(
   | var_declaration
+  | val_declaration
   | assignment
   | if_stmt
   | for_iter
@@ -191,6 +199,7 @@ let primary_expr :=
     | ~ = primary_expr; DOT; ~ = ID; <Ast.Access>
     | ~ = primary_expr; LBRACKET; ~ = separated_nonempty_list(COMMA, expr); RBRACKET; <Ast.Index>
     | ~ = primary_expr; LPAREN; ~ = separated_list(COMMA, arg_expr); RPAREN; <Ast.Call>
+    | CAST; LT; ~ = type_id; GT; LPAREN; ~ = expr; RPAREN; <Ast.Cast>
     | ~ = ID; <Ast.Id>
     )
 

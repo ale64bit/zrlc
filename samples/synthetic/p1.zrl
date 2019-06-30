@@ -1,0 +1,14 @@
+# Using empty atom containers to drive control flow and change the clear color
+# of a render target (render pass is implicit since there are no pipelines).
+module p1
+
+renderer R() {
+
+  def main(r, g, b: atomlist) {
+    for _ in r { builtin.screen = fvec4(1.0, 0.0, 0.0, 1.0) }
+    for _ in g { builtin.screen = fvec4(0.0, 1.0, 0.0, 1.0) }
+    for _ in b { builtin.screen = fvec4(0.0, 0.0, 1.0, 1.0) }
+  }
+}
+
+

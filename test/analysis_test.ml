@@ -1,6 +1,7 @@
 open OUnit2
 open Zrl
 open Zrl.Monad.Result
+module L = Located
 
 (* Helpers *)
 
@@ -57,10 +58,14 @@ let test_const_bool_true =
     |} in
   let stmt_loc = loc_of src (Pcre.quote "const b = true") in
   let val_loc = loc_of src (Pcre.quote "true") in
-  let const_expr_true = Located.{loc= val_loc; value= Ast.BoolLiteral true} in
+  let const_expr_true = L.{loc= val_loc; value= Ast.BoolLiteral true} in
   let cd =
-    TypedAst.ConstDecl
-      {cd_name= "b"; cd_value= ([Type.TypeRef "bool"], const_expr_true)}
+    L.
+      { loc= stmt_loc
+      ; value=
+          TypedAst.ConstDecl
+            {cd_name= "b"; cd_value= ([Type.TypeRef "bool"], const_expr_true)}
+      }
   in
   let want_env =
     Env.(
@@ -77,12 +82,14 @@ let test_const_bool_false =
     |} in
   let stmt_loc = loc_of src (Pcre.quote "const b = false") in
   let val_loc = loc_of src (Pcre.quote "false") in
-  let const_expr_false =
-    Located.{loc= val_loc; value= Ast.BoolLiteral false}
-  in
+  let const_expr_false = L.{loc= val_loc; value= Ast.BoolLiteral false} in
   let cd =
-    TypedAst.ConstDecl
-      {cd_name= "b"; cd_value= ([Type.TypeRef "bool"], const_expr_false)}
+    L.
+      { loc= stmt_loc
+      ; value=
+          TypedAst.ConstDecl
+            {cd_name= "b"; cd_value= ([Type.TypeRef "bool"], const_expr_false)}
+      }
   in
   let want_env =
     Env.(
@@ -99,10 +106,13 @@ let test_const_int =
     |} in
   let stmt_loc = loc_of src (Pcre.quote "const i = 42") in
   let val_loc = loc_of src (Pcre.quote "42") in
-  let const_expr_42 = Located.{loc= val_loc; value= Ast.IntLiteral 42} in
+  let const_expr_42 = L.{loc= val_loc; value= Ast.IntLiteral 42} in
   let cd =
-    TypedAst.ConstDecl
-      {cd_name= "i"; cd_value= ([Type.TypeRef "int"], const_expr_42)}
+    L.
+      { loc= stmt_loc
+      ; value=
+          TypedAst.ConstDecl
+            {cd_name= "i"; cd_value= ([Type.TypeRef "int"], const_expr_42)} }
   in
   let want_env =
     Env.(
@@ -119,10 +129,14 @@ let test_const_float =
     |} in
   let stmt_loc = loc_of src (Pcre.quote "const pi = 3.14") in
   let val_loc = loc_of src (Pcre.quote "3.14") in
-  let const_expr_pi = Located.{loc= val_loc; value= Ast.FloatLiteral 3.14} in
+  let const_expr_pi = L.{loc= val_loc; value= Ast.FloatLiteral 3.14} in
   let cd =
-    TypedAst.ConstDecl
-      {cd_name= "pi"; cd_value= ([Type.TypeRef "float"], const_expr_pi)}
+    L.
+      { loc= stmt_loc
+      ; value=
+          TypedAst.ConstDecl
+            {cd_name= "pi"; cd_value= ([Type.TypeRef "float"], const_expr_pi)}
+      }
   in
   let want_env =
     Env.(
@@ -153,11 +167,14 @@ let test_empty_pipeline =
       |> add_var "x" {loc= stmt_loc; value= Type.TypeRef "int"})
   in
   let pd =
-    TypedAst.PipelineDecl
-      { pd_env= pipeline_env
-      ; pd_name= "P"
-      ; pd_type= pipeline_type
-      ; pd_functions= [] }
+    L.
+      { loc= stmt_loc
+      ; value=
+          TypedAst.PipelineDecl
+            { pd_env= pipeline_env
+            ; pd_name= "P"
+            ; pd_type= pipeline_type
+            ; pd_functions= [] } }
   in
   let want_ast = [pd] in
   "test_empty_pipeline" >:: analysis_ok_test src want_env want_ast
@@ -179,11 +196,13 @@ let test_type_declaration =
         ; ("a", Array (TypeRef "fvec4", [OfInt 64; OfInt 132])) ])
   in
   let typ_loc = loc_of src "type T {.*}" in
-  let td = TypedAst.TypeDecl {td_name= "T"; td_type= typ} in
+  let td =
+    L.{loc= typ_loc; value= TypedAst.TypeDecl {td_name= "T"; td_type= typ}}
+  in
   let want_env =
     Env.(
       global |> enter_module_scope "test"
-      |> add_type "T" Located.{loc= typ_loc; value= typ})
+      |> add_type "T" L.{loc= typ_loc; value= typ})
   in
   let want_ast = [td] in
   "test_type_declaration" >:: analysis_ok_test src want_env want_ast
@@ -196,9 +215,7 @@ let test_const_redefined =
     |} in
   let prev_loc = loc_of src (Pcre.quote "const i = 1") in
   let want_loc = loc_of src (Pcre.quote "const i = 2") in
-  let want_err =
-    Located.{loc= want_loc; value= `Redefinition ("i", prev_loc)}
-  in
+  let want_err = L.{loc= want_loc; value= `Redefinition ("i", prev_loc)} in
   "test_const_redefined" >:: analysis_error_test src want_err
 
 let test_duplicate_member =
@@ -212,7 +229,7 @@ let test_duplicate_member =
     |}
   in
   let want_loc = loc_of src "type T {.*}" in
-  let want_err = Located.{loc= want_loc; value= `DuplicateMember "f"} in
+  let want_err = L.{loc= want_loc; value= `DuplicateMember "f"} in
   "test_duplicate_member" >:: analysis_error_test src want_err
 
 let test_duplicate_parameter =
@@ -225,7 +242,7 @@ let test_duplicate_parameter =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "def f(x: int, x: float) {}") in
-  let want_err = Located.{loc= want_loc; value= `DuplicateParameter "x"} in
+  let want_err = L.{loc= want_loc; value= `DuplicateParameter "x"} in
   "test_duplicate_parameter" >:: analysis_error_test src want_err
 
 let test_unknown_type_name =
@@ -236,7 +253,7 @@ let test_unknown_type_name =
     }
     |} in
   let want_loc = loc_of src "type T {.*}" in
-  let want_err = Located.{loc= want_loc; value= `UnknownTypeName "X"} in
+  let want_err = L.{loc= want_loc; value= `UnknownTypeName "X"} in
   "test_unknown_type_name" >:: analysis_error_test src want_err
 
 let test_pipeline_redefined =
@@ -249,9 +266,7 @@ let test_pipeline_redefined =
   in
   let prev_loc = loc_of ~n:0 src (Pcre.quote "pipeline P() {}") in
   let want_loc = loc_of ~n:1 src (Pcre.quote "pipeline P() {}") in
-  let want_err =
-    Located.{loc= want_loc; value= `Redefinition ("P", prev_loc)}
-  in
+  let want_err = L.{loc= want_loc; value= `Redefinition ("P", prev_loc)} in
   "test_pipeline_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_param_redefined =
@@ -260,7 +275,7 @@ let test_pipeline_param_redefined =
     pipeline P(x: int, x: float) {}
     |} in
   let want_loc = loc_of src (Pcre.quote "pipeline P(x: int, x: float) {}") in
-  let want_err = Located.{loc= want_loc; value= `DuplicateParameter "x"} in
+  let want_err = L.{loc= want_loc; value= `DuplicateParameter "x"} in
   "test_pipeline_param_redefined" >:: analysis_error_test src want_err
 
 let test_pipeline_function_redefined =
@@ -275,9 +290,7 @@ let test_pipeline_function_redefined =
   in
   let prev_loc = loc_of src ~n:0 (Pcre.quote "def f() {}") in
   let want_loc = loc_of src ~n:1 (Pcre.quote "def f() {}") in
-  let want_err =
-    Located.{loc= want_loc; value= `Redefinition ("f", prev_loc)}
-  in
+  let want_err = L.{loc= want_loc; value= `Redefinition ("f", prev_loc)} in
   "test_pipeline_function_redefined" >:: analysis_error_test src want_err
 
 let test_assignment_mismatch =
@@ -292,7 +305,7 @@ let test_assignment_mismatch =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "var x, y = 1, 2, 3") in
-  let want_err = Located.{loc= want_loc; value= `AssignmentMismatch (2, 3)} in
+  let want_err = L.{loc= want_loc; value= `AssignmentMismatch (2, 3)} in
   "test_assignment_mismatch" >:: analysis_error_test src want_err
 
 let test_non_integer_array_index =
@@ -307,8 +320,8 @@ let test_non_integer_array_index =
     |}
   in
   let want_loc = loc_of src "false" in
-  let expr = Located.{loc= want_loc; value= Ast.BoolLiteral false} in
-  let want_err = Located.{loc= want_loc; value= `NonIntegerArrayIndex expr} in
+  let expr = L.{loc= want_loc; value= Ast.BoolLiteral false} in
+  let want_err = L.{loc= want_loc; value= `NonIntegerArrayIndex expr} in
   "test_non_integer_array_index" >:: analysis_error_test src want_err
 
 let test_invalid_unary_operation =
@@ -324,7 +337,7 @@ let test_invalid_unary_operation =
   in
   let want_loc = loc_of src (Pcre.quote "-true") in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidUnaryOperation (Ast.UMinus, Type.TypeRef "bool") }
   in
@@ -343,18 +356,18 @@ let test_invalid_binary_operation =
   in
   let want_loc = loc_of src (Pcre.quote "1 + 2.0") in
   let expr =
-    Located.
+    L.
       { loc= want_loc
       ; value=
           Ast.BinExpr
-            ( Located.{loc= loc_of src "1"; value= Ast.IntLiteral 1}
+            ( L.{loc= loc_of src "1"; value= Ast.IntLiteral 1}
             , Ast.Plus
-            , Located.
+            , L.
                 { loc= loc_of src (Pcre.quote "2.0")
                 ; value= Ast.FloatLiteral 2.0 } ) }
   in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value=
           `InvalidBinaryOperation
@@ -375,16 +388,16 @@ let test_invalid_index_operation =
   in
   let want_loc = loc_of src (Pcre.quote "F[6, 2]") in
   let expr =
-    Located.
+    L.
       { loc= want_loc
       ; value=
           Ast.Index
-            ( Located.{loc= loc_of ~n:1 src "F"; value= Ast.Id "F"}
-            , [ Located.{loc= loc_of src "6"; value= Ast.IntLiteral 6}
-              ; Located.{loc= loc_of src "2"; value= Ast.IntLiteral 2} ] ) }
+            ( L.{loc= loc_of ~n:1 src "F"; value= Ast.Id "F"}
+            , [ L.{loc= loc_of src "6"; value= Ast.IntLiteral 6}
+              ; L.{loc= loc_of src "2"; value= Ast.IntLiteral 2} ] ) }
   in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidIndexOperation (expr, Type.Function ([], [])) }
   in
@@ -402,10 +415,9 @@ let test_invalid_call_operation =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "42(false)") in
-  let expr = Located.{loc= loc_of src "42"; value= Ast.IntLiteral 42} in
+  let expr = L.{loc= loc_of src "42"; value= Ast.IntLiteral 42} in
   let want_err =
-    Located.
-      {loc= want_loc; value= `InvalidCallOperation (expr, Type.TypeRef "int")}
+    L.{loc= want_loc; value= `InvalidCallOperation (expr, Type.TypeRef "int")}
   in
   "test_invalid_call_operation" >:: analysis_error_test src want_err
 
@@ -424,7 +436,7 @@ let test_not_an_expression =
     |}
   in
   let want_loc = loc_of ~n:1 src (Pcre.quote "T") in
-  let want_err = Located.{loc= want_loc; value= `NotAnExpression "T"} in
+  let want_err = L.{loc= want_loc; value= `NotAnExpression "T"} in
   "test_not_an_expression" >:: analysis_error_test src want_err
 
 let test_no_such_member =
@@ -443,7 +455,7 @@ let test_no_such_member =
   in
   let want_loc = loc_of src (Pcre.quote "t.y") in
   let want_err =
-    Located.{loc= want_loc; value= `NoSuchMember (Type.TypeRef "T", "y")}
+    L.{loc= want_loc; value= `NoSuchMember (Type.TypeRef "T", "y")}
   in
   "test_no_such_member" >:: analysis_error_test src want_err
 
@@ -460,11 +472,11 @@ let test_not_enough_arguments =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "f1(1)") in
-  let expr = Located.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"} in
+  let expr = L.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"} in
   let have_types = List.init 1 (fun _ -> Type.TypeRef "int") in
   let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
   let want_err =
-    Located.
+    L.
       {loc= want_loc; value= `NotEnoughArguments (expr, have_types, want_types)}
   in
   "test_not_enough_arguments" >:: analysis_error_test src want_err
@@ -482,12 +494,11 @@ let test_too_many_arguments =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "f1(1, 2, 3)") in
-  let expr = Located.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"} in
+  let expr = L.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"} in
   let have_types = List.init 3 (fun _ -> Type.TypeRef "int") in
   let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
   let want_err =
-    Located.
-      {loc= want_loc; value= `TooManyArguments (expr, have_types, want_types)}
+    L.{loc= want_loc; value= `TooManyArguments (expr, have_types, want_types)}
   in
   "test_too_many_arguments" >:: analysis_error_test src want_err
 
@@ -506,7 +517,7 @@ let test_not_enough_return_arguments =
   let have_types = List.init 1 (fun _ -> Type.TypeRef "int") in
   let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
   let want_err =
-    Located.
+    L.
       {loc= want_loc; value= `NotEnoughReturnArguments (have_types, want_types)}
   in
   "test_not_enough_return_arguments" >:: analysis_error_test src want_err
@@ -526,8 +537,7 @@ let test_too_many_return_arguments =
   let have_types = List.init 3 (fun _ -> Type.TypeRef "int") in
   let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
   let want_err =
-    Located.
-      {loc= want_loc; value= `TooManyReturnArguments (have_types, want_types)}
+    L.{loc= want_loc; value= `TooManyReturnArguments (have_types, want_types)}
   in
   "test_too_many_return_arguments" >:: analysis_error_test src want_err
 
@@ -543,10 +553,8 @@ let test_not_enough_indices =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "array[1,2]") in
-  let expr = Located.{loc= loc_of ~n:1 src "array"; value= Ast.Id "array"} in
-  let want_err =
-    Located.{loc= want_loc; value= `NotEnoughIndices (expr, 2, 3)}
-  in
+  let expr = L.{loc= loc_of ~n:1 src "array"; value= Ast.Id "array"} in
+  let want_err = L.{loc= want_loc; value= `NotEnoughIndices (expr, 2, 3)} in
   "test_not_enough_indices" >:: analysis_error_test src want_err
 
 let test_too_many_indices =
@@ -561,10 +569,8 @@ let test_too_many_indices =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "array[1,2,3,4]") in
-  let expr = Located.{loc= loc_of ~n:1 src "array"; value= Ast.Id "array"} in
-  let want_err =
-    Located.{loc= want_loc; value= `TooManyIndices (expr, 4, 3)}
-  in
+  let expr = L.{loc= loc_of ~n:1 src "array"; value= Ast.Id "array"} in
+  let want_err = L.{loc= want_loc; value= `TooManyIndices (expr, 4, 3)} in
   "test_too_many_indices" >:: analysis_error_test src want_err
 
 let test_multiple_value_in_single_value_context =
@@ -581,14 +587,13 @@ let test_multiple_value_in_single_value_context =
   in
   let want_loc = loc_of ~n:1 src (Pcre.quote "f1()") in
   let expr =
-    Located.
+    L.
       { loc= loc_of ~n:1 src (Pcre.quote "f1()")
-      ; value=
-          Ast.Call (Located.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"}, [])
+      ; value= Ast.Call (L.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"}, [])
       }
   in
   let want_err =
-    Located.{loc= want_loc; value= `MultipleValueInSingleValueContext expr}
+    L.{loc= want_loc; value= `MultipleValueInSingleValueContext expr}
   in
   "test_multiple_value_in_single_value_context"
   >:: analysis_error_test src want_err
@@ -607,25 +612,24 @@ let test_mixed_argument_style =
   in
   let want_loc = loc_of src (Pcre.quote "f1(111, y=222)") in
   let expr =
-    Located.
+    L.
       { loc= want_loc
       ; value=
           Ast.Call
-            ( Located.
-                {loc= loc_of ~n:1 src (Pcre.quote "f1"); value= Ast.Id "f1"}
-            , [ Located.
+            ( L.{loc= loc_of ~n:1 src (Pcre.quote "f1"); value= Ast.Id "f1"}
+            , [ L.
                   { loc= loc_of src (Pcre.quote "111")
                   ; value= Ast.IntLiteral 111 }
-              ; Located.
+              ; L.
                   { loc= loc_of src (Pcre.quote "y=222")
                   ; value=
                       Ast.NamedArg
                         ( "y"
-                        , Located.
+                        , L.
                             { loc= loc_of src (Pcre.quote "222")
                             ; value= Ast.IntLiteral 222 } ) } ] ) }
   in
-  let want_err = Located.{loc= want_loc; value= `MixedArgumentStyle expr} in
+  let want_err = L.{loc= want_loc; value= `MixedArgumentStyle expr} in
   "test_mixed_argument_style" >:: analysis_error_test src want_err
 
 let test_invalid_argument =
@@ -643,9 +647,9 @@ let test_invalid_argument =
   let want_loc = loc_of src "false" in
   let have_type = Type.TypeRef "bool" in
   let want_type = Type.TypeRef "int" in
-  let expr = Located.{loc= loc_of src "false"; value= Ast.BoolLiteral false} in
+  let expr = L.{loc= loc_of src "false"; value= Ast.BoolLiteral false} in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidArgument (expr, have_type, want_type, "f1") }
   in
@@ -665,9 +669,9 @@ let test_invalid_return_argument =
   let want_loc = loc_of src "false" in
   let have_type = Type.TypeRef "bool" in
   let want_type = Type.TypeRef "int" in
-  let expr = Located.{loc= want_loc; value= Ast.BoolLiteral false} in
+  let expr = L.{loc= want_loc; value= Ast.BoolLiteral false} in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidReturnArgument (expr, have_type, want_type) }
   in
@@ -686,9 +690,7 @@ let test_missing_named_argument =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "f(x=1, x=2)") in
-  let want_err =
-    Located.{loc= want_loc; value= `MissingNamedArgument ("y", "f")}
-  in
+  let want_err = L.{loc= want_loc; value= `MissingNamedArgument ("y", "f")} in
   "test_missing_named_argument" >:: analysis_error_test src want_err
 
 let test_unexpected_named_argument =
@@ -705,7 +707,7 @@ let test_unexpected_named_argument =
   in
   let want_loc = loc_of src (Pcre.quote "f(x=1, z=2)") in
   let want_err =
-    Located.{loc= want_loc; value= `UnexpectedNamedArgument ("z", "f")}
+    L.{loc= want_loc; value= `UnexpectedNamedArgument ("z", "f")}
   in
   "test_unexpected_named_argument" >:: analysis_error_test src want_err
 
@@ -723,13 +725,12 @@ let test_unit_used_as_value =
   in
   let want_loc = loc_of ~n:1 src (Pcre.quote "f1()") in
   let expr =
-    Located.
+    L.
       { loc= want_loc
-      ; value=
-          Ast.Call (Located.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"}, [])
+      ; value= Ast.Call (L.{loc= loc_of ~n:1 src "f1"; value= Ast.Id "f1"}, [])
       }
   in
-  let want_err = Located.{loc= want_loc; value= `UnitUsedAsValue expr} in
+  let want_err = L.{loc= want_loc; value= `UnitUsedAsValue expr} in
   "test_unit_used_as_value" >:: analysis_error_test src want_err
 
 let test_not_an_lvalue =
@@ -745,8 +746,8 @@ let test_not_an_lvalue =
     |}
   in
   let want_loc = loc_of ~n:1 src "f1" in
-  let expr = Located.{loc= want_loc; value= Ast.Id "f1"} in
-  let want_err = Located.{loc= want_loc; value= `NotAnLValue expr} in
+  let expr = L.{loc= want_loc; value= Ast.Id "f1"} in
+  let want_err = L.{loc= want_loc; value= `NotAnLValue expr} in
   "test_not_an_lvalue" >:: analysis_error_test src want_err
 
 let test_invalid_single_assignment =
@@ -764,9 +765,9 @@ let test_invalid_single_assignment =
   let want_loc = loc_of src (Pcre.quote "x, y = 3, true") in
   let have_type = Type.TypeRef "bool" in
   let want_type = Type.TypeRef "int" in
-  let expr = Located.{loc= loc_of src "true"; value= Ast.BoolLiteral true} in
+  let expr = L.{loc= loc_of src "true"; value= Ast.BoolLiteral true} in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidSingleAssignment (expr, have_type, want_type) }
   in
@@ -787,10 +788,10 @@ let test_invalid_multiple_assignment =
   in
   let want_loc = loc_of src (Pcre.quote "x, y = f1()") in
   let have_type = Type.TypeRef "bool" in
-  let expr = Located.{loc= loc_of ~n:1 src "y"; value= Ast.Id "y"} in
+  let expr = L.{loc= loc_of ~n:1 src "y"; value= Ast.Id "y"} in
   let want_type = Type.TypeRef "int" in
   let want_err =
-    Located.
+    L.
       { loc= want_loc
       ; value= `InvalidMultipleAssignment (have_type, expr, want_type) }
   in
@@ -808,10 +809,9 @@ let test_non_bool_if_condition =
     |}
   in
   let want_loc = loc_of src "42" in
-  let expr = Located.{loc= want_loc; value= Ast.IntLiteral 42} in
+  let expr = L.{loc= want_loc; value= Ast.IntLiteral 42} in
   let want_err =
-    Located.
-      {loc= want_loc; value= `NonBoolIfCondition (expr, Type.TypeRef "int")}
+    L.{loc= want_loc; value= `NonBoolIfCondition (expr, Type.TypeRef "int")}
   in
   "test_non_bool_if_condition" >:: analysis_error_test src want_err
 

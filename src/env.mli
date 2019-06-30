@@ -51,6 +51,8 @@ val function_exists : string -> t -> bool
 
 val var_exists : local:bool -> string -> t -> bool
 
+val val_exists : local:bool -> string -> t -> bool
+
 val name_exists : string -> t -> bool
 
 (* Add *)
@@ -66,6 +68,8 @@ val add_function : string -> Type.t Located.t -> t -> t
 
 val add_var : string -> Type.t Located.t -> t -> t
 
+val add_val : string -> Type.t Located.t -> t -> t
+
 (* Find *)
 val find_constant : local:bool -> string -> t -> const_value Located.t option
 
@@ -80,6 +84,8 @@ val find_renderer : local:bool -> string -> t -> Type.t Located.t option
 val find_function : local:bool -> string -> t -> Type.t Located.t option
 
 val find_var : local:bool -> string -> t -> Type.t Located.t option
+
+val find_val : local:bool -> string -> t -> Type.t Located.t option
 
 val find_name : local:bool -> string -> t -> Type.t Located.t option
 

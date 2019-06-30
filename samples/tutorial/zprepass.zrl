@@ -7,7 +7,7 @@ pipeline PrePass(depth: depthBuffer, mvp: fmat4): float {
   }
 
   def fragment(): float {
-    if builtin.fragCoord.z > depth.load(builtin.fragCoord.xy.asint()) {
+    if builtin.fragCoord.z > depth.load(cast<ivec2>(builtin.fragCoord.xy)) {
       discard
     }
     return builtin.fragCoord.z
@@ -21,10 +21,10 @@ pipeline MainPass(depth: depthBuffer, mvp: fmat4): fvec4 {
   }
 
   def fragment(): fvec4 {
-    if builtin.fragCoord.z != depth.load(builtin.fragCoord.xy.asint()) {
+    if builtin.fragCoord.z != depth.load(cast<ivec2>(builtin.fragCoord.xy)) {
       discard
     }
-    var red = fvec4(1.0, 0.0, 0.0, 1.0)
+    val red = fvec4(1.0, 0.0, 0.0, 1.0)
     return red
   }
 }

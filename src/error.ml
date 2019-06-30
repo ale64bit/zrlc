@@ -48,6 +48,10 @@ let string_of_error Located.{loc; value} =
       Printf.sprintf "%s: error: cannot call non-function %s (type %s)" pos
         (Ast.string_of_expression expr)
         (Type.string_of_type typ)
+  | `InvalidCast (from_type, to_type) ->
+      Printf.sprintf "%s: error: cast from '%s' to '%s' is not allowed" pos
+        (Type.string_of_type from_type)
+        (Type.string_of_type to_type)
   | `NotAnExpression id ->
       Printf.sprintf "%s: error: %s is not an expression" pos id
   | `NoSuchMember (typ, id) ->
@@ -188,6 +192,10 @@ let debug_string_of_error Located.{loc; value} =
       Printf.sprintf "%s: InvalidCallOperation (expr=%s, typ=%s)" loc
         (Ast.string_of_expression expr)
         (Type.string_of_type typ)
+  | `InvalidCast (from_type, to_type) ->
+      Printf.sprintf "%s: InvalidCast (from_type=%s, to_type=%s)" loc
+        (Type.string_of_type from_type)
+        (Type.string_of_type to_type)
   | `NotAnExpression id ->
       Printf.sprintf "%s: NotAnExpression id=%s" loc id
   | `NoSuchMember (typ, id) ->

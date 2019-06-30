@@ -40,6 +40,7 @@ and raw_expression =
   | Access of expression * string
   | Index of expression * expression list
   | Call of expression * expression list
+  | Cast of Type.t * expression
   | NamedArg of string * expression
   | BundledArg of expression list
   | BinExpr of expression * binop * expression
@@ -52,7 +53,7 @@ and raw_expression =
 
 (* Statements *)
 
-type var_declaration = {var_ids: string list; var_values: expression list}
+type binding = {bind_ids: string list; bind_values: expression list}
 [@@deriving to_yojson]
 
 and assignment =
@@ -76,7 +77,8 @@ and for_range_stmt =
 and stmt = raw_stmt Located.t [@@deriving to_yojson]
 
 and raw_stmt =
-  | Var of var_declaration
+  | Var of binding
+  | Val of binding
   | Assignment of assignment
   | If of if_stmt
   | ForIter of for_iter_stmt
@@ -170,6 +172,20 @@ let string_of_binop = function
   | Mod ->
       "%"
 
+let string_of_assignop = function
+  | Assign ->
+      "="
+  | AssignPlus ->
+      "+="
+  | AssignMinus ->
+      "-="
+  | AssignMult ->
+      "*="
+  | AssignDiv ->
+      "/="
+  | AssignMod ->
+      "%="
+
 let rec string_of_expression Located.{value= e; _} =
   match e with
   | Access (lhs, member) ->
@@ -180,6 +196,9 @@ let rec string_of_expression Located.{value= e; _} =
   | Call (lhs, args) ->
       Printf.sprintf "%s(%s)" (string_of_expression lhs)
         (String.concat ", " (List.map string_of_expression args))
+  | Cast (t, expr) ->
+      Printf.sprintf "cast<%s>(%s)" (Type.string_of_type t)
+        (string_of_expression expr)
   | NamedArg (id, expr) ->
       Printf.sprintf "%s = %s" id (string_of_expression expr)
   | BundledArg exprs ->
