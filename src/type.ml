@@ -29,8 +29,7 @@ and const =
 [@@deriving to_yojson]
 
 let rec string_of_type = function
-  | TypeRef name ->
-      name
+  | TypeRef name -> name
   | Record fields ->
       let field_strs =
         List.map
@@ -42,14 +41,10 @@ let rec string_of_type = function
       let dim_strs =
         List.map
           (function
-            | OfBool b ->
-                string_of_bool b
-            | OfInt i ->
-                string_of_int i
-            | OfFloat f ->
-                string_of_float f
-            | OfName name ->
-                name )
+            | OfBool b -> string_of_bool b
+            | OfInt i -> string_of_int i
+            | OfFloat f -> string_of_float f
+            | OfName name -> name)
           dims
       in
       Printf.sprintf "[%s]%s" (String.concat "; " dim_strs) (string_of_type t)
@@ -63,29 +58,17 @@ let rec string_of_type = function
       Printf.sprintf "fun (%s) -> (%s)"
         (String.concat ", " arg_strs)
         (String.concat ", " ret_strs)
-  | RenderTarget RGB ->
-      "rt_rgb"
-  | RenderTarget RGBA ->
-      "rt_rgba"
-  | RenderTarget DS ->
-      "rt_ds"
-  | Primitive Bool ->
-      "bool"
-  | Primitive Int ->
-      "int"
-  | Primitive UInt ->
-      "uint"
-  | Primitive Float ->
-      "float"
-  | Primitive Double ->
-      "double"
-  | Primitive Unit ->
-      "unit"
-  | Primitive Atom ->
-      "atom"
-  | Primitive AtomList ->
-      "atomlist"
-  | Primitive AtomSet ->
-      "atomset"
+  | RenderTarget RGB -> "rt_rgb"
+  | RenderTarget RGBA -> "rt_rgba"
+  | RenderTarget DS -> "rt_ds"
+  | Primitive Bool -> "bool"
+  | Primitive Int -> "int"
+  | Primitive UInt -> "uint"
+  | Primitive Float -> "float"
+  | Primitive Double -> "double"
+  | Primitive Unit -> "unit"
+  | Primitive Atom -> "atom"
+  | Primitive AtomList -> "atomlist"
+  | Primitive AtomSet -> "atomset"
 
 let is_ref = function TypeRef _ -> true | _ -> false

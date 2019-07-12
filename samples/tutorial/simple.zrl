@@ -1,6 +1,29 @@
 module simple
 
+type AnotherStruct {
+  x: bool
+}
+
 pipeline Pipeline(): fvec4 {
+
+  def f1(x: int) : (int, int) { return 1, 2 }
+
+  def f2() : fvec4 {
+    val x = 1
+    val y, z = f1(x)
+    val a, b, c = false, fvec2(1.0, 1.0), 3.4
+    return fvec4(1.0, 1.0, 1.0, 1.0)
+  }
+
+  def f3() : AnotherStruct {
+    return AnotherStruct(false)
+  }
+
+  def f4(a: [64]fvec4) {
+    for i = 0 to 63 {
+      a[i].x = cast<float>(i)
+    }
+  }
 
   def vertex(pos: fvec3): fvec3 {
     builtin.position = fvec4(pos.x, pos.y, pos.z, 1.0)
@@ -12,13 +35,13 @@ pipeline Pipeline(): fvec4 {
   }
 }
 
-renderer Simple(tmp: rt_rgba) {
+renderer Simple() {
 
   def main(geometry: atomlist, col: float) {
     builtin.screen = fvec4(col, 1.0 - col, 0.0, 1.0)
-    # for g in geometry {
-    #   builtin.screen += Pipeline(pos = g)
-    # }  
+    for g in geometry {
+      builtin.screen += Pipeline(pos = g)
+    }  
   }
 }
 

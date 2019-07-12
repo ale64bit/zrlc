@@ -1,0 +1,11 @@
+module test
+
+type T {
+  x: int
+}
+
+pipeline P() {
+  def f() {
+    var x = 1+T
+  }
+}

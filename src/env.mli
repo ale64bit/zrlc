@@ -4,9 +4,9 @@ type const_value = Bool of bool | Int of int | Float of float
 type summary =
   | Global
   | Module of string
-  | Pipeline of Type.t
-  | Renderer of Type.t
-  | Function of Type.t
+  | Pipeline of string * Type.t
+  | Renderer of string * Type.t
+  | Function of string * Type.t
   | Block of (Located.lexing_position * Located.lexing_position)
 [@@deriving to_yojson]
 

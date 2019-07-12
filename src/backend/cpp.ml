@@ -1,53 +1,54 @@
 module Function = struct
-  type t =
-    { name: string
-    ; parent_class: string
-    ; return_type: string
-    ; parameters: (string * string) list
-    ; template_parameters: string list
-    ; member_initializers: (string * string) list
-    ; body: string list }
+  type t = {
+    name : string;
+    parent_class : string;
+    return_type : string;
+    parameters : (string * string) list;
+    template_parameters : string list;
+    member_initializers : (string * string) list;
+    body : string list;
+  }
 
   let empty name =
-    { name
-    ; parent_class= ""
-    ; return_type= ""
-    ; parameters= []
-    ; template_parameters= []
-    ; member_initializers= []
-    ; body= [] }
+    {
+      name;
+      parent_class = "";
+      return_type = "";
+      parameters = [];
+      template_parameters = [];
+      member_initializers = [];
+      body = [];
+    }
 
   let is_template f =
     match f.template_parameters with [] -> false | _ -> true
 
-  let set_return_type return_type f = {f with return_type}
+  let set_return_type return_type f = { f with return_type }
 
-  let set_parent_class parent_class f = {f with parent_class}
+  let set_parent_class parent_class f = { f with parent_class }
 
-  let add_param p f = {f with parameters= p :: f.parameters}
+  let add_param p f = { f with parameters = p :: f.parameters }
 
   let add_template_param p f =
-    {f with template_parameters= p :: f.template_parameters}
+    { f with template_parameters = p :: f.template_parameters }
 
   let add_member_initializer mi f =
-    {f with member_initializers= mi :: f.member_initializers}
+    { f with member_initializers = mi :: f.member_initializers }
 
-  let append_code_section s f = {f with body= s :: f.body}
+  let append_code_section s f = { f with body = s :: f.body }
 
   let append_code_sections ss f =
     List.fold_left (fun f s -> append_code_section s f) f ss
 
-  let prepend_code_section s f = {f with body= f.body @ [s]}
+  let prepend_code_section s f = { f with body = f.body @ [ s ] }
 
   let prepend_code_sections ss f =
     List.fold_left (fun f s -> prepend_code_section s f) f ss
 
   let string_of_template_params f =
     match f.template_parameters with
-    | [] ->
-        ""
-    | tp ->
-        Printf.sprintf "template<%s> " (String.concat ", " (List.rev tp))
+    | [] -> ""
+    | tp -> Printf.sprintf "template<%s> " (String.concat ", " (List.rev tp))
 
   let string_of_signature f =
     let tmpl_params = string_of_template_params f in
@@ -65,8 +66,7 @@ module Function = struct
     let qual = if f.parent_class <> "" then f.parent_class ^ "::" else "" in
     let member_init =
       match f.member_initializers with
-      | [] ->
-          ""
+      | [] -> ""
       | mi ->
           Printf.sprintf ": %s "
             (String.concat ", "
@@ -84,46 +84,53 @@ module Function = struct
 end
 
 module Class = struct
-  type t =
-    { name: string
-    ; path: string list
-    ; includes: string list
-    ; public_functions: Function.t list
-    ; private_functions: Function.t list
-    ; private_members: (string * string) list
-    ; static_sections: string list }
+  type t = {
+    name : string;
+    package : string list;
+    includes : string list;
+    public_functions : Function.t list;
+    private_functions : Function.t list;
+    private_members : (string * string) list;
+    static_sections : string list;
+  }
 
-  let empty name path =
-    { name
-    ; path
-    ; includes= []
-    ; public_functions= []
-    ; private_functions= []
-    ; private_members= []
-    ; static_sections= [] }
+  let empty name =
+    {
+      name;
+      package = [];
+      includes = [];
+      public_functions = [];
+      private_functions = [];
+      private_members = [];
+      static_sections = [];
+    }
 
   let name c = c.name
 
-  let add_include inc c = {c with includes= inc :: c.includes}
+  let set_package p c = { c with package = p }
+
+  let add_include inc c = { c with includes = inc :: c.includes }
 
   let add_public_function f (c : t) =
     let f =
       Function.(if is_template f then f else set_parent_class c.name f)
     in
-    {c with public_functions= f :: c.public_functions}
+    { c with public_functions = f :: c.public_functions }
 
   let add_private_function f (c : t) =
     let f =
       Function.(if is_template f then f else set_parent_class c.name f)
     in
-    {c with private_functions= f :: c.private_functions}
+    { c with private_functions = f :: c.private_functions }
 
-  let add_private_member m c = {c with private_members= m :: c.private_members}
+  let add_private_member m c =
+    { c with private_members = m :: c.private_members }
 
-  let add_static_section s c = {c with static_sections= s :: c.static_sections}
+  let add_static_section s c =
+    { c with static_sections = s :: c.static_sections }
 
   let header_guard c =
-    let path = String.concat "_" (List.map String.uppercase_ascii c.path) in
+    let path = String.concat "_" (List.map String.uppercase_ascii c.package) in
     Printf.sprintf "%s%s_H_"
       (if String.length path > 0 then path ^ "_" else "")
       (String.uppercase_ascii c.name)
@@ -180,7 +187,7 @@ private:
 
   let string_of_source c =
     let include_path =
-      match c.path with [] -> "" | p -> String.concat "/" p ^ "/"
+      match c.package with [] -> "" | p -> String.concat "/" p ^ "/"
     in
     let non_templates =
       List.filter
@@ -196,45 +203,110 @@ private:
 %s|} include_path c.name implementations
 end
 
+module Header = struct
+  type t = {
+    name : string;
+    package : string list;
+    includes : string list;
+    sections : string list;
+  }
+
+  let empty name = { name; package = []; includes = []; sections = [] }
+
+  let name h = h.name
+
+  let set_package p h = { h with package = p }
+
+  let add_include inc h = { h with includes = inc :: h.includes }
+
+  let add_section s h = { h with sections = s :: h.sections }
+
+  let string_of_header h =
+    let includes =
+      String.concat "\n"
+        (List.map (fun i -> "#include " ^ i) (List.rev h.includes))
+    in
+    let sections = String.concat "\n" (List.rev h.sections) in
+    Printf.sprintf {|#pragma once
+%s
+%s
+|} includes sections
+end
+
 module Library = struct
-  type t =
-    {name: string; package: string; classes: Class.t list; deps: string list}
+  type t = {
+    name : string;
+    package : string list;
+    classes : Class.t list;
+    headers : Header.t list;
+    copts : string;
+    defines : string;
+    deps : string list;
+  }
 
-  let empty name package = {name; package; classes= []; deps= []}
+  let empty name package =
+    {
+      name;
+      package;
+      classes = [];
+      headers = [];
+      copts = "[]";
+      defines = "[]";
+      deps = [];
+    }
 
-  let add_class c l = {l with classes= c :: l.classes}
+  let classes l = l.classes
 
-  let add_dep dep l = {l with deps= dep :: l.deps}
+  let headers l = l.headers
+
+  let set_copts copts l = { l with copts }
+
+  let set_defines defines l = { l with defines }
+
+  let add_class c l =
+    { l with classes = Class.set_package l.package c :: l.classes }
+
+  let add_header h l =
+    { l with headers = Header.set_package l.package h :: l.headers }
+
+  let add_dep dep l = { l with deps = dep :: l.deps }
 
   let string_of_library l =
     let quote_and_comma s = "\"" ^ s ^ "\"," in
     let srcs =
-      String.concat "\n    "
+      String.concat "\n        "
         List.(
           map (fun c -> quote_and_comma (Class.name c ^ ".cc")) (rev l.classes))
     in
     let hdrs =
-      String.concat "\n    "
+      String.concat "\n        "
         List.(
           map (fun c -> quote_and_comma (Class.name c ^ ".h")) (rev l.classes))
     in
+    let single_hdrs =
+      String.concat "\n        "
+        List.(
+          map (fun h -> quote_and_comma (Header.name h ^ ".h")) (rev l.headers))
+    in
     let deps =
-      String.concat "\n    " List.(map quote_and_comma (rev l.deps))
+      String.concat "\n        " List.(map quote_and_comma (rev l.deps))
     in
     Printf.sprintf
       {|cc_library(
-  name = "%s",
-  srcs = [
-    %s
-  ],
-  hdrs = [
-    %s
-  ],
-  copts = COPTS,
-  defines = DEFINES,
-  deps = [
-    %s
-  ],
+    name = "%s",
+    srcs = [
+        %s
+    ],
+    hdrs = [
+        %s
+    ],
+    copts = %s,
+    defines = %s,
+    deps = [
+        %s
+    ],
 )|}
-      l.name srcs hdrs deps
+      l.name srcs
+      (hdrs ^ "\n" ^ single_hdrs)
+      l.copts l.defines deps
 end

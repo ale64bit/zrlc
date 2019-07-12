@@ -1,17 +1,19 @@
 open OUnit2
 open Backend.Cpp
 
+let identity x = x
+
 let function_signature_test f want _ =
-  assert_equal ~printer:(fun x -> x) want (Function.string_of_signature f)
+  assert_equal ~printer:identity want (Function.string_of_signature f)
 
 let function_implementation_test f want _ =
-  assert_equal ~printer:(fun x -> x) want (Function.string_of_implementation f)
+  assert_equal ~printer:identity want (Function.string_of_implementation f)
 
 let class_header_test c want _ =
-  assert_equal ~printer:(fun x -> x) want (Class.string_of_header c)
+  assert_equal ~printer:identity want (Class.string_of_header c)
 
 let class_source_test c want _ =
-  assert_equal ~printer:(fun x -> x) want (Class.string_of_source c)
+  assert_equal ~printer:identity want (Class.string_of_source c)
 
 (* Tests *)
 
@@ -77,7 +79,7 @@ let test_template_signature =
   "test_template_signature" >:: function_signature_test f want
 
 let test_empty_class_header =
-  let c = Class.(empty "C" []) in
+  let c = Class.(empty "C") in
   let want =
     {|#ifndef C_H_
 #define C_H_
@@ -97,7 +99,7 @@ private:
   "test_empty_class_header" >:: class_header_test c want
 
 let test_empty_class_source =
-  let c = Class.(empty "C" []) in
+  let c = Class.(empty "C") in
   let want = {|#include "C.h"
 |} in
   "test_empty_class_source" >:: class_source_test c want
@@ -124,7 +126,8 @@ let test_class_header =
   in
   let c =
     Class.(
-      empty "C" ["foo"; "bar"]
+      empty "C"
+      |> set_package [ "foo"; "bar" ]
       |> add_include "<string>" |> add_include "<vector>"
       |> add_private_member ("std::string", "name_")
       |> add_private_member ("std::vector<int>", "stuff_")
@@ -160,13 +163,14 @@ private:
 
 let tests =
   "cpp_suite"
-  >::: [ test_empty_function_signature
-       ; test_empty_function_implementation
-       ; test_ctor_signature
-       ; test_ctor_implementation
-       ; test_template_signature
-       ; test_empty_class_header
-       ; test_empty_class_source
-       ; test_class_header ]
+  >::: [ test_empty_function_signature;
+         test_empty_function_implementation;
+         test_ctor_signature;
+         test_ctor_implementation;
+         test_template_signature;
+         test_empty_class_header;
+         test_empty_class_source;
+         test_class_header
+       ]
 
 let _ = run_test_tt_main tests

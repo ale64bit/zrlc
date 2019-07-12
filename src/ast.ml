@@ -53,25 +53,36 @@ and raw_expression =
 
 (* Statements *)
 
-type binding = {bind_ids: string list; bind_values: expression list}
+type binding = { bind_ids : string list; bind_values : expression list }
 [@@deriving to_yojson]
 
-and assignment =
-  {asg_op: assignop; asg_lvalues: expression list; asg_rvalues: expression list}
+and assignment = {
+  asg_op : assignop;
+  asg_lvalues : expression list;
+  asg_rvalues : expression list;
+}
 [@@deriving to_yojson]
 
-and if_stmt = {if_cond: expression; if_true: stmt list; if_false: stmt list}
+and if_stmt = {
+  if_cond : expression;
+  if_true : stmt list;
+  if_false : stmt list;
+}
 [@@deriving to_yojson]
 
-and for_iter_stmt =
-  {foriter_id: string; foriter_it: expression; foriter_body: stmt list}
+and for_iter_stmt = {
+  foriter_id : string;
+  foriter_it : expression;
+  foriter_body : stmt list;
+}
 [@@deriving to_yojson]
 
-and for_range_stmt =
-  { forrange_id: string
-  ; forrange_from: expression
-  ; forrange_to: expression
-  ; forrange_body: stmt list }
+and for_range_stmt = {
+  forrange_id : string;
+  forrange_from : expression;
+  forrange_to : expression;
+  forrange_body : stmt list;
+}
 [@@deriving to_yojson]
 
 and stmt = raw_stmt Located.t [@@deriving to_yojson]
@@ -87,25 +98,34 @@ and raw_stmt =
   | Discard
 [@@deriving to_yojson]
 
-type const_declaration = {cd_name: string; cd_value: expression}
+type const_declaration = { cd_name : string; cd_value : expression }
 [@@deriving to_yojson]
 
-type type_declaration = {td_name: string; td_type: Type.t}
+type type_declaration = { td_name : string; td_type : Type.t }
 [@@deriving to_yojson]
 
-type raw_function_declaration =
-  {fd_name: string; fd_type: Type.t; fd_body: stmt list}
+type raw_function_declaration = {
+  fd_name : string;
+  fd_type : Type.t;
+  fd_body : stmt list;
+}
 [@@deriving to_yojson]
 
 type function_declaration = raw_function_declaration Located.t
 [@@deriving to_yojson]
 
-type pipeline_declaration =
-  {pd_name: string; pd_type: Type.t; pd_functions: function_declaration list}
+type pipeline_declaration = {
+  pd_name : string;
+  pd_type : Type.t;
+  pd_functions : function_declaration list;
+}
 [@@deriving to_yojson]
 
-type renderer_declaration =
-  {rd_name: string; rd_type: Type.t; rd_functions: function_declaration list}
+type renderer_declaration = {
+  rd_name : string;
+  rd_type : Type.t;
+  rd_functions : function_declaration list;
+}
 [@@deriving to_yojson]
 
 type raw_toplevel_elem =
@@ -117,76 +137,47 @@ type raw_toplevel_elem =
 
 type toplevel_elem = raw_toplevel_elem Located.t [@@deriving to_yojson]
 
-type root = {module_name: string; elements: toplevel_elem list}
+type root = { module_name : string; elements : toplevel_elem list }
 [@@deriving to_yojson]
 
 let string_of_ast root = Yojson.Safe.pretty_to_string (root_to_yojson root)
 
 let string_of_unop = function
-  | UPlus ->
-      "+"
-  | UMinus ->
-      "-"
-  | LogicalNot ->
-      "!"
-  | BitwiseComplement ->
-      "~"
+  | UPlus -> "+"
+  | UMinus -> "-"
+  | LogicalNot -> "!"
+  | BitwiseComplement -> "~"
 
 let string_of_binop = function
-  | LogicalOr ->
-      "||"
-  | LogicalXor ->
-      "^^"
-  | LogicalAnd ->
-      "&&"
-  | BitwiseOr ->
-      "|"
-  | BitwiseXor ->
-      "^"
-  | BitwiseAnd ->
-      "&"
-  | Equal ->
-      "=="
-  | NotEqual ->
-      "!="
-  | LessThan ->
-      "<"
-  | GreaterThan ->
-      ">"
-  | LessOrEqual ->
-      "<="
-  | GreaterOrEqual ->
-      ">="
-  | ShiftLeft ->
-      "<<"
-  | ShiftRight ->
-      ">>"
-  | Plus ->
-      "+"
-  | Minus ->
-      "-"
-  | Mult ->
-      "*"
-  | Div ->
-      "/"
-  | Mod ->
-      "%"
+  | LogicalOr -> "||"
+  | LogicalXor -> "^^"
+  | LogicalAnd -> "&&"
+  | BitwiseOr -> "|"
+  | BitwiseXor -> "^"
+  | BitwiseAnd -> "&"
+  | Equal -> "=="
+  | NotEqual -> "!="
+  | LessThan -> "<"
+  | GreaterThan -> ">"
+  | LessOrEqual -> "<="
+  | GreaterOrEqual -> ">="
+  | ShiftLeft -> "<<"
+  | ShiftRight -> ">>"
+  | Plus -> "+"
+  | Minus -> "-"
+  | Mult -> "*"
+  | Div -> "/"
+  | Mod -> "%"
 
 let string_of_assignop = function
-  | Assign ->
-      "="
-  | AssignPlus ->
-      "+="
-  | AssignMinus ->
-      "-="
-  | AssignMult ->
-      "*="
-  | AssignDiv ->
-      "/="
-  | AssignMod ->
-      "%="
+  | Assign -> "="
+  | AssignPlus -> "+="
+  | AssignMinus -> "-="
+  | AssignMult -> "*="
+  | AssignDiv -> "/="
+  | AssignMod -> "%="
 
-let rec string_of_expression Located.{value= e; _} =
+let rec string_of_expression Located.{ value = e; _ } =
   match e with
   | Access (lhs, member) ->
       Printf.sprintf "%s.%s" (string_of_expression lhs) member
@@ -209,11 +200,7 @@ let rec string_of_expression Located.{value= e; _} =
         (string_of_expression rhs)
   | UnExpr (op, rhs) ->
       Printf.sprintf "%s %s" (string_of_unop op) (string_of_expression rhs)
-  | BoolLiteral b ->
-      string_of_bool b
-  | IntLiteral i ->
-      string_of_int i
-  | FloatLiteral f ->
-      string_of_float f
-  | Id id ->
-      id
+  | BoolLiteral b -> string_of_bool b
+  | IntLiteral i -> string_of_int i
+  | FloatLiteral f -> string_of_float f
+  | Id id -> id

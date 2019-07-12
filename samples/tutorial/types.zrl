@@ -1,0 +1,15 @@
+module types
+
+type A { i: int }
+
+type B { a: [8]fvec3 }
+
+type C {
+  x, y: fvec3
+}
+
+# TODO: this shouldn't be valid?
+type D {
+  i: int
+  s: sampler2D
+}

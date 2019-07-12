@@ -1,10 +1,8 @@
-let string_of_error Located.{loc; value} =
+let string_of_error Located.{ loc; value } =
   let pos = Located.string_of_start_position loc in
   match value with
-  | `LexerError msg ->
-      Printf.sprintf "%s: error: %s" pos msg
-  | `ParserError msg ->
-      Printf.sprintf "%s: error: %s" pos msg
+  | `LexerError msg -> Printf.sprintf "%s: error: %s" pos msg
+  | `ParserError msg -> Printf.sprintf "%s: error: %s" pos msg
   | `Redefinition (id, prev) ->
       Printf.sprintf
         "%s: error: redefinition of '%s'\n\tpreviously defined at %s" pos id
@@ -13,8 +11,7 @@ let string_of_error Located.{loc; value} =
       Printf.sprintf "%s: error: duplicate member '%s'" pos id
   | `DuplicateParameter id ->
       Printf.sprintf "%s: error: redefinition of parameter '%s'" pos id
-  | `Unimplemented msg ->
-      Printf.sprintf "%s: error: %s" pos msg
+  | `Unimplemented msg -> Printf.sprintf "%s: error: %s" pos msg
   | `UnknownTypeName name ->
       Printf.sprintf "%s: error: unknown type name '%s'" pos name
   | `NonIntegerArraySize ->
@@ -147,27 +144,25 @@ let string_of_error Located.{loc; value} =
       Printf.sprintf "%s: error: non-integer range expression %s (type %s)" pos
         (Ast.string_of_expression expr)
         (Type.string_of_type t)
+  | `MissingReturn fname ->
+      Printf.sprintf "%s: error: missing return in non-void function %s" pos
+        fname
 
-let debug_string_of_error Located.{loc; value} =
+let debug_string_of_error Located.{ loc; value } =
   let loc = Located.string_of_location loc in
   match value with
-  | `LexerError msg ->
-      Printf.sprintf "%s: LexerError msg=%s" loc msg
-  | `ParserError msg ->
-      Printf.sprintf "%s: ParserError msg=%s" loc msg
+  | `LexerError msg -> Printf.sprintf "%s: LexerError msg=%s" loc msg
+  | `ParserError msg -> Printf.sprintf "%s: ParserError msg=%s" loc msg
   | `Redefinition (id, prev) ->
       Printf.sprintf "%s: Redefinition id=%s prev=%s" loc id
         (Located.string_of_start_position prev)
-  | `DuplicateMember id ->
-      Printf.sprintf "%s: DuplicateMember id=%s" loc id
+  | `DuplicateMember id -> Printf.sprintf "%s: DuplicateMember id=%s" loc id
   | `DuplicateParameter id ->
       Printf.sprintf "%s: DuplicateParameter id=%s" loc id
-  | `Unimplemented msg ->
-      Printf.sprintf "%s: Unimplemented msg=%s" loc msg
+  | `Unimplemented msg -> Printf.sprintf "%s: Unimplemented msg=%s" loc msg
   | `UnknownTypeName name ->
       Printf.sprintf "%s: UnknownTypeName name=%s" loc name
-  | `NonIntegerArraySize ->
-      Printf.sprintf "%s: NonIntegerArraySize" loc
+  | `NonIntegerArraySize -> Printf.sprintf "%s: NonIntegerArraySize" loc
   | `NonIntegerArrayIndex expr ->
       Printf.sprintf "%s: NonIntegerArrayIndex expr=%s" loc
         (Ast.string_of_expression expr)
@@ -196,8 +191,7 @@ let debug_string_of_error Located.{loc; value} =
       Printf.sprintf "%s: InvalidCast (from_type=%s, to_type=%s)" loc
         (Type.string_of_type from_type)
         (Type.string_of_type to_type)
-  | `NotAnExpression id ->
-      Printf.sprintf "%s: NotAnExpression id=%s" loc id
+  | `NotAnExpression id -> Printf.sprintf "%s: NotAnExpression id=%s" loc id
   | `NoSuchMember (typ, id) ->
       Printf.sprintf "%s: NoSuchMember (typ=%s, id=%s)" loc
         (Type.string_of_type typ) id
@@ -276,3 +270,5 @@ let debug_string_of_error Located.{loc; value} =
       Printf.sprintf "%s: NonIntegerRangeExpression (expr=%s, t=%s)" loc
         (Ast.string_of_expression expr)
         (Type.string_of_type t)
+  | `MissingReturn fname ->
+      Printf.sprintf "%s: MissingReturn fname=%s" loc fname

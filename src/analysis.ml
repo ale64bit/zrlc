@@ -38,148 +38,155 @@ type error =
   | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t
   | `NonBoolIfCondition of Ast.expression * Type.t
   | `CannotRangeOver of Ast.expression * Type.t
-  | `NonIntegerRangeExpression of Ast.expression * Type.t ]
+  | `NonIntegerRangeExpression of Ast.expression * Type.t
+  | `MissingReturn of string ]
 
 (* Helpers *)
 
-let error loc e = Error L.{loc; value= e}
+let error loc e = Error L.{ loc; value = e }
 
 let check_unique idfn errfn elems =
   List.fold_left
     (fun acc elem ->
       acc >>= fun seen ->
       let id = idfn elem in
-      if SS.mem id seen then Error (errfn elem) else Ok (SS.add id seen) )
+      if SS.mem id seen then Error (errfn elem) else Ok (SS.add id seen))
     (Ok SS.empty) elems
 
 (* Checks whether an array dimension is valid and returns the 
  * unfolded value in case it is a reference to a constant. *)
 let check_array_dim env loc dim =
   match dim with
-  | Type.OfInt _ ->
-      Ok dim
+  | Type.OfInt _ -> Ok dim
   | Type.OfName name -> (
-    match Env.find_constant ~local:false name env with
-    | Some {value= Env.Int i; _} ->
-        Ok (Type.OfInt i)
-    | Some _ ->
-        Error L.{loc; value= `NonIntegerArraySize}
-    | None ->
-        Error L.{loc; value= `UndeclaredIdentifier name} )
+      match Env.find_constant ~local:false name env with
+      | Some { value = Env.Int i; _ } -> Ok (Type.OfInt i)
+      | Some _ -> Error L.{ loc; value = `NonIntegerArraySize }
+      | None -> Error L.{ loc; value = `UndeclaredIdentifier name } )
   | Type.OfFloat _ | Type.OfBool _ ->
-      Error L.{loc; value= `NonIntegerArraySize}
+      Error L.{ loc; value = `NonIntegerArraySize }
 
 (* Checks the given type against the environment *)
 let rec check_type env ctx_loc t =
   match t with
   | Type.TypeRef name ->
       if Env.type_exists name env then Ok t
-      else Error L.{loc= ctx_loc; value= `UnknownTypeName name}
+      else Error L.{ loc = ctx_loc; value = `UnknownTypeName name }
   | Type.Record fields ->
       let idfn (name, _) = name in
       let errfn field =
-        L.{loc= ctx_loc; value= `DuplicateMember (idfn field)}
+        L.{ loc = ctx_loc; value = `DuplicateMember (idfn field) }
       in
       check_unique idfn errfn fields >>= fun _ ->
       List.fold_results
         (fun acc (name, t) ->
           acc >>= fun new_fields ->
-          check_type env ctx_loc t >>= fun nt -> Ok ((name, nt) :: new_fields)
-          )
+          check_type env ctx_loc t >>= fun nt ->
+          Ok ((name, nt) :: new_fields))
         (Ok []) fields
-      >>= fun new_fields -> Ok (Type.Record new_fields)
+      >>= fun new_fields ->
+      Ok (Type.Record new_fields)
   | Type.Array (t, dims) ->
       check_type env ctx_loc t >>= fun nt ->
       List.fold_results
         (fun acc dim ->
           acc >>= fun new_dims ->
-          check_array_dim env ctx_loc dim >>= fun ndim -> Ok (ndim :: new_dims)
-          )
+          check_array_dim env ctx_loc dim >>= fun ndim ->
+          Ok (ndim :: new_dims))
         (Ok []) dims
-      >>= fun new_dims -> Ok (Type.Array (nt, new_dims))
+      >>= fun new_dims ->
+      Ok (Type.Array (nt, new_dims))
   | Type.Function (args, rets) ->
       let idfn (name, _) = name in
       let errfn arg =
-        L.{loc= ctx_loc; value= `DuplicateParameter (idfn arg)}
+        L.{ loc = ctx_loc; value = `DuplicateParameter (idfn arg) }
       in
       check_unique idfn errfn args >>= fun _ ->
       List.fold_results
         (fun acc (name, t) ->
           acc >>= fun new_args ->
-          check_type env ctx_loc t >>= fun nt -> Ok ((name, nt) :: new_args) )
+          check_type env ctx_loc t >>= fun nt ->
+          Ok ((name, nt) :: new_args))
         (Ok []) args
       >>= fun new_args ->
       List.fold_results
         (fun acc t ->
           acc >>= fun new_rets ->
-          check_type env ctx_loc t >>= fun nt -> Ok (nt :: new_rets) )
+          check_type env ctx_loc t >>= fun nt ->
+          Ok (nt :: new_rets))
         (Ok []) rets
-      >>= fun new_rets -> Ok (Type.Function (new_args, new_rets))
-  | Type.RenderTarget _ ->
-      Ok t
-  | Type.Primitive _ ->
-      Ok t
+      >>= fun new_rets ->
+      Ok (Type.Function (new_args, new_rets))
+  | Type.RenderTarget _ -> Ok t
+  | Type.Primitive _ -> Ok t
 
 let build_function_environment env loc name typ =
   match typ with
   | Type.Function (args, _) ->
       let env =
         List.fold_left
-          (fun env (name, t) -> Env.add_var name L.{loc; value= t} env)
+          (fun env (name, t) -> Env.add_var name L.{ loc; value = t } env)
           env args
       in
       Env.add_builtin name env
-  | _ ->
-      failwith "cannot build function environment from non-function type"
+  | _ -> failwith "cannot build function environment from non-function type"
 
 let check_const_declaration env loc cd =
-  let Ast.{cd_name; cd_value} = cd in
+  let Ast.{ cd_name; cd_value } = cd in
   match Env.find_name ~local:true cd_name env with
-  | Some L.{loc= prev_loc; _} ->
+  | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (cd_name, prev_loc))
   | None -> (
-    match cd_value.value with
-    | Ast.BoolLiteral b ->
-        let value = L.{loc; value= Env.Bool b} in
-        let env = Env.add_constant cd_name value env in
-        let t = Type.TypeRef "bool" in
-        let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, L.{loc; value= cd})
-    | Ast.IntLiteral i ->
-        let value = L.{loc; value= Env.Int i} in
-        let env = Env.add_constant cd_name value env in
-        let t = Type.TypeRef "int" in
-        let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, L.{loc; value= cd})
-    | Ast.FloatLiteral f ->
-        let value = L.{loc; value= Env.Float f} in
-        let env = Env.add_constant cd_name value env in
-        let t = Type.TypeRef "float" in
-        let cd = TypedAst.ConstDecl {cd_name; cd_value= ([t], cd_value)} in
-        Ok (env, L.{loc; value= cd})
-    | _ ->
-        error loc
-          (`Unimplemented
-            "constant initializer must be a boolean, integer or float literal")
-    )
+      match cd_value.value with
+      | Ast.BoolLiteral b ->
+          let value = L.{ loc; value = Env.Bool b } in
+          let env = Env.add_constant cd_name value env in
+          let t = Type.TypeRef "bool" in
+          let cd =
+            TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
+          in
+          Ok (env, L.{ loc; value = cd })
+      | Ast.IntLiteral i ->
+          let value = L.{ loc; value = Env.Int i } in
+          let env = Env.add_constant cd_name value env in
+          let t = Type.TypeRef "int" in
+          let cd =
+            TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
+          in
+          Ok (env, L.{ loc; value = cd })
+      | Ast.FloatLiteral f ->
+          let value = L.{ loc; value = Env.Float f } in
+          let env = Env.add_constant cd_name value env in
+          let t = Type.TypeRef "float" in
+          let cd =
+            TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
+          in
+          Ok (env, L.{ loc; value = cd })
+      | _ ->
+          error loc
+            (`Unimplemented
+              "constant initializer must be a boolean, integer or float literal")
+      )
 
 let check_type_declaration env loc td =
-  let Ast.{td_name; td_type} = td in
+  let Ast.{ td_name; td_type } = td in
   match Env.find_name ~local:true td_name env with
-  | Some L.{loc= prev_loc; _} ->
+  | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (td_name, prev_loc))
   | None -> (
-    match td_type with
-    | Record _ ->
-        check_type env loc td_type >>= fun clean_type ->
-        let env = Env.add_type td_name {loc; value= clean_type} env in
-        let typed_td = TypedAst.TypeDecl {td_name; td_type= clean_type} in
-        Ok (env, L.{loc; value= typed_td})
-    | _ ->
-        failwith
-          (Printf.sprintf
-             "type %s: type declarations should always be Type.Record" td_name)
-    )
+      match td_type with
+      | Record fields ->
+          check_type env loc td_type >>= fun clean_type ->
+          let ctor = Type.Function (fields, [ Type.TypeRef td_name ]) in
+          let env = Env.add_type td_name { loc; value = clean_type } env in
+          let env = Env.add_function td_name { loc; value = ctor } env in
+          let typed_td = TypedAst.TypeDecl { td_name; td_type = clean_type } in
+          Ok (env, L.{ loc; value = typed_td })
+      | _ ->
+          failwith
+            (Printf.sprintf
+               "type %s: type declarations should always be Type.Record"
+               td_name) )
 
 (* Expressions *)
 
@@ -211,40 +218,41 @@ let check_unop loc op typ =
   | BitwiseComplement, TypeRef "int"
   | BitwiseComplement, TypeRef "uint" ->
       Ok typ
-  | _, _ ->
-      error loc (`InvalidUnaryOperation (op, typ))
+  | _, _ -> error loc (`InvalidUnaryOperation (op, typ))
 
 let check_binop expr ltyp op rtyp =
   let open Ast in
   let open Type in
+  (*
   let () = assert (is_ref ltyp) in
   let () = assert (is_ref rtyp) in
-  let L.{loc; _} = expr in
+*)
+  let L.{ loc; _ } = expr in
   match (ltyp, op, rtyp) with
   (* Logical *)
   | TypeRef "bool", (LogicalOr | LogicalXor | LogicalAnd), TypeRef "bool" ->
       Ok (TypeRef "bool")
   (* Bitwise *)
-  | ( TypeRef "int"
-    , (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight)
-    , TypeRef "int" ) ->
+  | ( TypeRef "int",
+      (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight),
+      TypeRef "int" ) ->
       Ok (TypeRef "int")
   (* Comparison *)
-  | ( TypeRef "bool"
-    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , TypeRef "bool" )
-  | ( TypeRef "int"
-    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , TypeRef "int" )
-  | ( TypeRef "uint"
-    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , TypeRef "uint" )
-  | ( TypeRef "float"
-    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , TypeRef "float" )
-  | ( TypeRef "double"
-    , (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual)
-    , TypeRef "double" ) ->
+  | ( TypeRef "bool",
+      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
+      TypeRef "bool" )
+  | ( TypeRef "int",
+      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
+      TypeRef "int" )
+  | ( TypeRef "uint",
+      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
+      TypeRef "uint" )
+  | ( TypeRef "float",
+      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
+      TypeRef "float" )
+  | ( TypeRef "double",
+      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
+      TypeRef "double" ) ->
       Ok (TypeRef "bool")
   (* Arithmetic *)
   | TypeRef "int", (Plus | Minus | Mult | Div | Mod), TypeRef "int" ->
@@ -255,153 +263,80 @@ let check_binop expr ltyp op rtyp =
       Ok (TypeRef "float")
   | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "double" ->
       Ok (TypeRef "double")
-  | TypeRef "ivec2", (Plus | Minus), TypeRef "ivec2" ->
-      Ok (TypeRef "ivec2")
-  | TypeRef "ivec3", (Plus | Minus), TypeRef "ivec3" ->
-      Ok (TypeRef "ivec3")
-  | TypeRef "ivec4", (Plus | Minus), TypeRef "ivec4" ->
-      Ok (TypeRef "ivec4")
-  | TypeRef "uvec2", (Plus | Minus), TypeRef "uvec2" ->
-      Ok (TypeRef "uvec2")
-  | TypeRef "uvec3", (Plus | Minus), TypeRef "uvec3" ->
-      Ok (TypeRef "uvec3")
-  | TypeRef "uvec4", (Plus | Minus), TypeRef "uvec4" ->
-      Ok (TypeRef "uvec4")
-  | TypeRef "fvec2", (Plus | Minus), TypeRef "fvec2" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fvec3", (Plus | Minus), TypeRef "fvec3" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fvec4", (Plus | Minus), TypeRef "fvec4" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "dvec2", (Plus | Minus), TypeRef "dvec2" ->
-      Ok (TypeRef "dvec2")
-  | TypeRef "dvec3", (Plus | Minus), TypeRef "dvec3" ->
-      Ok (TypeRef "dvec3")
-  | TypeRef "dvec4", (Plus | Minus), TypeRef "dvec4" ->
-      Ok (TypeRef "dvec4")
+  | TypeRef "ivec2", (Plus | Minus), TypeRef "ivec2" -> Ok (TypeRef "ivec2")
+  | TypeRef "ivec3", (Plus | Minus), TypeRef "ivec3" -> Ok (TypeRef "ivec3")
+  | TypeRef "ivec4", (Plus | Minus), TypeRef "ivec4" -> Ok (TypeRef "ivec4")
+  | TypeRef "uvec2", (Plus | Minus), TypeRef "uvec2" -> Ok (TypeRef "uvec2")
+  | TypeRef "uvec3", (Plus | Minus), TypeRef "uvec3" -> Ok (TypeRef "uvec3")
+  | TypeRef "uvec4", (Plus | Minus), TypeRef "uvec4" -> Ok (TypeRef "uvec4")
+  | TypeRef "fvec2", (Plus | Minus), TypeRef "fvec2" -> Ok (TypeRef "fvec2")
+  | TypeRef "fvec3", (Plus | Minus), TypeRef "fvec3" -> Ok (TypeRef "fvec3")
+  | TypeRef "fvec4", (Plus | Minus), TypeRef "fvec4" -> Ok (TypeRef "fvec4")
+  | TypeRef "dvec2", (Plus | Minus), TypeRef "dvec2" -> Ok (TypeRef "dvec2")
+  | TypeRef "dvec3", (Plus | Minus), TypeRef "dvec3" -> Ok (TypeRef "dvec3")
+  | TypeRef "dvec4", (Plus | Minus), TypeRef "dvec4" -> Ok (TypeRef "dvec4")
   (* Matrix Multiplication *)
-  | TypeRef "fmat2x2", Mult, TypeRef "fvec2" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fmat2", Mult, TypeRef "fvec2" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x3" ->
-      Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x3" ->
-      Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x4" ->
-      Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x4" ->
-      Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x3", Mult, TypeRef "fvec3" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x3" ->
-      Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3" ->
-      Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x4" ->
-      Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x4", Mult, TypeRef "fvec4" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x2" ->
-      Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x3" ->
-      Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x4" ->
-      Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4" ->
-      Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat3x2", Mult, TypeRef "fvec2" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x2" ->
-      Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2" ->
-      Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x4" ->
-      Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x3", Mult, TypeRef "fvec3" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fmat3", Mult, TypeRef "fvec3" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x2" ->
-      Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x2" ->
-      Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x4" ->
-      Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x4" ->
-      Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x4", Mult, TypeRef "fvec4" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x2" ->
-      Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x3" ->
-      Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x4" ->
-      Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4" ->
-      Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat4x2", Mult, TypeRef "fvec2" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x2" ->
-      Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2" ->
-      Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x3" ->
-      Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x4" ->
-      Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x3", Mult, TypeRef "fvec3" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x2" ->
-      Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x3" ->
-      Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3" ->
-      Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x4" ->
-      Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fvec4" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "fmat4", Mult, TypeRef "fvec4" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x2" ->
-      Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x2" ->
-      Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x3" ->
-      Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x3" ->
-      Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x4" ->
-      Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4" ->
-      Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x4" ->
-      Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4" ->
-      Ok (TypeRef "fmat4x4")
-  | _ ->
-      error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
+  | TypeRef "fmat2x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
+  | TypeRef "fmat2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec2")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat2x2")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat2x3")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat2x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat2x4")
+  | TypeRef "fmat3x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec3")
+  | TypeRef "fmat3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec3")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat3x2")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat3x3")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat3x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat3x4")
+  | TypeRef "fmat4x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec4")
+  | TypeRef "fmat4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat4x2")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat4x3")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat4x4")
+  | TypeRef "fmat4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat4x4")
+  | _ -> error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
 
 let check_assignop ltyp op rtyp err =
   let open Ast in
@@ -409,19 +344,16 @@ let check_assignop ltyp op rtyp err =
   let () = assert (is_ref ltyp) in
   let () = assert (is_ref rtyp) in
   match (ltyp, op, rtyp) with
-  | TypeRef "bool", Assign, TypeRef "bool" ->
+  | TypeRef "bool", Assign, TypeRef "bool" -> Ok ()
+  | TypeRef "int", _, TypeRef "int" -> Ok ()
+  | TypeRef "uint", _, TypeRef "uint" -> Ok ()
+  | ( TypeRef "float",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      TypeRef "float" ) ->
       Ok ()
-  | TypeRef "int", _, TypeRef "int" ->
-      Ok ()
-  | TypeRef "uint", _, TypeRef "uint" ->
-      Ok ()
-  | ( TypeRef "float"
-    , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
-    , TypeRef "float" ) ->
-      Ok ()
-  | ( TypeRef "double"
-    , (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv)
-    , TypeRef "double" ) ->
+  | ( TypeRef "double",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      TypeRef "double" ) ->
       Ok ()
   | TypeRef "ivec2", (Assign | AssignPlus | AssignMinus), TypeRef "ivec2" ->
       Ok ()
@@ -447,17 +379,17 @@ let check_assignop ltyp op rtyp err =
       Ok ()
   | TypeRef "dvec4", (Assign | AssignPlus | AssignMinus), TypeRef "dvec4" ->
       Ok ()
-  | ( TypeRef "fmat2"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "fmat2" ) ->
+  | ( TypeRef "fmat2",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "fmat2" ) ->
       Ok ()
-  | ( TypeRef "fmat3"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "fmat3" ) ->
+  | ( TypeRef "fmat3",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "fmat3" ) ->
       Ok ()
-  | ( TypeRef "fmat4"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "fmat4" ) ->
+  | ( TypeRef "fmat4",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "fmat4" ) ->
       Ok ()
   | TypeRef "fmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x2"
     ->
@@ -486,17 +418,17 @@ let check_assignop ltyp op rtyp err =
   | TypeRef "fmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x4"
     ->
       Ok ()
-  | ( TypeRef "dmat2"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "dmat2" ) ->
+  | ( TypeRef "dmat2",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "dmat2" ) ->
       Ok ()
-  | ( TypeRef "dmat3"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "dmat3" ) ->
+  | ( TypeRef "dmat3",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "dmat3" ) ->
       Ok ()
-  | ( TypeRef "dmat4"
-    , (Assign | AssignPlus | AssignMinus | AssignMult)
-    , TypeRef "dmat4" ) ->
+  | ( TypeRef "dmat4",
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      TypeRef "dmat4" ) ->
       Ok ()
   | TypeRef "dmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x2"
     ->
@@ -525,41 +457,35 @@ let check_assignop ltyp op rtyp err =
   | TypeRef "dmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x4"
     ->
       Ok ()
-  | ( (TypeRef "rt_rgb" | RenderTarget RGB)
-    , (Assign | AssignPlus)
-    , TypeRef "fvec3" ) ->
+  | ( (TypeRef "rt_rgb" | RenderTarget RGB),
+      (Assign | AssignPlus),
+      TypeRef "fvec3" ) ->
       Ok ()
-  | ( (TypeRef "rt_rgba" | RenderTarget RGBA)
-    , (Assign | AssignPlus)
-    , TypeRef "fvec4" ) ->
+  | ( (TypeRef "rt_rgba" | RenderTarget RGBA),
+      (Assign | AssignPlus),
+      TypeRef "fvec4" ) ->
       Ok ()
   | (TypeRef "rt_ds" | RenderTarget DS), (Assign | AssignPlus), TypeRef "float"
     ->
       Ok ()
-  | _ ->
-      err
+  | _ -> err
 
 let rec check_access env loc expr id =
   let check_field_exists id fields err =
     match List.find_opt (fun (name, _) -> name = id) fields with
-    | Some (_, t) ->
-        Ok t
-    | None ->
-        err
+    | Some (_, t) -> Ok t
+    | None -> err
   in
   check_single_value_expr env expr >>= fun typ ->
   let err = error loc (`NoSuchMember (typ, id)) in
   match typ with
-  | Type.Record fields ->
-      check_field_exists id fields err
+  | Type.Record fields -> check_field_exists id fields err
   | Type.TypeRef name -> (
-    match Env.find_type ~local:false name env with
-    | Some L.{value= Type.Record fields; _} ->
-        check_field_exists id fields err
-    | _ ->
-        failwith "name cannot exist in environment without a known type" )
-  | _ ->
-      err
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = Type.Record fields; _ } ->
+          check_field_exists id fields err
+      | _ -> failwith "name cannot exist in environment without a known type" )
+  | _ -> err
 
 and check_index env loc expr index_exprs =
   let open Type in
@@ -568,7 +494,7 @@ and check_index env loc expr index_exprs =
     (fun acc index_expr ->
       acc >>= fun index_types ->
       check_single_value_expr env index_expr >>= fun index_type ->
-      Ok (index_type :: index_types) )
+      Ok (index_type :: index_types))
     (Ok []) index_exprs
   >>= fun index_types ->
   match expr_type with
@@ -582,16 +508,16 @@ and check_index env loc expr index_exprs =
           (fun acc (index_expr, index_type) ->
             acc >>= fun _ ->
             match index_type with
-            | TypeRef "int" | TypeRef "uint" ->
-                acc
+            | TypeRef "int" | TypeRef "uint" -> acc
             | _ ->
-                let L.{loc; _} = index_expr in
-                error loc (`NonIntegerArrayIndex index_expr) )
+                let L.{ loc; _ } = index_expr in
+                error loc (`NonIntegerArrayIndex index_expr))
           (Ok ())
           (List.combine index_exprs index_types)
-        >>= fun () -> Ok t
+        >>= fun () ->
+        Ok t
   | _ ->
-      let expr = L.{loc; value= Ast.Index (expr, index_exprs)} in
+      let expr = L.{ loc; value = Ast.Index (expr, index_exprs) } in
       error loc (`InvalidIndexOperation (expr, expr_type))
 
 and check_call env loc f_expr arg_exprs =
@@ -600,25 +526,21 @@ and check_call env loc f_expr arg_exprs =
     (fun acc arg_expr ->
       acc >>= fun arg_types ->
       check_single_value_expr env arg_expr >>= fun arg_type ->
-      Ok (arg_type :: arg_types) )
+      Ok (arg_type :: arg_types))
     (Ok []) arg_exprs
   >>= fun arg_types ->
   match f_type with
   | Type.Function (args, ret) -> (
       let is_anonymous, name =
         match f_expr with
-        | L.{value= Ast.Id name; _} ->
-            (false, name)
-        | _ ->
-            (true, "")
+        | L.{ value = Ast.Id name; _ } -> (false, name)
+        | _ -> (true, "")
       in
       let is_pipeline = (not is_anonymous) && Env.pipeline_exists name env in
       let is_function = is_anonymous || Env.function_exists name env in
       let is_named = function
-        | L.{value= Ast.NamedArg _; _} ->
-            true
-        | _ ->
-            false
+        | L.{ value = Ast.NamedArg _; _ } -> true
+        | _ -> false
       in
       let all_named = List.for_all is_named arg_exprs in
       let all_unnamed = List.for_all (fun x -> not (is_named x)) arg_exprs in
@@ -645,7 +567,8 @@ and check_call env loc f_expr arg_exprs =
         | true, false, true, false ->
             check_call_named_args ~strict:true loc name args arg_exprs
               arg_types
-            >>= fun () -> Ok ret
+            >>= fun () ->
+            Ok ret
         (* Case #3: pipeline + unnamed arguments *)
         | false, true, false, true ->
             (* TODO: create custom error *)
@@ -655,37 +578,31 @@ and check_call env loc f_expr arg_exprs =
         (* Case #4: pipeline + named arguments *)
         | false, true, true, _ ->
             check_pipeline_call env loc name args arg_exprs arg_types
-            >>= fun () -> Ok ret
+            >>= fun () ->
+            Ok ret
         | _, _, false, false ->
-            let expr = L.{loc; value= Ast.Call (f_expr, arg_exprs)} in
+            let expr = L.{ loc; value = Ast.Call (f_expr, arg_exprs) } in
             error loc (`MixedArgumentStyle expr)
-        | _ ->
-            error loc (`Unimplemented "not implemented: weird call") )
-  | _ ->
-      error loc (`InvalidCallOperation (f_expr, f_type))
+        | _ -> error loc (`Unimplemented "not implemented: weird call") )
+  | _ -> error loc (`InvalidCallOperation (f_expr, f_type))
 
 and valid_arg arg_type want_type =
   let open Type in
   match (arg_type, want_type) with
-  | TypeRef "atom", _ ->
-      true
-  | TypeRef "rt_ds", TypeRef "depthBuffer" ->
-      true
-  | TypeRef "rt_rgb", TypeRef "texture2D" ->
-      true
-  | TypeRef "rt_rgba", TypeRef "texture2D" ->
-      true
-  | _ ->
-      arg_type = want_type
+  | TypeRef "atom", _ -> true
+  | TypeRef "rt_ds", TypeRef "depthBuffer" -> true
+  | TypeRef "rt_rgb", TypeRef "texture2D" -> true
+  | TypeRef "rt_rgba", TypeRef "texture2D" -> true
+  | _ -> arg_type = want_type
 
 and check_call_args f_name arg_exprs arg_types want_types =
   List.fold_left
     (fun acc ((arg_expr, arg_type), want_type) ->
       acc >>= fun _ ->
       if not (valid_arg arg_type want_type) then
-        let L.{loc; _} = arg_expr in
+        let L.{ loc; _ } = arg_expr in
         error loc (`InvalidArgument (arg_expr, arg_type, want_type, f_name))
-      else Ok () )
+      else Ok ())
     (Ok ())
     (List.combine (List.combine arg_exprs arg_types) want_types)
 
@@ -695,14 +612,13 @@ and check_call_named_args ~strict loc f_name params arg_exprs arg_types =
   (* Check that there are no unexpected named arguments if strict mode is enabled *)
   ( if strict then
     List.fold_left
-      (fun acc L.{value; _} ->
+      (fun acc L.{ value; _ } ->
         acc >>= fun _ ->
         match value with
         | Ast.NamedArg (arg_name, _) ->
             if List.exists (fun (name, _) -> name = arg_name) params then Ok ()
             else error loc (`UnexpectedNamedArgument (arg_name, f_name))
-        | _ ->
-            failwith "expected all arguments to be named" )
+        | _ -> failwith "expected all arguments to be named")
       (Ok ()) arg_exprs
   else Ok () )
   >>= fun () ->
@@ -714,17 +630,14 @@ and check_call_named_args ~strict loc f_name params arg_exprs arg_types =
         List.find_opt
           (fun (arg_expr, _) ->
             match arg_expr with
-            | L.{value= Ast.NamedArg (arg_name, _); _} ->
-                name = arg_name
-            | _ ->
-                failwith "expected all arguments to be named" )
+            | L.{ value = Ast.NamedArg (arg_name, _); _ } -> name = arg_name
+            | _ -> failwith "expected all arguments to be named")
           args
       in
       match arg with
       | Some (arg_expr, arg_type) ->
-          Ok (new_arg_exprs @ [arg_expr], new_arg_types @ [arg_type])
-      | None ->
-          error loc (`MissingNamedArgument (name, f_name)) )
+          Ok (new_arg_exprs @ [ arg_expr ], new_arg_types @ [ arg_type ])
+      | None -> error loc (`MissingNamedArgument (name, f_name)))
     (Ok ([], []))
     params
   >>= fun (new_arg_exprs, new_arg_types) ->
@@ -742,19 +655,16 @@ and check_bundled_arg env exprs =
     (fun acc expr ->
       acc >>= fun expr_types ->
       check_single_value_expr env expr >>= fun expr_type ->
-      Ok (expr_type :: expr_types) )
+      Ok (expr_type :: expr_types))
     (Ok []) exprs
 
 and check_id env loc id =
   match Env.find_rvalue id env with
-  | Some L.{value= typ; _} ->
-      Ok [typ]
+  | Some L.{ value = typ; _ } -> Ok [ typ ]
   | None -> (
-    match Env.find_name ~local:false id env with
-    | Some _ ->
-        error loc (`NotAnExpression id)
-    | None ->
-        error loc (`UndeclaredIdentifier id) )
+      match Env.find_name ~local:false id env with
+      | Some _ -> error loc (`NotAnExpression id)
+      | None -> error loc (`UndeclaredIdentifier id) )
 
 and check_cast env loc t expr =
   let open Type in
@@ -844,50 +754,46 @@ and check_cast env loc t expr =
   | TypeRef "bvec4", TypeRef "fvec4"
   | TypeRef "bvec4", TypeRef "dvec4" ->
       Ok to_type
-  | _ ->
-      error loc (`InvalidCast (from_type, to_type))
+  | _ -> error loc (`InvalidCast (from_type, to_type))
 
 and check_single_value_expr env expr =
-  let L.{loc; _} = expr in
+  let L.{ loc; _ } = expr in
   check_expr env expr >>= function
-  | [] ->
-      error loc (`UnitUsedAsValue expr)
-  | [typ] ->
-      Ok typ
-  | _ ->
-      error loc (`MultipleValueInSingleValueContext expr)
+  | [] -> error loc (`UnitUsedAsValue expr)
+  | [ typ ] -> Ok typ
+  | _ -> error loc (`MultipleValueInSingleValueContext expr)
 
 and check_expr env expr =
   let open Ast in
-  let L.{loc; value} = expr in
+  let L.{ loc; value } = expr in
   match value with
   | Access (expr, id) ->
-      check_access env loc expr id >>= fun typ -> Ok [typ]
+      check_access env loc expr id >>= fun typ ->
+      Ok [ typ ]
   | Index (expr, index_exprs) ->
-      check_index env loc expr index_exprs >>= fun typ -> Ok [typ]
-  | Call (f_expr, arg_exprs) ->
-      check_call env loc f_expr arg_exprs
+      check_index env loc expr index_exprs >>= fun typ ->
+      Ok [ typ ]
+  | Call (f_expr, arg_exprs) -> check_call env loc f_expr arg_exprs
   | Cast (t, expr) ->
-      check_cast env loc t expr >>= fun typ -> Ok [typ]
+      check_cast env loc t expr >>= fun typ ->
+      Ok [ typ ]
   | NamedArg (_, expr) ->
-      check_single_value_expr env expr >>= fun typ -> Ok [typ]
-  | BundledArg exprs ->
-      check_bundled_arg env exprs
+      check_single_value_expr env expr >>= fun typ ->
+      Ok [ typ ]
+  | BundledArg exprs -> check_bundled_arg env exprs
   | BinExpr (lhs, op, rhs) ->
       check_single_value_expr env lhs >>= fun ltyp ->
       check_single_value_expr env rhs >>= fun rtyp ->
-      check_binop expr ltyp op rtyp >>= fun typ -> Ok [typ]
+      check_binop expr ltyp op rtyp >>= fun typ ->
+      Ok [ typ ]
   | UnExpr (op, rhs) ->
       check_single_value_expr env rhs >>= fun typ ->
-      check_unop loc op typ >>= fun typ -> Ok [typ]
-  | BoolLiteral _ ->
-      Ok [Type.TypeRef "bool"]
-  | IntLiteral _ ->
-      Ok [Type.TypeRef "int"]
-  | FloatLiteral _ ->
-      Ok [Type.TypeRef "float"]
-  | Id id ->
-      check_id env loc id
+      check_unop loc op typ >>= fun typ ->
+      Ok [ typ ]
+  | BoolLiteral _ -> Ok [ Type.TypeRef "bool" ]
+  | IntLiteral _ -> Ok [ Type.TypeRef "int" ]
+  | FloatLiteral _ -> Ok [ Type.TypeRef "float" ]
+  | Id id -> check_id env loc id
 
 and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
   let num_have = List.length have_exprs in
@@ -903,7 +809,7 @@ and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
         (fun acc (have_type, want_type) ->
           acc >>= fun _ ->
           if have_type = want_type then Ok ()
-          else errfn have_expr have_type want_type )
+          else errfn have_expr have_type want_type)
         (Ok ())
         (List.combine have_types want_types)
   else if num_have <> num_want then
@@ -911,7 +817,7 @@ and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
       (fun acc have_expr ->
         acc >>= fun have_types ->
         check_single_value_expr env have_expr >>= fun have_type ->
-        Ok (have_type :: have_types) )
+        Ok (have_type :: have_types))
       (Ok []) have_exprs
     >>= fun have_types ->
     if num_have < num_want then less_errfn have_types
@@ -922,7 +828,7 @@ and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
         acc >>= fun _ ->
         check_single_value_expr env have_expr >>= fun have_type ->
         if have_type = want_type then Ok ()
-        else errfn have_expr have_type want_type )
+        else errfn have_expr have_type want_type)
       (Ok ())
       (List.combine have_exprs want_types)
 
@@ -934,16 +840,16 @@ let rec check_binding env loc ids exprs env_add_fn typed_ctor =
       (fun acc (id, t) ->
         acc >>= fun env ->
         match Env.find_name ~local:true id env with
-        | Some L.{loc= prev_loc; _} ->
+        | Some L.{ loc = prev_loc; _ } ->
             error loc (`Redefinition (id, prev_loc))
         | None ->
             (* Ignore variables named _ *)
             if id = "_" then Ok env
-            else Ok (env_add_fn id L.{loc; value= t} env) )
+            else Ok (env_add_fn id L.{ loc; value = t } env))
       (Ok env) (List.combine ids types)
   in
   match exprs with
-  | [expr] when List.length ids > 1 ->
+  | [ expr ] when List.length ids > 1 ->
       check_expr env expr >>= fun expr_types ->
       let num_vars, num_values = List.(length ids, length expr_types) in
       if num_values = 0 then error loc (`UnitUsedAsValue expr)
@@ -953,15 +859,15 @@ let rec check_binding env loc ids exprs env_add_fn typed_ctor =
         add_bindings_to_env expr_types >>= fun new_env ->
         let typed_stmt =
           typed_ctor
-            TypedAst.{bind_ids= ids; bind_values= [(expr_types, expr)]}
+            TypedAst.{ bind_ids = ids; bind_values = [ (expr_types, expr) ] }
         in
-        Ok (new_env, [(env, L.{loc; value= typed_stmt})])
+        Ok (new_env, [ (env, L.{ loc; value = typed_stmt }) ])
   | _ ->
       List.fold_results
         (fun acc expr ->
           acc >>= fun expr_types ->
           check_single_value_expr env expr >>= fun expr_type ->
-          Ok (expr_type :: expr_types) )
+          Ok (expr_type :: expr_types))
         (Ok []) exprs
       >>= fun expr_types ->
       let num_vars, num_values = List.(length ids, length exprs) in
@@ -972,38 +878,36 @@ let rec check_binding env loc ids exprs env_add_fn typed_ctor =
         let typed_stmt =
           typed_ctor
             TypedAst.
-              { bind_ids= ids
-              ; bind_values=
+              {
+                bind_ids = ids;
+                bind_values =
                   List.map
-                    (fun (t, e) -> ([t], e))
-                    (List.combine expr_types exprs) }
+                    (fun (t, e) -> ([ t ], e))
+                    (List.combine expr_types exprs);
+              }
         in
-        Ok (new_env, [(env, L.{loc; value= typed_stmt})])
+        Ok (new_env, [ (env, L.{ loc; value = typed_stmt }) ])
 
 and check_lvalue env expr =
   let open Ast in
-  let L.{loc; _} = expr in
+  let L.{ loc; _ } = expr in
   match expr.value with
   | Id id -> (
-    match Env.find_lvalue id env with
-    | Some L.{value= expr_type; _} ->
-        Ok expr_type
-    | None ->
-        if Env.name_exists id env then error loc (`NotAnLValue expr)
-        else error loc (`UndeclaredIdentifier id) )
-  | Access (lhs, id) ->
-      check_access env loc lhs id
-  | Index (lhs, rhs) ->
-      check_index env loc lhs rhs
-  | _ ->
-      error loc (`NotAnLValue expr)
+      match Env.find_lvalue id env with
+      | Some L.{ value = expr_type; _ } -> Ok expr_type
+      | None ->
+          if Env.name_exists id env then error loc (`NotAnLValue expr)
+          else error loc (`UndeclaredIdentifier id) )
+  | Access (lhs, id) -> check_access env loc lhs id
+  | Index (lhs, rhs) -> check_index env loc lhs rhs
+  | _ -> error loc (`NotAnLValue expr)
 
 and check_lvalues env exprs =
   List.fold_results
     (fun acc expr ->
       acc >>= fun expr_types ->
-      check_lvalue env expr >>= fun expr_type -> Ok (expr_type :: expr_types)
-      )
+      check_lvalue env expr >>= fun expr_type ->
+      Ok (expr_type :: expr_types))
     (Ok []) exprs
 
 and check_single_assignment loc op lhs_types rhs_exprs rhs_types =
@@ -1014,7 +918,7 @@ and check_single_assignment loc op lhs_types rhs_exprs rhs_types =
       let err =
         error loc (`InvalidSingleAssignment (rhs_expr, rhs_type, lhs_type))
       in
-      check_assignop lhs_type op rhs_type err )
+      check_assignop lhs_type op rhs_type err)
     (Ok ())
     List.(combine lhs_types (combine rhs_exprs rhs_types))
 
@@ -1026,7 +930,7 @@ and check_multiple_assignment loc op lhs_exprs lhs_types rhs_types =
       let err =
         error loc (`InvalidMultipleAssignment (rhs_type, lhs_expr, lhs_type))
       in
-      check_assignop lhs_type op rhs_type err )
+      check_assignop lhs_type op rhs_type err)
     (Ok ())
     List.(combine (combine lhs_exprs lhs_types) rhs_types)
 
@@ -1034,7 +938,7 @@ and check_assignment env loc op lhs rhs =
   let () = assert (List.length lhs > 0) in
   let () = assert (List.length rhs > 0) in
   match rhs with
-  | [expr] when List.length lhs > 1 ->
+  | [ expr ] when List.length lhs > 1 ->
       check_lvalues env lhs >>= fun lhs_types ->
       check_expr env expr >>= fun rhs_types ->
       let num_lhs, num_rhs = List.(length lhs_types, length rhs_types) in
@@ -1045,18 +949,20 @@ and check_assignment env loc op lhs rhs =
         check_multiple_assignment loc op lhs lhs_types rhs_types >>= fun () ->
         let typed_stmt =
           TypedAst.Assignment
-            { asg_op= op
-            ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
-            ; asg_rvalues= [(rhs_types, expr)] }
+            {
+              asg_op = op;
+              asg_lvalues = List.(combine (map (fun t -> [ t ]) lhs_types) lhs);
+              asg_rvalues = [ (rhs_types, expr) ];
+            }
         in
-        Ok (env, [(env, L.{loc; value= typed_stmt})])
+        Ok (env, [ (env, L.{ loc; value = typed_stmt }) ])
   | _ ->
       check_lvalues env lhs >>= fun lhs_types ->
       List.fold_results
         (fun acc expr ->
           acc >>= fun expr_types ->
           check_single_value_expr env expr >>= fun expr_type ->
-          Ok (expr_type :: expr_types) )
+          Ok (expr_type :: expr_types))
         (Ok []) rhs
       >>= fun rhs_types ->
       let num_lhs, num_rhs = List.(length lhs_types, length rhs_types) in
@@ -1066,11 +972,13 @@ and check_assignment env loc op lhs rhs =
         check_single_assignment loc op lhs_types rhs rhs_types >>= fun () ->
         let typed_stmt =
           TypedAst.Assignment
-            { asg_op= op
-            ; asg_lvalues= List.(combine (map (fun t -> [t]) lhs_types) lhs)
-            ; asg_rvalues= List.(combine (map (fun t -> [t]) rhs_types) rhs) }
+            {
+              asg_op = op;
+              asg_lvalues = List.(combine (map (fun t -> [ t ]) lhs_types) lhs);
+              asg_rvalues = List.(combine (map (fun t -> [ t ]) rhs_types) rhs);
+            }
         in
-        Ok (env, [(env, L.{loc; value= typed_stmt})])
+        Ok (env, [ (env, L.{ loc; value = typed_stmt }) ])
 
 and check_if env loc if_cond if_true if_false =
   check_single_value_expr env if_cond >>= function
@@ -1081,28 +989,26 @@ and check_if env loc if_cond if_true if_false =
       check_stmt_list false_env if_false >>= fun (_, typed_if_false) ->
       let typed_stmt =
         TypedAst.If
-          { if_cond= ([Type.TypeRef "bool"], if_cond)
-          ; if_true= typed_if_true
-          ; if_false= typed_if_false }
+          {
+            if_cond = ([ Type.TypeRef "bool" ], if_cond);
+            if_true = typed_if_true;
+            if_false = typed_if_false;
+          }
       in
-      Ok (env, [(env, L.{loc; value= typed_stmt})])
+      Ok (env, [ (env, L.{ loc; value = typed_stmt }) ])
   | _ as t ->
-      let L.{loc; _} = if_cond in
+      let L.{ loc; _ } = if_cond in
       error loc (`NonBoolIfCondition (if_cond, t))
 
 and check_iterable_type env expr =
   let open Type in
-  let L.{loc; _} = expr in
+  let L.{ loc; _ } = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
-  | Array (t, [_]) ->
-      Ok (expr_typ, t)
-  | TypeRef "atomset" ->
-      Ok (expr_typ, TypeRef "atom")
-  | TypeRef "atomlist" ->
-      Ok (expr_typ, TypeRef "atom")
-  | _ as t ->
-      error loc (`CannotRangeOver (expr, t))
+  | Array (t, [ _ ]) -> Ok (expr_typ, t)
+  | TypeRef "atomset" -> Ok (expr_typ, TypeRef "atom")
+  | TypeRef "atomlist" -> Ok (expr_typ, TypeRef "atom")
+  | _ as t -> error loc (`CannotRangeOver (expr, t))
 
 and check_foriter env loc it_var it_expr body =
   check_iterable_type env it_expr >>= fun (expr_typ, it_typ) ->
@@ -1110,26 +1016,26 @@ and check_foriter env loc it_var it_expr body =
     Env.(
       env
       |> enter_block_scope "foriter" loc
-      |> add_var it_var L.{loc; value= it_typ})
+      |> add_var it_var L.{ loc; value = it_typ })
   in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForIter
-      { foriter_id= it_var
-      ; foriter_it= ([expr_typ], it_expr)
-      ; foriter_body= typed_body }
+      {
+        foriter_id = it_var;
+        foriter_it = ([ expr_typ ], it_expr);
+        foriter_body = typed_body;
+      }
   in
-  Ok (env, [(stmt_env, L.{loc; value= typed_stmt})])
+  Ok (env, [ (stmt_env, L.{ loc; value = typed_stmt }) ])
 
 and check_range_expr env expr =
   let open Type in
-  let L.{loc; _} = expr in
+  let L.{ loc; _ } = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
-  | TypeRef "int" ->
-      Ok ()
-  | _ ->
-      error loc (`NonIntegerRangeExpression (expr, expr_typ))
+  | TypeRef "int" -> Ok ()
+  | _ -> error loc (`NonIntegerRangeExpression (expr, expr_typ))
 
 and check_forrange env loc it_var from_expr to_expr body =
   check_range_expr env from_expr >>= fun () ->
@@ -1139,21 +1045,23 @@ and check_forrange env loc it_var from_expr to_expr body =
     Env.(
       env
       |> enter_block_scope "forrange" loc
-      |> add_var it_var L.{loc; value= int_typ})
+      |> add_var it_var L.{ loc; value = int_typ })
   in
   check_stmt_list stmt_env body >>= fun (_, typed_body) ->
   let typed_stmt =
     TypedAst.ForRange
-      { forrange_id= it_var
-      ; forrange_from= ([int_typ], from_expr)
-      ; forrange_to= ([int_typ], to_expr)
-      ; forrange_body= typed_body }
+      {
+        forrange_id = it_var;
+        forrange_from = ([ int_typ ], from_expr);
+        forrange_to = ([ int_typ ], to_expr);
+        forrange_body = typed_body;
+      }
   in
-  Ok (env, [(stmt_env, L.{loc; value= typed_stmt})])
+  Ok (env, [ (stmt_env, L.{ loc; value = typed_stmt }) ])
 
 and check_return env loc exprs =
   match Env.scope_summary env with
-  | Env.Function (Type.Function (_, ret_types)) ->
+  | Env.Function (_, Type.Function (_, ret_types)) ->
       let less_errfn have_types =
         error loc (`NotEnoughReturnArguments (have_types, ret_types))
       in
@@ -1161,177 +1069,201 @@ and check_return env loc exprs =
         error loc (`TooManyReturnArguments (have_types, ret_types))
       in
       let errfn have_expr have_type want_type =
-        let L.{loc; _} = have_expr in
+        let L.{ loc; _ } = have_expr in
         error loc (`InvalidReturnArgument (have_expr, have_type, want_type))
       in
       check_expr_list env exprs ret_types less_errfn more_errfn errfn
       >>= fun () ->
       let stmt =
         TypedAst.Return
-          (List.map (fun (t, e) -> ([t], e)) (List.combine ret_types exprs))
+          (List.map (fun (t, e) -> ([ t ], e)) (List.combine ret_types exprs))
       in
-      Ok (env, [(env, L.{loc; value= stmt})])
-  | _ ->
-      failwith "return can only appear in Function scopes"
+      Ok (env, [ (env, L.{ loc; value = stmt }) ])
+  | _ -> failwith "return can only appear in Function scopes"
 
 and check_discard env loc =
   if Env.is_function_scope env then
-    Ok (env, [(env, L.{loc; value= TypedAst.Discard})])
+    Ok (env, [ (env, L.{ loc; value = TypedAst.Discard }) ])
   else error loc (`Unimplemented "discard can only appear in Function scopes")
 
 and check_stmt_list env stmts =
   List.fold_left
-    (fun acc L.{loc; value= stmt} ->
+    (fun acc L.{ loc; value = stmt } ->
       acc >>= fun (env, typed_stmts) ->
       check_stmt env loc stmt >>= fun (env, typed_stmt) ->
-      Ok (env, typed_stmts @ typed_stmt) )
+      Ok (env, typed_stmts @ typed_stmt))
     (Ok (env, []))
     stmts
 
 and check_stmt env loc =
   let open Ast in
   function
-  | Var {bind_ids; bind_values} ->
+  | Var { bind_ids; bind_values } ->
       check_binding env loc bind_ids bind_values Env.add_var (fun b ->
-          TypedAst.Var b )
-  | Val {bind_ids; bind_values} ->
+          TypedAst.Var b)
+  | Val { bind_ids; bind_values } ->
       check_binding env loc bind_ids bind_values Env.add_val (fun b ->
-          TypedAst.Val b )
-  | Assignment {asg_op; asg_lvalues; asg_rvalues} ->
+          TypedAst.Val b)
+  | Assignment { asg_op; asg_lvalues; asg_rvalues } ->
       check_assignment env loc asg_op asg_lvalues asg_rvalues
-  | If {if_cond; if_true; if_false} ->
+  | If { if_cond; if_true; if_false } ->
       check_if env loc if_cond if_true if_false
-  | ForIter {foriter_id; foriter_it; foriter_body} ->
+  | ForIter { foriter_id; foriter_it; foriter_body } ->
       check_foriter env loc foriter_id foriter_it foriter_body
-  | ForRange {forrange_id; forrange_from; forrange_to; forrange_body} ->
+  | ForRange { forrange_id; forrange_from; forrange_to; forrange_body } ->
       check_forrange env loc forrange_id forrange_from forrange_to
         forrange_body
-  | Return exprs ->
-      check_return env loc exprs
-  | Discard ->
-      check_discard env loc
+  | Return exprs -> check_return env loc exprs
+  | Discard -> check_discard env loc
 
 (* Top-Level Elements *)
 
+let check_missing_return loc fd =
+  let Ast.{ fd_name; fd_type; fd_body } = fd in
+  match fd_type with
+  | Type.Function (_, _ :: _) ->
+      if
+        not
+          (List.exists
+             (function L.{ value = Ast.Return _; _ } -> true | _ -> false)
+             fd_body)
+      then error loc (`MissingReturn fd_name)
+      else Ok ()
+  | _ -> Ok ()
+
 let check_function_declaration env loc fd =
-  let Ast.{fd_name; fd_type; fd_body} = fd in
+  let Ast.{ fd_name; fd_type; fd_body } = fd in
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
   let env = build_function_environment env loc fd_name clean_type in
   check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
-  Ok TypedAst.{fd_env= env; fd_name; fd_type= clean_type; fd_body= typed_stmts}
+  check_missing_return loc fd >>= fun () ->
+  Ok
+    TypedAst.
+      { fd_env = env; fd_name; fd_type = clean_type; fd_body = typed_stmts }
 
 let check_function_sig env loc fd =
-  let Ast.{fd_name; fd_type; _} = fd in
+  let Ast.{ fd_name; fd_type; _ } = fd in
   match Env.find_name ~local:true fd_name env with
-  | Some L.{loc= prev_loc; _} ->
+  | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (fd_name, prev_loc))
   | None ->
       check_type env loc fd_type >>= fun clean_type ->
-      Ok (Env.add_function fd_name {loc; value= clean_type} env)
+      Ok (Env.add_function fd_name { loc; value = clean_type } env)
 
 let check_function_group env functions =
   List.fold_left
-    (fun acc L.{loc; value} ->
-      acc >>= fun env -> check_function_sig env loc value )
+    (fun acc L.{ loc; value } ->
+      acc >>= fun env ->
+      check_function_sig env loc value)
     (Ok env) functions
   >>= fun env ->
   List.fold_results
-    (fun acc L.{loc; value} ->
+    (fun acc L.{ loc; value } ->
       acc >>= fun typed_functions ->
       check_function_declaration env loc value >>= fun typed_fd ->
-      Ok (typed_fd :: typed_functions) )
+      Ok (typed_fd :: typed_functions))
     (Ok []) functions
 
 let check_pipeline_declaration_sig env loc pd =
-  let Ast.{pd_name; pd_type; _} = pd in
+  let Ast.{ pd_name; pd_type; _ } = pd in
   match Env.find_name ~local:true pd_name env with
-  | Some L.{loc= prev_loc; _} ->
+  | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (pd_name, prev_loc))
   | None ->
       check_type env loc pd_type >>= fun clean_type ->
-      Ok (Env.add_pipeline pd_name {loc; value= clean_type} env)
+      Ok (Env.add_pipeline pd_name { loc; value = clean_type } env)
 
 let check_pipeline_declaration_body env loc pd =
-  let Ast.{pd_name; pd_type; pd_functions} = pd in
+  let Ast.{ pd_name; pd_type; pd_functions } = pd in
   check_type env loc pd_type >>= fun clean_type ->
   let env = Env.enter_pipeline_scope pd_name clean_type env in
   let env = build_function_environment env loc "" clean_type in
   check_function_group env pd_functions >>= fun typed_functions ->
   Ok
     L.
-      { loc
-      ; value=
+      {
+        loc;
+        value =
           TypedAst.PipelineDecl
-            { pd_env= env
-            ; pd_name
-            ; pd_type= clean_type
-            ; pd_functions= typed_functions } }
+            {
+              pd_env = env;
+              pd_name;
+              pd_type = clean_type;
+              pd_functions = typed_functions;
+            };
+      }
 
 let check_renderer_declaration_sig env loc rd =
-  let Ast.{rd_name; rd_type; _} = rd in
+  let Ast.{ rd_name; rd_type; _ } = rd in
   match Env.find_name ~local:true rd_name env with
-  | Some L.{loc= prev_loc; _} ->
+  | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (rd_name, prev_loc))
   | None ->
       check_type env loc rd_type >>= fun clean_type ->
-      Ok (Env.add_renderer rd_name {loc; value= clean_type} env)
+      Ok (Env.add_renderer rd_name { loc; value = clean_type } env)
 
 let check_renderer_declaration_body env loc rd =
-  let Ast.{rd_name; rd_type; rd_functions} = rd in
+  let Ast.{ rd_name; rd_type; rd_functions } = rd in
   check_type env loc rd_type >>= fun clean_type ->
   let env = Env.enter_renderer_scope rd_name clean_type env in
   let env = build_function_environment env loc "" clean_type in
   check_function_group env rd_functions >>= fun typed_functions ->
   Ok
     L.
-      { loc
-      ; value=
+      {
+        loc;
+        value =
           TypedAst.RendererDecl
-            { rd_env= env
-            ; rd_name
-            ; rd_type= clean_type
-            ; rd_functions= typed_functions } }
+            {
+              rd_env = env;
+              rd_name;
+              rd_type = clean_type;
+              rd_functions = typed_functions;
+            };
+      }
 
-let check Ast.{module_name; elements} =
+let check Ast.{ module_name; elements } =
   let env = Env.(global |> enter_module_scope module_name) in
   (* First check all signatures and populate the module scope *)
   List.fold_left
-    (fun acc L.{loc; value} ->
+    (fun acc L.{ loc; value } ->
       acc >>= fun (env, typed_root_elems) ->
       match value with
       | Ast.ConstDecl cd ->
           check_const_declaration env loc cd >>= fun (env, typed_cd) ->
-          Ok (env, typed_root_elems @ [typed_cd])
+          Ok (env, typed_root_elems @ [ typed_cd ])
       | Ast.TypeDecl td ->
           check_type_declaration env loc td >>= fun (env, typed_td) ->
-          Ok (env, typed_root_elems @ [typed_td])
+          Ok (env, typed_root_elems @ [ typed_td ])
       | Ast.PipelineDecl pd ->
           check_pipeline_declaration_sig env loc pd >>= fun env ->
           Ok (env, typed_root_elems)
       | Ast.RendererDecl rd ->
           check_renderer_declaration_sig env loc rd >>= fun env ->
-          Ok (env, typed_root_elems) )
+          Ok (env, typed_root_elems))
     (Ok (env, []))
     elements
   >>= fun (env, typed_root_elems) ->
   (* Then check the actual bodies of pipelines and renderers *)
   List.fold_left
-    (fun acc L.{loc; value} ->
+    (fun acc L.{ loc; value } ->
       acc >>= fun typed_root_elems ->
       match value with
-      | Ast.ConstDecl _ ->
-          acc
-      | Ast.TypeDecl _ ->
-          acc
+      | Ast.ConstDecl _ -> acc
+      | Ast.TypeDecl _ -> acc
       | Ast.PipelineDecl pd ->
           check_pipeline_declaration_body env loc pd >>= fun typed_pd ->
-          Ok (typed_root_elems @ [typed_pd])
+          Ok (typed_root_elems @ [ typed_pd ])
       | Ast.RendererDecl rd ->
           check_renderer_declaration_body env loc rd >>= fun typed_rd ->
-          Ok (typed_root_elems @ [typed_rd]) )
+          Ok (typed_root_elems @ [ typed_rd ]))
     (Ok typed_root_elems) elements
   >>= fun typed_root_elems ->
   Ok
     TypedAst.
-      {root_env= env; root_module= module_name; root_elems= typed_root_elems}
+      {
+        root_env = env;
+        root_module = module_name;
+        root_elems = typed_root_elems;
+      }

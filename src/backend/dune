@@ -1,4 +1,4 @@
 (library
   (name backend)
-  (libraries zrl mustache)
+  (libraries zrl)
 )

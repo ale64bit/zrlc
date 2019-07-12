@@ -33,6 +33,7 @@ type error =
   | `InvalidMultipleAssignment of Type.t * Ast.expression * Type.t
   | `NonBoolIfCondition of Ast.expression * Type.t
   | `CannotRangeOver of Ast.expression * Type.t
-  | `NonIntegerRangeExpression of Ast.expression * Type.t ]
+  | `NonIntegerRangeExpression of Ast.expression * Type.t
+  | `MissingReturn of string ]
 
-val check : Ast.root -> (TypedAst.root, [> error] Located.t) result
+val check : Ast.root -> (TypedAst.root, [> error ] Located.t) result

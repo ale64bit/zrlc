@@ -25,12 +25,12 @@ module Examples (T : Types) = struct
 
   let t3 = arr 4 (arr 8 (name "bool"))
 
-  let t4 = record [("x", name "int")]
+  let t4 = record [ ("x", name "int") ]
 
   (* Does not compile *)
   (* let t5 = arr 2 (record [("y", name "float")]) *)
 
-  let t6 = func [("a", name "float")] (arr 2 (name "int"))
+  let t6 = func [ ("a", name "float") ] (arr 2 (name "int"))
 
   (* Does not compile *)
   (* let t7 = func [("b", t6)] (name "void") *)
@@ -77,14 +77,15 @@ module ES = Examples (Sizeof)
 
 let () =
   (* Print *)
-  print_endline EP.t1 ;
-  print_endline EP.t2 ;
-  print_endline EP.t3 ;
-  print_endline EP.t4 ;
-  print_endline EP.t6 ;
+  print_endline EP.t1;
+  print_endline EP.t2;
+  print_endline EP.t3;
+  print_endline EP.t4;
+  print_endline EP.t6;
+
   (* Sizeof *)
-  print_endline (string_of_int ES.t1) ;
-  print_endline (string_of_int ES.t2) ;
-  print_endline (string_of_int ES.t3) ;
-  print_endline (string_of_int ES.t4) ;
+  print_endline (string_of_int ES.t1);
+  print_endline (string_of_int ES.t2);
+  print_endline (string_of_int ES.t3);
+  print_endline (string_of_int ES.t4);
   print_endline (string_of_int ES.t6)
