@@ -51,6 +51,8 @@ module Library : sig
 
   val empty : string -> t
 
+  val name : t -> string
+
   val shaders : t -> Shader.t list
 
   val add_shader : Shader.t -> t -> t

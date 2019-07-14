@@ -241,16 +241,20 @@ let generate_constructor_type base params ret =
           (Char.escaped params.[i], Type.TypeRef base)),
       [ Type.TypeRef ret ] )
 
-let generate_texture_type dim stype =
+let generate_texture_type dim =
+  let open Type in
+  let lptype = Printf.sprintf "ivec%d" dim in
+  let ret = [ TypeRef "fvec4" ] in
+  Record [ ("load", Function ([ ("p", TypeRef lptype) ], ret)) ]
+
+let generate_sampler_type dim =
   let open Type in
   let lptype = Printf.sprintf "ivec%d" dim in
   let sptype = Printf.sprintf "fvec%d" dim in
   let ret = [ TypeRef "fvec4" ] in
   Record
     [ ("load", Function ([ ("p", TypeRef lptype) ], ret));
-      ( "sample",
-        Function ([ ("p", TypeRef sptype); ("sampler", TypeRef stype) ], ret)
-      )
+      ("sample", Function ([ ("p", TypeRef sptype) ], ret))
     ]
 
 let generate_vector_type dim base name =
@@ -316,9 +320,8 @@ let global =
       ("dmat4x3", Array (TypeRef "double", [ OfInt 4; OfInt 3 ]));
       ("dmat4x4", Array (TypeRef "double", [ OfInt 4; OfInt 4 ]));
       (* Built-in opaque types *)
-      ("sampler", Record []);
-      ("sampler2D", Record []);
-      ("texture2D", generate_texture_type 2 "sampler2D");
+      ("sampler2D", generate_sampler_type 2);
+      ("texture2D", generate_texture_type 2);
       ( "depthBuffer",
         Record
           [ ("load", Function ([ ("p", TypeRef "ivec2") ], [ TypeRef "float" ]))
@@ -440,15 +443,21 @@ let add_builtin fname env =
          pipeline or renderer scopes"
 
 (* Printing *)
-let filter_global env =
+let rec filter_global env =
+  let open Monad.Option in
   SymbolTable.(
     let skip src k _ = not (mem k src) in
     {
       env with
+      parent =
+        ( env.parent >>= fun t ->
+          Some (filter_global t) );
       types = SymbolTable.(filter (skip global.types) env.types);
       constants = SymbolTable.(filter (skip global.constants) env.constants);
+      vals = SymbolTable.(filter (skip global.vals) env.vals);
       vars = SymbolTable.(filter (skip global.vars) env.vars);
       pipelines = SymbolTable.(filter (skip global.pipelines) env.pipelines);
+      renderers = SymbolTable.(filter (skip global.renderers) env.renderers);
       functions = SymbolTable.(filter (skip global.functions) env.functions);
     })
 

@@ -12,7 +12,7 @@ pipeline Pipeline(): fvec4 {
     val x = 1
     val y, z = f1(x)
     val a, b, c = false, fvec2(1.0, 1.0), 3.4
-    return fvec4(1.0, 1.0, 1.0, 1.0)
+    return fvec4(0.0, 0.0, 0.0, 1.0)
   }
 
   def f3() : AnotherStruct {

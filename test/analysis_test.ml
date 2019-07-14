@@ -182,7 +182,7 @@ let test_empty_pipeline =
     Env.(
       want_env
       |> enter_pipeline_scope "P" pipeline_type
-      |> add_var "x" { loc = stmt_loc; value = Type.TypeRef "int" })
+      |> add_val "x" { loc = stmt_loc; value = Type.TypeRef "int" })
   in
   let pd =
     L.

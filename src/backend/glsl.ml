@@ -136,6 +136,8 @@ module Library = struct
 
   let empty name = { name; shaders = [] }
 
+  let name l = l.name
+
   let shaders l = l.shaders
 
   let add_shader sh l = { l with shaders = sh :: l.shaders }

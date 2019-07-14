@@ -444,6 +444,13 @@ let empty rname pkg =
         |> add_private_member
              ( "std::unordered_map<FramebufferDescriptor, VkFramebuffer>",
                "framebuffer_cache_" )
+        |> add_private_member
+             ( "std::unordered_map<VkDescriptorSetLayoutCreateInfo, \
+                VkDescriptorSetLayout>",
+               "descriptor_set_layout_cache_" )
+        |> add_private_member
+             ( "std::unordered_map<VkPipelineLayoutCreateInfo, VkPipelineLayout>",
+               "pipeline_layout_cache_" )
         |> add_private_member ("std::vector<VkImageView>", "rt_builtin_screen_")
         |> add_private_member
              ("VkAttachmentLoadOp", "rt_builtin_screen_load_op")
@@ -461,7 +468,6 @@ let empty rname pkg =
     ctor =
       Function.(
         empty rname
-        (* TODO:        |> set_return_type "explicit" *)
         |> add_param ("zrl::Core&", "core")
         |> add_member_initializer ("name_", "\"" ^ rname ^ "\"")
         |> add_member_initializer ("core_", "core")

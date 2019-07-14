@@ -132,6 +132,33 @@ let rec zrl_to_cpp_type = function
   | Type.TypeRef s -> s
   | t -> failwith "unsupported type: " ^ Type.string_of_type t
 
+(*
+let call_has_named_args args =
+  List.for_all
+    (function L.{ value = Ast.NamedArg _; _ } -> true | _ -> false)
+    args
+
+let reorder_call_args expr args =
+  match expr with
+  | [ Type.Function (params, _) ], _ ->
+      let indexed_params = List.index params in
+      let index_of arg =
+        let i, _ =
+          List.find
+            (fun (_, (param_name, _)) ->
+              match arg with
+              | L.{ value = Ast.NamedArg (arg_name, _); _ } ->
+                  arg_name = param_name
+              | _ -> failwith "cannot reorder non-named arguments")
+            indexed_params
+        in
+        i
+      in
+      let cmp arg1 arg2 = index_of arg1 - index_of arg2 in
+      List.sort cmp args
+  | _ -> failwith "unexpected non-Function type in call expression"
+*)
+
 let gen_renderer_signature loc rd_name rd_functions r =
   let open Cpp in
   let err = error loc (`MissingRendererEntryPoint rd_name) in
@@ -632,11 +659,66 @@ let check_single_entry_point loc rd_functions =
   if List.length rd_functions <= 1 then Ok ()
   else error loc (`Unsupported "only one function per renderer is allowed")
 
-let gen_renderer_library loc Config.{ cfg_bazel_package; _ }
+let gen_shader_modules cfg_bazel_package glsl_libraries r =
+  let pkg = String.concat "/" cfg_bazel_package in
+  let shaders = List.flatten (List.map Glsl.Library.shaders glsl_libraries) in
+  let r =
+    List.fold_left
+      (fun r shader ->
+        let stage_name =
+          match Glsl.Shader.stage shader with
+          | Vertex -> "Vert"
+          | Geometry -> "Geom"
+          | Fragment -> "Frag"
+          | Compute -> "Comp"
+        in
+        let shader_name = Glsl.Shader.name shader ^ stage_name in
+        let module_member = shader_name ^ "_shader_module_" in
+        let rclass =
+          Cpp.Class.(
+            r.RendererEnv.rclass
+            |> add_include (Printf.sprintf {|"%s/%s.h"|} pkg shader_name)
+            |> add_private_member ("VkShaderModule", module_member))
+        in
+        let ctor =
+          Cpp.Function.(
+            r.ctor
+            |> add_member_initializer (module_member, "VK_NULL_HANDLE")
+            |> append_code_section
+                 (Printf.sprintf
+                    {|  {
+    VkShaderModuleCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    create_info.pNext = nullptr;
+    create_info.flags = 0;
+    create_info.codeSize = sizeof k%s;
+    create_info.pCode = k%s;
+    CHECK_VK(vkCreateShaderModule(core_.GetLogicalDevice().GetHandle(), &create_info,
+                                  nullptr, &%s));
+  }
+|}
+                    shader_name shader_name module_member))
+        in
+        let dtor =
+          Cpp.Function.(
+            r.dtor
+            |> append_code_section
+                 (Printf.sprintf
+                    "vkDestroyShaderModule(core_.GetLogicalDevice().GetHandle(), \
+                     %s, nullptr);"
+                    module_member))
+        in
+        RendererEnv.{ r with rclass; ctor; dtor })
+      r shaders
+  in
+  Ok r
+
+let gen_renderer_library loc Config.{ cfg_bazel_package; _ } glsl_libraries
     TypedAst.{ rd_name; rd_type; rd_functions; _ } =
   let open Cpp in
   let r = RendererEnv.empty rd_name cfg_bazel_package in
   check_single_entry_point loc rd_functions >>= fun () ->
+  gen_shader_modules cfg_bazel_package glsl_libraries r >>= fun r ->
   gen_render_targets rd_type r >>= fun r ->
   gen_renderer_signature loc rd_name rd_functions r >>= fun r ->
   gen_renderer_code loc rd_name rd_functions r >>= fun r ->
@@ -733,6 +815,54 @@ let framebuffer_descriptor_hash =
   };
 }|}
 
+let vk_descriptor_set_layout_binding_hash =
+  {|namespace std {
+template <> struct hash<VkDescriptorSetLayoutBinding> {
+  size_t operator()(const VkDescriptorSetLayoutBinding &b) const noexcept {
+    size_t h = b.binding;
+    h = h * 31 + b.descriptorType;
+    h = h * 31 + b.descriptorCount;
+    h = h * 31 + b.stageFlags;
+    return h;
+  }
+};
+}|}
+
+let vk_descriptor_set_layout_create_info_hash =
+  {|namespace std {
+template <> struct hash<VkDescriptorSetLayoutCreateInfo> {
+  size_t operator()(const VkDescriptorSetLayoutCreateInfo &info) const
+      noexcept {
+    size_t h = info.flags;
+    h = h * 31 + info.bindingCount;
+    for (uint32_t i = 0; i < info.bindingCount; ++i) {
+      h = h * 31 + hash<VkDescriptorSetLayoutBinding>{}(info.pBindings[i]);
+    }
+    return h;
+  }
+};
+}|}
+
+let vk_pipeline_layout_create_info_hash =
+  {|namespace std {
+template <> struct hash<VkPipelineLayoutCreateInfo> {
+  size_t operator()(const VkPipelineLayoutCreateInfo &info) const noexcept {
+    size_t h = info.flags;
+    h = h * 31 + info.setLayoutCount;
+    for (uint32_t i = 0; i < info.setLayoutCount; ++i) {
+      h = h * 31 + reinterpret_cast<size_t>(info.pSetLayouts[i]);
+    }
+    h = h * 31 + info.pushConstantRangeCount;
+    for (uint32_t i = 0; i < info.pushConstantRangeCount; ++i) {
+      h = h * 31 + info.pPushConstantRanges[i].stageFlags;
+      h = h * 31 + info.pPushConstantRanges[i].offset;
+      h = h * 31 + info.pPushConstantRanges[i].size;
+    }
+    return h;
+  }
+};
+}|}
+
 let gen_types_header root_elems =
   let cc_header =
     Cpp.Header.(
@@ -741,7 +871,10 @@ let gen_types_header root_elems =
       |> add_section render_pass_descriptor_struct
       |> add_section render_pass_descriptor_hash
       |> add_section framebuffer_descriptor_struct
-      |> add_section framebuffer_descriptor_hash)
+      |> add_section framebuffer_descriptor_hash
+      |> add_section vk_descriptor_set_layout_binding_hash
+      |> add_section vk_descriptor_set_layout_create_info_hash
+      |> add_section vk_pipeline_layout_create_info_hash)
   in
   List.fold_left
     (fun acc tl ->
@@ -811,15 +944,18 @@ let gen_pipeline loc _ pd =
   let has_function name =
     List.exists (fun TypedAst.{ fd_name; _ } -> fd_name = name) pd_functions
   in
-  match (has_function "vertex", has_function "compute") with
-  | true, false -> gen_graphics_pipeline loc pd
-  | false, true -> gen_compute_pipeline loc pd
-  | true, true ->
+  match
+    (has_function "vertex", has_function "compute", has_function "main")
+  with
+  | _, _, true -> error loc (`Unsupported "invalid pipeline function: 'main'")
+  | true, false, false -> gen_graphics_pipeline loc pd
+  | false, true, false -> gen_compute_pipeline loc pd
+  | true, true, _ ->
       error loc
         (`Unsupported
           "ambiguous pipeline type: cannot have both 'vertex' and 'compute' \
            functions)")
-  | false, false ->
+  | false, false, _ ->
       error loc
         (`Unsupported
           "unknown pipeline type: must have either 'vertex' or 'compute' \
@@ -837,15 +973,25 @@ let gen_pipelines cfg root_elems =
       | _ -> acc)
     (Ok MapString.empty) root_elems
 
-let gen_renderer_libraries cfg root_elems =
+let gen_renderer_libraries cfg glsl_libraries root_elems =
+  let pkg = String.concat "/" cfg.Config.cfg_bazel_package in
   List.fold_left
     (fun acc tl ->
-      acc >>= fun renderer_targets ->
+      acc >>= fun renderer_libraries ->
       let L.{ loc; value } = tl in
       match value with
       | TypedAst.RendererDecl rd ->
-          gen_renderer_library loc cfg rd >>= fun t ->
-          Ok (t :: renderer_targets)
+          gen_renderer_library loc cfg glsl_libraries rd >>= fun lib ->
+          let lib =
+            List.fold_left
+              (fun lib glsl_lib ->
+                let dep =
+                  Printf.sprintf "//%s:%s" pkg (Glsl.Library.name glsl_lib)
+                in
+                Cpp.Library.add_dep dep lib)
+              lib glsl_libraries
+          in
+          Ok (lib :: renderer_libraries)
       | _ -> acc)
     (Ok []) root_elems
 
@@ -896,7 +1042,11 @@ let rec gen_glsl_expression L.{ value; _ } =
       Printf.sprintf "%s[%s]" (gen_glsl_expression expr)
         (String.concat "][" (List.map gen_glsl_expression indices))
   | Call (expr, args) ->
-      (* TODO: handle named arguments by reordering *)
+      (* TODO: implement
+      let args =
+        if call_has_named_args args then reorder_call_args expr args else args
+      in
+*)
       Printf.sprintf "%s(%s)" (gen_glsl_expression expr)
         (String.concat ", " (List.map gen_glsl_expression args))
   | Cast (t, expr) ->
@@ -1310,7 +1460,8 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
   in
   gen_pipelines cfg root_elems >>= fun pipelines ->
   gen_glsl_libraries root_env glsl_types pipelines >>= fun glsl_libraries ->
-  gen_renderer_libraries cfg root_elems >>= fun renderer_libraries ->
+  gen_renderer_libraries cfg glsl_libraries root_elems
+  >>= fun renderer_libraries ->
   let build =
     List.fold_left (flip Build.add_glsl_library) build glsl_libraries
   in

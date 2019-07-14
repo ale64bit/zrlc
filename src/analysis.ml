@@ -125,7 +125,7 @@ let build_function_environment env loc name typ =
   | Type.Function (args, _) ->
       let env =
         List.fold_left
-          (fun env (name, t) -> Env.add_var name L.{ loc; value = t } env)
+          (fun env (name, t) -> Env.add_val name L.{ loc; value = t } env)
           env args
       in
       Env.add_builtin name env
@@ -170,7 +170,7 @@ let check_const_declaration env loc cd =
 
 let check_type_declaration env loc td =
   let Ast.{ td_name; td_type } = td in
-  match Env.find_name ~local:true td_name env with
+  match Env.find_name ~local:false td_name env with
   | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (td_name, prev_loc))
   | None -> (
@@ -591,8 +591,7 @@ and valid_arg arg_type want_type =
   match (arg_type, want_type) with
   | TypeRef "atom", _ -> true
   | TypeRef "rt_ds", TypeRef "depthBuffer" -> true
-  | TypeRef "rt_rgb", TypeRef "texture2D" -> true
-  | TypeRef "rt_rgba", TypeRef "texture2D" -> true
+  | TypeRef "rt_rgba", TypeRef "sampler2D" -> true
   | _ -> arg_type = want_type
 
 and check_call_args f_name arg_exprs arg_types want_types =
