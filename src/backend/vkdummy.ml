@@ -132,15 +132,14 @@ let rec zrl_to_cpp_type = function
   | Type.TypeRef s -> s
   | t -> failwith "unsupported type: " ^ Type.string_of_type t
 
-(*
 let call_has_named_args args =
   List.for_all
     (function L.{ value = Ast.NamedArg _; _ } -> true | _ -> false)
     args
 
-let reorder_call_args expr args =
-  match expr with
-  | [ Type.Function (params, _) ], _ ->
+let reorder_call_args env expr args =
+  match Analysis.check_single_value_expr env expr with
+  | Ok (Type.Function (params, _)) ->
       let indexed_params = List.index params in
       let index_of arg =
         let i, _ =
@@ -157,7 +156,6 @@ let reorder_call_args expr args =
       let cmp arg1 arg2 = index_of arg1 - index_of arg2 in
       List.sort cmp args
   | _ -> failwith "unexpected non-Function type in call expression"
-*)
 
 let gen_renderer_signature loc rd_name rd_functions r =
   let open Cpp in
@@ -270,30 +268,38 @@ let gen_cpp_builtin_call_id = function
   | "bmat4" -> "glm::bmat4"
   | other -> other
 
-let rec gen_cpp_expression L.{ value; _ } =
+let rec gen_cpp_expression env L.{ value; _ } =
   let open Ast in
   match value with
   | Access (expr, member) ->
-      Printf.sprintf "%s.%s" (gen_cpp_expression expr) member
+      Printf.sprintf "%s.%s" (gen_cpp_expression env expr) member
   | Index (expr, indices) ->
-      Printf.sprintf "%s[%s]" (gen_cpp_expression expr)
-        (String.concat "][" (List.map gen_cpp_expression indices))
+      Printf.sprintf "%s[%s]"
+        (gen_cpp_expression env expr)
+        (String.concat "][" (List.map (gen_cpp_expression env) indices))
   | Call (expr, args) ->
-      (* TODO: handle named arguments by reordering *)
-      Printf.sprintf "%s(%s)" (gen_cpp_expression expr)
-        (String.concat ", " (List.map gen_cpp_expression args))
+      let args =
+        if call_has_named_args args then reorder_call_args env expr args
+        else args
+      in
+      Printf.sprintf "%s(%s)"
+        (gen_cpp_expression env expr)
+        (String.concat ", " (List.map (gen_cpp_expression env) args))
   | Cast (t, expr) ->
       Printf.sprintf "static_cast<%s>(%s)" (zrl_to_cpp_type t)
-        (gen_cpp_expression expr)
-  | NamedArg (_, expr) -> gen_cpp_expression expr
+        (gen_cpp_expression env expr)
+  | NamedArg (_, expr) -> gen_cpp_expression env expr
   | BundledArg exprs ->
       Printf.sprintf "std::make_tuple(%s)"
-        (String.concat ", " (List.map gen_cpp_expression exprs))
+        (String.concat ", " (List.map (gen_cpp_expression env) exprs))
   | BinExpr (lhs, op, rhs) ->
-      Printf.sprintf "%s %s %s" (gen_cpp_expression lhs)
-        (Ast.string_of_binop op) (gen_cpp_expression rhs)
+      Printf.sprintf "%s %s %s"
+        (gen_cpp_expression env lhs)
+        (Ast.string_of_binop op)
+        (gen_cpp_expression env rhs)
   | UnExpr (op, rhs) ->
-      Printf.sprintf "%s(%s)" (Ast.string_of_unop op) (gen_cpp_expression rhs)
+      Printf.sprintf "%s(%s)" (Ast.string_of_unop op)
+        (gen_cpp_expression env rhs)
   | BoolLiteral true -> "true"
   | BoolLiteral false -> "false"
   | IntLiteral i -> string_of_int i
@@ -314,12 +320,12 @@ let is_rt_clear_or_write env op lvalues =
         lvalues
   | _ -> false
 
-let gen_clear lhs rhs r =
+let gen_clear env lhs rhs r =
   let bindings = List.combine lhs rhs in
   List.fold_left
     (fun r ((_, lhs), (_, rhs)) ->
       let rt_name =
-        match gen_cpp_expression lhs with
+        match gen_cpp_expression env lhs with
         | "builtin.screen" -> "builtin_screen"
         | other -> other
       in
@@ -336,7 +342,7 @@ let gen_clear lhs rhs r =
       in
       let update_clear_value =
         Printf.sprintf "rt_%s_clear_value = %s;" rt_name
-          (gen_cpp_expression rhs)
+          (gen_cpp_expression env rhs)
       in
       RendererEnv.(
         r
@@ -345,7 +351,7 @@ let gen_clear lhs rhs r =
         |> add_stmt_inside_render_passes update_clear_value))
     r bindings
 
-let gen_write lhs _ r =
+let gen_write env lhs _ r =
   let open RendererEnv in
   let set_clear_value var rt_name = function
     | Color ->
@@ -366,7 +372,7 @@ let gen_write lhs _ r =
   let fb_imgs =
     List.map
       (fun (_, lhs) ->
-        match gen_cpp_expression lhs with
+        match gen_cpp_expression env lhs with
         | "builtin.screen" -> "rt_builtin_screen_[image_index]"
         | id -> Printf.sprintf "rt_%s_" id)
       lhs
@@ -376,7 +382,7 @@ let gen_write lhs _ r =
       (List.map
          (fun (i, (_, lhs)) ->
            let rt_name =
-             match gen_cpp_expression lhs with
+             match gen_cpp_expression env lhs with
              | "builtin.screen" -> "builtin_screen"
              | other -> other
            in
@@ -400,7 +406,7 @@ let gen_write lhs _ r =
     List.map
       (fun (_, lhs) ->
         let rt_name =
-          match gen_cpp_expression lhs with
+          match gen_cpp_expression env lhs with
           | "builtin.screen" -> "builtin_screen"
           | other -> other
         in
@@ -454,10 +460,10 @@ let gen_write lhs _ r =
     |> add_stmt_inside_render_passes "// TODO: execute actual draw call"
     |> add_stmt_inside_render_passes "}")
 
-let gen_clear_or_write lhs op rhs r =
+let gen_clear_or_write env lhs op rhs r =
   match op with
-  | Ast.Assign -> gen_clear lhs rhs r
-  | Ast.AssignPlus -> gen_write lhs rhs r
+  | Ast.Assign -> gen_clear env lhs rhs r
+  | Ast.AssignPlus -> gen_write env lhs rhs r
   | _ -> failwith ("unexpected operator: " ^ Ast.string_of_assignop op)
 
 let rec gen_cpp_stmt stmt r =
@@ -469,7 +475,7 @@ let rec gen_cpp_stmt stmt r =
       | [ id ], [ ([ typ ], value) ] ->
           let decl =
             Printf.sprintf "%s %s = %s;" (zrl_to_cpp_type typ) id
-              (gen_cpp_expression value)
+              (gen_cpp_expression env value)
           in
           RendererEnv.(r |> add_stmt_inside_render_passes decl)
       | ids, [ (types, value) ] ->
@@ -483,7 +489,7 @@ let rec gen_cpp_stmt stmt r =
           in
           let assignment =
             Printf.sprintf "std::tie(%s) = %s;" (String.concat ", " ids)
-              (gen_cpp_expression value)
+              (gen_cpp_expression env value)
           in
           RendererEnv.(r |> add_stmt_inside_render_passes assignment)
       | ids, values ->
@@ -493,30 +499,32 @@ let rec gen_cpp_stmt stmt r =
               let decl =
                 Printf.sprintf "%s %s = %s;"
                   (zrl_to_cpp_type (List.hd t))
-                  id (gen_cpp_expression value)
+                  id
+                  (gen_cpp_expression env value)
               in
               RendererEnv.(r |> add_stmt_inside_render_passes decl))
             r bindings )
   | Assignment { asg_op; asg_lvalues; asg_rvalues } -> (
       if is_rt_clear_or_write env asg_op asg_lvalues then
-        gen_clear_or_write asg_lvalues asg_op asg_rvalues r
+        gen_clear_or_write env asg_lvalues asg_op asg_rvalues r
       else
         match (asg_lvalues, asg_rvalues) with
         | [ (_, lhs) ], [ ([ _ ], rhs) ] ->
             let decl =
-              Printf.sprintf "%s %s %s;" (gen_cpp_expression lhs)
+              Printf.sprintf "%s %s %s;"
+                (gen_cpp_expression env lhs)
                 (Ast.string_of_assignop asg_op)
-                (gen_cpp_expression rhs)
+                (gen_cpp_expression env rhs)
             in
             RendererEnv.(r |> add_stmt_inside_render_passes decl)
         | lhs, [ (_, rhs) ] ->
             let lvalues =
               String.concat ", "
-                (List.map (fun (_, expr) -> gen_cpp_expression expr) lhs)
+                (List.map (fun (_, expr) -> gen_cpp_expression env expr) lhs)
             in
             let assignment =
               Printf.sprintf "std::tie(%s) = %s;" lvalues
-                (gen_cpp_expression rhs)
+                (gen_cpp_expression env rhs)
             in
             RendererEnv.(r |> add_stmt_inside_render_passes assignment)
         | lhs, rhs ->
@@ -524,14 +532,17 @@ let rec gen_cpp_stmt stmt r =
             List.fold_left
               (fun r ((_, lhs), (_, rhs)) ->
                 let assignment =
-                  Printf.sprintf "%s %s %s;" (gen_cpp_expression lhs)
+                  Printf.sprintf "%s %s %s;"
+                    (gen_cpp_expression env lhs)
                     (Ast.string_of_assignop asg_op)
-                    (gen_cpp_expression rhs)
+                    (gen_cpp_expression env rhs)
                 in
                 RendererEnv.(r |> add_stmt_inside_render_passes assignment))
               r bindings )
   | If { if_cond = _, cond_expr; if_true; if_false } ->
-      let cond = Printf.sprintf "if (%s) {" (gen_cpp_expression cond_expr) in
+      let cond =
+        Printf.sprintf "if (%s) {" (gen_cpp_expression env cond_expr)
+      in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes cond) in
       let r = List.fold_left (fun r stmt -> gen_cpp_stmt stmt r) r if_true in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes "} else {") in
@@ -540,7 +551,7 @@ let rec gen_cpp_stmt stmt r =
   | ForIter { foriter_id; foriter_it = _, it_expr; foriter_body } ->
       let header =
         Printf.sprintf "for (const auto &%s : %s) {" foriter_id
-          (gen_cpp_expression it_expr)
+          (gen_cpp_expression env it_expr)
       in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
       let r =
@@ -555,8 +566,8 @@ let rec gen_cpp_stmt stmt r =
       } ->
       let header =
         Printf.sprintf "for (int %s = (%s); i <= (%s); ++%s) {" forrange_id
-          (gen_cpp_expression from_expr)
-          (gen_cpp_expression to_expr)
+          (gen_cpp_expression env from_expr)
+          (gen_cpp_expression env to_expr)
           forrange_id
       in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
@@ -565,13 +576,13 @@ let rec gen_cpp_stmt stmt r =
       in
       RendererEnv.(r |> add_stmt_inside_render_passes "}")
   | Return [ (_, expr) ] ->
-      let return = Printf.sprintf "return %s;" (gen_cpp_expression expr) in
+      let return = Printf.sprintf "return %s;" (gen_cpp_expression env expr) in
       RendererEnv.(r |> add_stmt_inside_render_passes return)
   | Return exprs ->
       let return =
         Printf.sprintf "return std::make_tuple(%s);"
           (String.concat ", "
-             (List.map (fun (_, expr) -> gen_cpp_expression expr) exprs))
+             (List.map (fun (_, expr) -> gen_cpp_expression env expr) exprs))
       in
       RendererEnv.(
         r
@@ -1028,7 +1039,7 @@ let gen_glsl_builtin_call_id = function
   | "bmat4" -> "bmat4"
   | other -> other
 
-let rec gen_glsl_expression L.{ value; _ } =
+let rec gen_glsl_expression env L.{ value; _ } =
   let open Ast in
   match value with
   | Access (L.{ value = Id "builtin"; _ }, "position") -> "gl_Position"
@@ -1037,28 +1048,33 @@ let rec gen_glsl_expression L.{ value; _ } =
   | Access (L.{ value = Id "builtin"; _ }, "fragCoord") -> "gl_FragCoord"
   | Access (L.{ value = Id "builtin"; _ }, "frontFacing") -> "gl_FrontFacing"
   | Access (expr, member) ->
-      Printf.sprintf "%s.%s" (gen_glsl_expression expr) member
+      Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member
   | Index (expr, indices) ->
-      Printf.sprintf "%s[%s]" (gen_glsl_expression expr)
-        (String.concat "][" (List.map gen_glsl_expression indices))
+      Printf.sprintf "%s[%s]"
+        (gen_glsl_expression env expr)
+        (String.concat "][" (List.map (gen_glsl_expression env) indices))
   | Call (expr, args) ->
-      (* TODO: implement
       let args =
-        if call_has_named_args args then reorder_call_args expr args else args
+        if call_has_named_args args then reorder_call_args env expr args
+        else args
       in
-*)
-      Printf.sprintf "%s(%s)" (gen_glsl_expression expr)
-        (String.concat ", " (List.map gen_glsl_expression args))
+      Printf.sprintf "%s(%s)"
+        (gen_glsl_expression env expr)
+        (String.concat ", " (List.map (gen_glsl_expression env) args))
   | Cast (t, expr) ->
-      Printf.sprintf "%s(%s)" (zrl_to_glsl_type t) (gen_glsl_expression expr)
-  | NamedArg (_, expr) -> gen_glsl_expression expr
+      Printf.sprintf "%s(%s)" (zrl_to_glsl_type t)
+        (gen_glsl_expression env expr)
+  | NamedArg (_, expr) -> gen_glsl_expression env expr
   | BundledArg _ ->
       failwith "cannot convert BundledArg expression to GLSL expression"
   | BinExpr (lhs, op, rhs) ->
-      Printf.sprintf "%s %s %s" (gen_glsl_expression lhs)
-        (Ast.string_of_binop op) (gen_glsl_expression rhs)
+      Printf.sprintf "%s %s %s"
+        (gen_glsl_expression env lhs)
+        (Ast.string_of_binop op)
+        (gen_glsl_expression env rhs)
   | UnExpr (op, rhs) ->
-      Printf.sprintf "%s(%s)" (Ast.string_of_unop op) (gen_glsl_expression rhs)
+      Printf.sprintf "%s(%s)" (Ast.string_of_unop op)
+        (gen_glsl_expression env rhs)
   | BoolLiteral true -> "true"
   | BoolLiteral false -> "false"
   | IntLiteral i -> string_of_int i
@@ -1075,7 +1091,7 @@ let rec gen_glsl_stmt stmt f =
       | [ id ], [ ([ typ ], value) ] ->
           let decl =
             Printf.sprintf "%s %s = %s;" (zrl_to_glsl_type typ) id
-              (gen_glsl_expression value)
+              (gen_glsl_expression env value)
           in
           Function.append_code_section decl f
       | ids, [ (types, value) ] ->
@@ -1094,7 +1110,7 @@ let rec gen_glsl_stmt stmt f =
                 let ret_type_name = Printf.sprintf "%sRetType" fname in
                 let tmp_decl =
                   Printf.sprintf "%s tmp = %s;" ret_type_name
-                    (gen_glsl_expression value)
+                    (gen_glsl_expression env value)
                 in
                 let f = Function.append_code_section tmp_decl f in
                 let unpacks =
@@ -1117,7 +1133,7 @@ let rec gen_glsl_stmt stmt f =
                 Printf.sprintf "%s %s = %s;"
                   (zrl_to_glsl_type (List.hd t))
                   id
-                  (gen_glsl_expression value)
+                  (gen_glsl_expression env value)
               in
               Function.append_code_section decl f)
             f bindings )
@@ -1125,9 +1141,10 @@ let rec gen_glsl_stmt stmt f =
       match (asg_lvalues, asg_rvalues) with
       | [ (_, lhs) ], [ ([ _ ], rhs) ] ->
           let assignment =
-            Printf.sprintf "%s %s %s;" (gen_glsl_expression lhs)
+            Printf.sprintf "%s %s %s;"
+              (gen_glsl_expression env lhs)
               (Ast.string_of_assignop asg_op)
-              (gen_glsl_expression rhs)
+              (gen_glsl_expression env rhs)
           in
           Function.append_code_section assignment f
       | lhs, [ (_, rhs) ] ->
@@ -1138,14 +1155,14 @@ let rec gen_glsl_stmt stmt f =
                 let ret_type_name = Printf.sprintf "%sRetType" fname in
                 let tmp_decl =
                   Printf.sprintf "%s tmp = %s;" ret_type_name
-                    (gen_glsl_expression rhs)
+                    (gen_glsl_expression env rhs)
                 in
                 let f = Function.append_code_section tmp_decl f in
                 let unpacks =
                   List.map
                     (fun (i, (_, lhs)) ->
                       Printf.sprintf "%s %s tmp.out%d;"
-                        (gen_glsl_expression lhs)
+                        (gen_glsl_expression env lhs)
                         (Ast.string_of_assignop asg_op)
                         i)
                     (List.index lhs)
@@ -1162,14 +1179,17 @@ let rec gen_glsl_stmt stmt f =
           List.fold_left
             (fun f ((_, lhs), (_, rhs)) ->
               let assignment =
-                Printf.sprintf "%s %s %s;" (gen_glsl_expression lhs)
+                Printf.sprintf "%s %s %s;"
+                  (gen_glsl_expression env lhs)
                   (Ast.string_of_assignop asg_op)
-                  (gen_glsl_expression rhs)
+                  (gen_glsl_expression env rhs)
               in
               Function.append_code_section assignment f)
             f bindings )
   | If { if_cond = _, cond_expr; if_true; if_false } ->
-      let cond = Printf.sprintf "if (%s) {" (gen_glsl_expression cond_expr) in
+      let cond =
+        Printf.sprintf "if (%s) {" (gen_glsl_expression env cond_expr)
+      in
       let f = Function.(f |> append_code_section cond) in
       let f = List.fold_left (fun f stmt -> gen_glsl_stmt stmt f) f if_true in
       let f = Function.(f |> append_code_section "} else {") in
@@ -1184,8 +1204,8 @@ let rec gen_glsl_stmt stmt f =
       } ->
       let header =
         Printf.sprintf "for (int %s = (%s); i <= (%s); %s++) {" forrange_id
-          (gen_glsl_expression from_expr)
-          (gen_glsl_expression to_expr)
+          (gen_glsl_expression env from_expr)
+          (gen_glsl_expression env to_expr)
           forrange_id
       in
       let f = Function.(f |> append_code_section header) in
@@ -1194,7 +1214,9 @@ let rec gen_glsl_stmt stmt f =
       in
       Function.(f |> append_code_section "}")
   | Return [ (_, expr) ] ->
-      let return = Printf.sprintf "return %s;" (gen_glsl_expression expr) in
+      let return =
+        Printf.sprintf "return %s;" (gen_glsl_expression env expr)
+      in
       Function.(f |> append_code_section return)
   | Return exprs ->
       let fname =
@@ -1206,7 +1228,7 @@ let rec gen_glsl_stmt stmt f =
       let return =
         Printf.sprintf "return %s(%s);" ret_type_name
           (String.concat ", "
-             (List.map (fun (_, expr) -> gen_glsl_expression expr) exprs))
+             (List.map (fun (_, expr) -> gen_glsl_expression env expr) exprs))
       in
       Function.(f |> append_code_section return)
   | Discard -> Function.(f |> append_code_section "discard;")

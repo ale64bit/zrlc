@@ -37,3 +37,9 @@ type error =
   | `MissingReturn of string ]
 
 val check : Ast.root -> (TypedAst.root, [> error ] Located.t) result
+
+val check_expr :
+  Env.t -> Ast.expression -> (Type.t list, [> error ] Located.t) result
+
+val check_single_value_expr :
+  Env.t -> Ast.expression -> (Type.t, [> error ] Located.t) result
