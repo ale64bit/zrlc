@@ -280,6 +280,10 @@ let dtor_body =
   {|  for (auto image_view : rt_builtin_screen_) {
     vkDestroyImageView(device, image_view, nullptr);
   }
+  DLOG << name_ << ": total graphics pipelines: " << pipeline_cache_.size() << '\n';
+  for (auto p : pipeline_cache_) {
+    vkDestroyPipeline(device, p.second, nullptr);
+  }
   DLOG << name_ << ": total framebuffers: " << framebuffer_cache_.size() << '\n';
   for (auto p : framebuffer_cache_) {
     vkDestroyFramebuffer(device, p.second, nullptr);
@@ -445,12 +449,8 @@ let empty rname pkg =
              ( "std::unordered_map<FramebufferDescriptor, VkFramebuffer>",
                "framebuffer_cache_" )
         |> add_private_member
-             ( "std::unordered_map<VkDescriptorSetLayoutCreateInfo, \
-                VkDescriptorSetLayout>",
-               "descriptor_set_layout_cache_" )
-        |> add_private_member
-             ( "std::unordered_map<VkPipelineLayoutCreateInfo, VkPipelineLayout>",
-               "pipeline_layout_cache_" )
+             ( "std::unordered_map<VkGraphicsPipelineCreateInfo, VkPipeline>",
+               "pipeline_cache_" )
         |> add_private_member ("std::vector<VkImageView>", "rt_builtin_screen_")
         |> add_private_member
              ("VkAttachmentLoadOp", "rt_builtin_screen_load_op")
@@ -482,6 +482,7 @@ let empty rname pkg =
     before_recording =
       List.rev
         [ "VkRenderPass current_render_pass = VK_NULL_HANDLE;";
+          "VkPipeline current_pipeline = VK_NULL_HANDLE;";
           "constexpr VkFormat rt_builtin_screen_format = \
            VK_FORMAT_B8G8R8A8_UNORM;";
           "VkImageLayout rt_builtin_screen_layout = VK_IMAGE_LAYOUT_UNDEFINED;"

@@ -351,7 +351,324 @@ let gen_clear env lhs rhs r =
         |> add_stmt_inside_render_passes update_clear_value))
     r bindings
 
-let gen_write env lhs _ r =
+let gen_shader_stage_create_infos p =
+  let vertex_stage =
+    [ Printf.sprintf
+        {|
+    VkPipelineShaderStageCreateInfo vertex_stage = {};
+    vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertex_stage.module = %sVert_shader_module_;
+    vertex_stage.pName = "main";
+    vertex_stage.pSpecializationInfo = nullptr;
+    shader_stages.push_back(vertex_stage);
+  |}
+        p.gp_name
+    ]
+  in
+  let fragment_stage =
+    match p.gp_fragment_stage with
+    | Some _ ->
+        let fragment_stage =
+          Printf.sprintf
+            {|
+    VkPipelineShaderStageCreateInfo fragment_stage = {};
+    fragment_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragment_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragment_stage.module = %sFrag_shader_module_;
+    fragment_stage.pName = "main";
+    fragment_stage.pSpecializationInfo = nullptr;
+    shader_stages.push_back(fragment_stage);
+  |}
+            p.gp_name
+        in
+        [ fragment_stage ]
+    | None -> [ "" ]
+  in
+  let stages = List.flatten [ vertex_stage; fragment_stage ] in
+  String.concat "\n" stages
+
+let rec stride_of_type t =
+  let open Type in
+  match t with
+  | TypeRef "bool" -> 4
+  | TypeRef "float" -> 4
+  | TypeRef "int" -> 4
+  | TypeRef "uint" -> 4
+  | TypeRef "bvec2" -> 2 * stride_of_type (TypeRef "bool")
+  | TypeRef "bvec3" -> 3 * stride_of_type (TypeRef "bool")
+  | TypeRef "bvec4" -> 4 * stride_of_type (TypeRef "bool")
+  | TypeRef "fvec2" -> 2 * stride_of_type (TypeRef "float")
+  | TypeRef "fvec3" -> 3 * stride_of_type (TypeRef "float")
+  | TypeRef "fvec4" -> 4 * stride_of_type (TypeRef "float")
+  | TypeRef "ivec2" -> 2 * stride_of_type (TypeRef "int")
+  | TypeRef "ivec3" -> 3 * stride_of_type (TypeRef "int")
+  | TypeRef "ivec4" -> 4 * stride_of_type (TypeRef "int")
+  | TypeRef "uvec2" -> 2 * stride_of_type (TypeRef "uint")
+  | TypeRef "uvec3" -> 3 * stride_of_type (TypeRef "uint")
+  | TypeRef "uvec4" -> 4 * stride_of_type (TypeRef "uint")
+  | TypeRef "fmat2" -> 2 * 2 * stride_of_type (TypeRef "float")
+  | TypeRef "fmat3" -> 3 * 3 * stride_of_type (TypeRef "float")
+  | TypeRef "fmat4" -> 4 * 4 * stride_of_type (TypeRef "float")
+  | Array (t, dims) ->
+      let total =
+        List.fold_left
+          (fun acc d ->
+            match d with
+            | OfInt i -> i * acc
+            | _ -> failwith "unexpected dimension type")
+          1 dims
+      in
+      total * stride_of_type t
+  | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
+
+let format_of_vertex_input_type t =
+  let open Type in
+  match t with
+  | TypeRef "bool" -> "VK_FORMAT_R32_UINT"
+  | TypeRef "float" -> "VK_FORMAT_R32_SFLOAT"
+  | TypeRef "int" -> "VK_FORMAT_R32_SINT"
+  | TypeRef "uint" -> "VK_FORMAT_R32_UINT"
+  | TypeRef "bvec2" -> "VK_FORMAT_R32_UINT"
+  | TypeRef "bvec3" -> "VK_FORMAT_R32G32_UINT"
+  | TypeRef "bvec4" -> "VK_FORMAT_R32G32B32_UINT"
+  | TypeRef "fvec2" -> "VK_FORMAT_R32_SFLOAT"
+  | TypeRef "fvec3" -> "VK_FORMAT_R32G32_SFLOAT"
+  | TypeRef "fvec4" -> "VK_FORMAT_R32G32B32_SFLOAT"
+  | TypeRef "ivec2" -> "VK_FORMAT_R32_SINT"
+  | TypeRef "ivec3" -> "VK_FORMAT_R32G32_SINT"
+  | TypeRef "ivec4" -> "VK_FORMAT_R32G32B32_SINT"
+  | TypeRef "uvec2" -> "VK_FORMAT_R32_UINT"
+  | TypeRef "uvec3" -> "VK_FORMAT_R32G32_UINT"
+  | TypeRef "uvec4" -> "VK_FORMAT_R32G32B32_UINT"
+  | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
+
+let gen_vertex_input_state_create_info env p =
+  let num_inputs = List.length p.gp_inputs in
+  let vertex_bindings =
+    List.map
+      (fun (i, (_, t)) ->
+        Printf.sprintf
+          {|
+    vertex_bindings[%d].binding = %d;
+    vertex_bindings[%d].stride = %d;
+    vertex_bindings[%d].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    |}
+          i i i (stride_of_type t) i)
+      (List.index p.gp_inputs)
+  in
+  let _, vertex_attributes =
+    List.fold_left
+      (fun (offset, attributes) (i, (_, t)) ->
+        let attr =
+          Printf.sprintf
+            {|
+    vertex_attributes[%d].location = %d;
+    vertex_attributes[%d].binding = %d;
+    vertex_attributes[%d].format = %s;
+    vertex_attributes[%d].offset = 0;|}
+            i offset i i i
+            (format_of_vertex_input_type t)
+            i
+        in
+        (offset + glsl_type_locations env t, attr :: attributes))
+      (0, []) (List.index p.gp_inputs)
+  in
+  Printf.sprintf
+    {|
+    std::array<VkVertexInputBindingDescription, %d> vertex_bindings;
+    std::array<VkVertexInputAttributeDescription, %d> vertex_attributes;
+
+    %s
+    %s
+
+    VkPipelineVertexInputStateCreateInfo vertex_input_state = {};
+    vertex_input_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input_state.pNext = nullptr;
+    vertex_input_state.flags = 0;
+    vertex_input_state.vertexBindingDescriptionCount = static_cast<uint32_t>(vertex_bindings.size());
+    vertex_input_state.pVertexBindingDescriptions = vertex_bindings.data();
+    vertex_input_state.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertex_attributes.size());
+    vertex_input_state.pVertexAttributeDescriptions = vertex_attributes.data();
+  |}
+    num_inputs num_inputs
+    (String.concat "\n" vertex_bindings)
+    (String.concat "\n" (List.rev vertex_attributes))
+
+let gen_create_and_bind_pipeline env p r lhs =
+  let open RendererEnv in
+  let shader_stages = gen_shader_stage_create_infos p in
+  let vertex_input_state_create_info =
+    gen_vertex_input_state_create_info env p
+  in
+  let num_color_attachments =
+    List.fold_left
+      (fun acc (_, lhs) ->
+        let rt_name =
+          match gen_cpp_expression env lhs with
+          | "builtin.screen" -> "builtin_screen"
+          | other -> other
+        in
+        match MapString.find rt_name r.render_targets with
+        | Color -> 1 + acc
+        | DepthStencil -> acc)
+      0 lhs
+  in
+  let color_blend_attachments =
+    String.concat "\n"
+      (List.init num_color_attachments (fun i ->
+           Printf.sprintf
+             {|
+    color_blend_attachments[%d].blendEnable = VK_FALSE;
+    color_blend_attachments[%d].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_blend_attachments[%d].dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachments[%d].colorBlendOp = VK_BLEND_OP_ADD;
+    color_blend_attachments[%d].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_blend_attachments[%d].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachments[%d].alphaBlendOp = VK_BLEND_OP_ADD;
+    color_blend_attachments[%d].colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  |}
+             i i i i i i i i))
+  in
+  r
+  |> add_stmt_inside_render_passes
+       (Printf.sprintf
+          {|{
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+
+    %s
+
+    %s
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {};
+    input_assembly_state.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly_state.pNext = nullptr;
+    input_assembly_state.flags = 0;
+    input_assembly_state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_assembly_state.primitiveRestartEnable = false;
+
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = core_.GetSwapchain().GetExtent().width;
+    viewport.height = core_.GetSwapchain().GetExtent().height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor = {};
+    scissor.offset = {0, 0};
+    scissor.extent = core_.GetSwapchain().GetExtent();
+    VkPipelineViewportStateCreateInfo viewport_state = {};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.pNext = nullptr;
+    viewport_state.viewportCount = 1;
+    viewport_state.pViewports = &viewport;
+    viewport_state.scissorCount = 1;
+    viewport_state.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterization_state = {};
+    rasterization_state.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterization_state.pNext = nullptr;
+    rasterization_state.flags = 0;
+    rasterization_state.depthClampEnable = VK_FALSE;
+    rasterization_state.rasterizerDiscardEnable = VK_FALSE;
+    rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterization_state.depthBiasEnable = VK_FALSE;
+    rasterization_state.depthBiasConstantFactor = 0.0f;
+    rasterization_state.depthBiasClamp = 0.0f;
+    rasterization_state.depthBiasSlopeFactor = 0.0f;
+    rasterization_state.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisample_state = {};
+    multisample_state.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_state.pNext = nullptr;
+    multisample_state.flags = 0;
+    multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample_state.sampleShadingEnable = VK_FALSE;
+    multisample_state.minSampleShading = 1.0f;
+    multisample_state.pSampleMask = nullptr;
+    multisample_state.alphaToCoverageEnable = VK_FALSE;
+    multisample_state.alphaToOneEnable = VK_FALSE;
+
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {};
+    depth_stencil_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil_state.pNext = nullptr;
+    depth_stencil_state.depthTestEnable = VK_TRUE;
+    depth_stencil_state.depthWriteEnable = VK_TRUE;
+    depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
+    depth_stencil_state.stencilTestEnable = VK_FALSE;
+    depth_stencil_state.front.compareOp = VK_COMPARE_OP_ALWAYS;
+    depth_stencil_state.front.failOp = VK_STENCIL_OP_KEEP;
+    depth_stencil_state.front.passOp = VK_STENCIL_OP_KEEP;
+    depth_stencil_state.back.compareOp = VK_COMPARE_OP_ALWAYS;
+    depth_stencil_state.back.failOp = VK_STENCIL_OP_KEEP;
+    depth_stencil_state.back.passOp = VK_STENCIL_OP_KEEP;
+    depth_stencil_state.minDepthBounds = 0.0f;
+    depth_stencil_state.maxDepthBounds = 1.0f;
+
+    std::array<VkPipelineColorBlendAttachmentState, %d> color_blend_attachments;
+
+    %s
+
+    VkPipelineColorBlendStateCreateInfo color_blend_state = {};
+    color_blend_state.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    color_blend_state.pNext = nullptr;
+    color_blend_state.flags = 0;
+    color_blend_state.logicOpEnable = VK_FALSE;
+    color_blend_state.logicOp = VK_LOGIC_OP_COPY;
+    color_blend_state.attachmentCount = static_cast<uint32_t>(color_blend_attachments.size());
+    color_blend_state.pAttachments = color_blend_attachments.data();
+    color_blend_state.blendConstants[0] = 0.0f;
+    color_blend_state.blendConstants[1] = 0.0f;
+    color_blend_state.blendConstants[2] = 0.0f;
+    color_blend_state.blendConstants[3] = 0.0f;
+
+    VkGraphicsPipelineCreateInfo graphics_pipeline_create_info = {};
+    graphics_pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    graphics_pipeline_create_info.pNext = nullptr;
+    graphics_pipeline_create_info.flags = 0;
+    graphics_pipeline_create_info.stageCount = static_cast<uint32_t>(shader_stages.size());
+    graphics_pipeline_create_info.pStages = shader_stages.data();
+    graphics_pipeline_create_info.pVertexInputState = &vertex_input_state;
+    graphics_pipeline_create_info.pInputAssemblyState = &input_assembly_state;
+    graphics_pipeline_create_info.pTessellationState = nullptr;
+    graphics_pipeline_create_info.pViewportState = &viewport_state;
+    graphics_pipeline_create_info.pRasterizationState = &rasterization_state;
+    graphics_pipeline_create_info.pMultisampleState = &multisample_state;
+    graphics_pipeline_create_info.pDepthStencilState = &depth_stencil_state;
+    graphics_pipeline_create_info.pColorBlendState = &color_blend_state;
+    graphics_pipeline_create_info.pDynamicState = nullptr;
+    graphics_pipeline_create_info.layout = %s_pipeline_layout_;
+    graphics_pipeline_create_info.renderPass = current_render_pass;
+    graphics_pipeline_create_info.subpass = 0;
+    graphics_pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
+    graphics_pipeline_create_info.basePipelineIndex = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    auto res = pipeline_cache_.find(graphics_pipeline_create_info);
+    if (res == pipeline_cache_.end()) {
+      DLOG << name_ << ": creating new graphics pipeline" << '\n';
+      CHECK_VK(vkCreateGraphicsPipelines(core_.GetLogicalDevice().GetHandle(),
+                                         nullptr, 1, &graphics_pipeline_create_info,
+                                         nullptr, &pipeline));
+      pipeline_cache_[graphics_pipeline_create_info] = pipeline;
+    } else {
+      pipeline = res->second;
+    }
+    if (pipeline != current_pipeline) {
+      vkCmdBindPipeline(gct_cmd_buffer_[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        pipeline);
+      current_pipeline = pipeline;
+    }
+}|}
+          shader_stages vertex_input_state_create_info num_color_attachments
+          color_blend_attachments p.gp_name)
+
+let gen_write env pipeline lhs _ r =
   let open RendererEnv in
   let set_clear_value var rt_name = function
     | Color ->
@@ -374,7 +691,7 @@ let gen_write env lhs _ r =
       (fun (_, lhs) ->
         match gen_cpp_expression env lhs with
         | "builtin.screen" -> "rt_builtin_screen_[image_index]"
-        | id -> Printf.sprintf "rt_%s_" id)
+        | id -> Printf.sprintf "rt_%s_->GetViewHandle()" id)
       lhs
   in
   let rp_tuples, clear_values =
@@ -413,7 +730,7 @@ let gen_write env lhs _ r =
         Printf.sprintf "rt_%s_layout = VK_IMAGE_LAYOUT_GENERAL;" rt_name)
       lhs
   in
-  RendererEnv.(
+  let r =
     r
     |> add_stmt_inside_render_passes "{"
     |> add_stmt_inside_render_passes
@@ -457,16 +774,25 @@ let gen_write env lhs _ r =
           VK_SUBPASS_CONTENTS_INLINE);"
     |> add_stmt_inside_render_passes "  current_render_pass = render_pass;"
     |> add_stmt_inside_render_passes "}"
-    |> add_stmt_inside_render_passes "// TODO: execute actual draw call"
-    |> add_stmt_inside_render_passes "}")
+  in
+  let r = gen_create_and_bind_pipeline env pipeline r lhs in
+  r |> add_stmt_inside_render_passes "}"
 
-let gen_clear_or_write env lhs op rhs r =
+let extract_pipeline_name_from_write = function
+  | _, L.{ value = Ast.Call (L.{ value = Ast.Id id; _ }, _); _ } -> id
+  | _ -> failwith "unexpected right-hand side in pipeline write statement"
+
+let gen_clear_or_write env pipelines lhs op rhs r =
   match op with
   | Ast.Assign -> gen_clear env lhs rhs r
-  | Ast.AssignPlus -> gen_write env lhs rhs r
+  | Ast.AssignPlus ->
+      let () = assert (List.length rhs = 1) in
+      let pid = extract_pipeline_name_from_write (List.hd rhs) in
+      let p = MapString.find pid pipelines in
+      gen_write env p lhs rhs r
   | _ -> failwith ("unexpected operator: " ^ Ast.string_of_assignop op)
 
-let rec gen_cpp_stmt stmt r =
+let rec gen_cpp_stmt pipelines stmt r =
   let open TypedAst in
   let env, L.{ value = stmt; _ } = stmt in
   match stmt with
@@ -506,7 +832,7 @@ let rec gen_cpp_stmt stmt r =
             r bindings )
   | Assignment { asg_op; asg_lvalues; asg_rvalues } -> (
       if is_rt_clear_or_write env asg_op asg_lvalues then
-        gen_clear_or_write env asg_lvalues asg_op asg_rvalues r
+        gen_clear_or_write env pipelines asg_lvalues asg_op asg_rvalues r
       else
         match (asg_lvalues, asg_rvalues) with
         | [ (_, lhs) ], [ ([ _ ], rhs) ] ->
@@ -544,9 +870,13 @@ let rec gen_cpp_stmt stmt r =
         Printf.sprintf "if (%s) {" (gen_cpp_expression env cond_expr)
       in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes cond) in
-      let r = List.fold_left (fun r stmt -> gen_cpp_stmt stmt r) r if_true in
+      let r =
+        List.fold_left (fun r stmt -> gen_cpp_stmt pipelines stmt r) r if_true
+      in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes "} else {") in
-      let r = List.fold_left (fun r stmt -> gen_cpp_stmt stmt r) r if_false in
+      let r =
+        List.fold_left (fun r stmt -> gen_cpp_stmt pipelines stmt r) r if_false
+      in
       RendererEnv.(r |> add_stmt_inside_render_passes "}")
   | ForIter { foriter_id; foriter_it = _, it_expr; foriter_body } ->
       let header =
@@ -555,7 +885,9 @@ let rec gen_cpp_stmt stmt r =
       in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
       let r =
-        List.fold_left (fun r stmt -> gen_cpp_stmt stmt r) r foriter_body
+        List.fold_left
+          (fun r stmt -> gen_cpp_stmt pipelines stmt r)
+          r foriter_body
       in
       RendererEnv.(r |> add_stmt_inside_render_passes "}")
   | ForRange
@@ -572,7 +904,9 @@ let rec gen_cpp_stmt stmt r =
       in
       let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
       let r =
-        List.fold_left (fun r stmt -> gen_cpp_stmt stmt r) r forrange_body
+        List.fold_left
+          (fun r stmt -> gen_cpp_stmt pipelines stmt r)
+          r forrange_body
       in
       RendererEnv.(r |> add_stmt_inside_render_passes "}")
   | Return [ (_, expr) ] ->
@@ -591,15 +925,16 @@ let rec gen_cpp_stmt stmt r =
   | Discard ->
       failwith "'discard' statement cannot be used outside fragment shaders"
 
-let rec gen_cpp_function fd_body r =
+let rec gen_cpp_function pipelines fd_body r =
   match fd_body with
   | [] -> Ok r
-  | stmt :: body -> gen_cpp_function body (gen_cpp_stmt stmt r)
+  | stmt :: body ->
+      gen_cpp_function pipelines body (gen_cpp_stmt pipelines stmt r)
 
-let gen_renderer_code loc rd_name rd_functions r =
+let gen_renderer_code loc pipelines rd_name rd_functions r =
   let err = error loc (`MissingRendererEntryPoint rd_name) in
   find_func "main" rd_functions err >>= fun TypedAst.{ fd_body; _ } ->
-  gen_cpp_function fd_body r
+  gen_cpp_function pipelines fd_body r
 
 let gen_render_targets rd_type r =
   let open Cpp in
@@ -724,15 +1059,135 @@ let gen_shader_modules cfg_bazel_package glsl_libraries r =
   in
   Ok r
 
-let gen_renderer_library loc Config.{ cfg_bazel_package; _ } glsl_libraries
-    TypedAst.{ rd_name; rd_type; rd_functions; _ } =
+let gen_descriptor_set_layouts p r =
+  List.fold_left
+    (fun r (name, t) ->
+      let descriptor_set_layout =
+        Printf.sprintf "%s_%s_descriptor_set_layout_" p.gp_name name
+      in
+      let descriptor_type =
+        match t with
+        | Type.TypeRef "sampler2D" ->
+            "VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER"
+        | _ -> "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER"
+      in
+      let rclass =
+        Cpp.Class.(
+          r.RendererEnv.rclass
+          |> add_private_member ("VkDescriptorSetLayout", descriptor_set_layout))
+      in
+      let ctor =
+        Cpp.Function.(
+          r.ctor
+          |> add_member_initializer (descriptor_set_layout, "VK_NULL_HANDLE")
+          |> append_code_section
+               (Printf.sprintf
+                  {|{
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding = 0;
+    binding.descriptorType = %s;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+    binding.pImmutableSamplers = nullptr;
+
+    VkDescriptorSetLayoutCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    create_info.pNext = nullptr;
+    create_info.flags = 0;
+    create_info.bindingCount = 1;
+    create_info.pBindings = &binding;
+    CHECK_VK(vkCreateDescriptorSetLayout(core_.GetLogicalDevice().GetHandle(), 
+                                         &create_info, nullptr, &%s));
+}|}
+                  descriptor_type descriptor_set_layout))
+      in
+      let dtor =
+        Cpp.Function.(
+          r.dtor
+          |> append_code_section
+               (Printf.sprintf
+                  "vkDestroyDescriptorSetLayout(core_.GetLogicalDevice().GetHandle(), \
+                   %s, nullptr);"
+                  descriptor_set_layout))
+      in
+      RendererEnv.{ r with rclass; ctor; dtor })
+    r p.gp_uniforms
+
+let gen_pipeline_layout pipeline r =
+  let pipeline_layout =
+    Printf.sprintf "%s_pipeline_layout_" pipeline.gp_name
+  in
+  let descriptor_set_layouts =
+    List.rev
+      (List.fold_left
+         (fun layouts (name, _) ->
+           let descriptor_set_layout =
+             Printf.sprintf "%s_%s_descriptor_set_layout_" pipeline.gp_name
+               name
+           in
+           descriptor_set_layout :: layouts)
+         [] pipeline.gp_uniforms)
+  in
+  let rclass =
+    Cpp.Class.(
+      r.RendererEnv.rclass
+      |> add_private_member ("VkPipelineLayout", pipeline_layout))
+  in
+  let ctor =
+    Cpp.Function.(
+      r.RendererEnv.ctor
+      |> add_member_initializer (pipeline_layout, "VK_NULL_HANDLE")
+      |> append_code_section
+           (Printf.sprintf
+              {|{
+  std::array<VkDescriptorSetLayout, %d> descriptor_set_layouts = {%s};
+  VkPipelineLayoutCreateInfo create_info = {};
+  create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  create_info.pNext = nullptr;
+  create_info.flags = 0;
+  create_info.setLayoutCount = static_cast<uint32_t>(descriptor_set_layouts.size());
+  create_info.pSetLayouts = descriptor_set_layouts.data();
+  create_info.pushConstantRangeCount = 0;
+  create_info.pPushConstantRanges = nullptr;
+  CHECK_VK(vkCreatePipelineLayout(core_.GetLogicalDevice().GetHandle(), &create_info,
+                                  nullptr, &%s));
+}|}
+              (List.length descriptor_set_layouts)
+              (String.concat ", " descriptor_set_layouts)
+              pipeline_layout))
+  in
+  let dtor =
+    Cpp.Function.(
+      r.dtor
+      |> append_code_section
+           (Printf.sprintf
+              "vkDestroyPipelineLayout(core_.GetLogicalDevice().GetHandle(), \
+               %s, nullptr);"
+              pipeline_layout))
+  in
+  RendererEnv.{ r with rclass; ctor; dtor }
+
+let gen_pipeline_members pipelines r =
+  Ok
+    (List.fold_left
+       (fun r (_, pipeline) ->
+         r
+         |> gen_descriptor_set_layouts pipeline
+         |> gen_pipeline_layout pipeline)
+       r
+       (MapString.bindings pipelines))
+
+let gen_renderer_library loc Config.{ cfg_bazel_package; _ } pipelines
+    glsl_libraries TypedAst.{ rd_name; rd_type; rd_functions; _ } =
   let open Cpp in
   let r = RendererEnv.empty rd_name cfg_bazel_package in
   check_single_entry_point loc rd_functions >>= fun () ->
-  gen_shader_modules cfg_bazel_package glsl_libraries r >>= fun r ->
-  gen_render_targets rd_type r >>= fun r ->
-  gen_renderer_signature loc rd_name rd_functions r >>= fun r ->
-  gen_renderer_code loc rd_name rd_functions r >>= fun r ->
+  gen_shader_modules cfg_bazel_package glsl_libraries r
+  >>= gen_pipeline_members pipelines
+  >>= gen_render_targets rd_type
+  >>= gen_renderer_signature loc rd_name rd_functions
+  >>= gen_renderer_code loc pipelines rd_name rd_functions
+  >>= fun r ->
   let output_class = RendererEnv.export r in
   let types_target = "//" ^ String.concat "/" cfg_bazel_package ^ ":Types" in
   let lib =
@@ -779,6 +1234,11 @@ let gen_cpp_type loc td_name td_type =
           ( "cannot generate c++ type for non-record type: "
           ^ string_of_type td_type ))
 
+let merge_hash_function =
+  {|template <class T> inline void MergeHash(size_t &h1, const T h2) {
+  h1 = h1 * 31 + static_cast<size_t>(h2);
+}|}
+
 let render_pass_descriptor_struct =
   {|struct RenderPassDescriptor {
   std::vector<std::tuple<VkFormat, VkAttachmentLoadOp, VkImageLayout, VkImageLayout>> attachments;
@@ -801,12 +1261,12 @@ let render_pass_descriptor_hash =
   {|namespace std {
   template<> struct hash<RenderPassDescriptor> { 
     size_t operator()(const RenderPassDescriptor &desc) const noexcept {
-      size_t h = 0;
+      size_t h = 1;
       for (const auto &t : desc.attachments) {
-        h = h*31 + std::get<0>(t);
-        h = h*31 + std::get<1>(t);
-        h = h*31 + std::get<2>(t);
-        h = h*31 + std::get<3>(t);
+        MergeHash(h, std::get<0>(t));
+        MergeHash(h, std::get<1>(t));
+        MergeHash(h, std::get<2>(t));
+        MergeHash(h, std::get<3>(t));
       }
       return h;
     }
@@ -817,9 +1277,9 @@ let framebuffer_descriptor_hash =
   {|namespace std {
   template<> struct hash<FramebufferDescriptor> {
     size_t operator()(const FramebufferDescriptor &desc) const noexcept {
-      size_t h = 0;
+      size_t h = 1;
       for (const auto &a : desc.attachments) {
-        h = h*31 + reinterpret_cast<size_t>(a);
+        MergeHash(h, reinterpret_cast<size_t>(a));
       }
       return h;
     }
@@ -830,10 +1290,11 @@ let vk_descriptor_set_layout_binding_hash =
   {|namespace std {
 template <> struct hash<VkDescriptorSetLayoutBinding> {
   size_t operator()(const VkDescriptorSetLayoutBinding &b) const noexcept {
-    size_t h = b.binding;
-    h = h * 31 + b.descriptorType;
-    h = h * 31 + b.descriptorCount;
-    h = h * 31 + b.stageFlags;
+    size_t h = 1;
+    MergeHash(h, b.binding);
+    MergeHash(h, b.descriptorType);
+    MergeHash(h, b.descriptorCount);
+    MergeHash(h, b.stageFlags);
     return h;
   }
 };
@@ -844,10 +1305,11 @@ let vk_descriptor_set_layout_create_info_hash =
 template <> struct hash<VkDescriptorSetLayoutCreateInfo> {
   size_t operator()(const VkDescriptorSetLayoutCreateInfo &info) const
       noexcept {
-    size_t h = info.flags;
-    h = h * 31 + info.bindingCount;
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.bindingCount);
     for (uint32_t i = 0; i < info.bindingCount; ++i) {
-      h = h * 31 + hash<VkDescriptorSetLayoutBinding>{}(info.pBindings[i]);
+      MergeHash(h, hash<VkDescriptorSetLayoutBinding>{}(info.pBindings[i]));
     }
     return h;
   }
@@ -858,20 +1320,264 @@ let vk_pipeline_layout_create_info_hash =
   {|namespace std {
 template <> struct hash<VkPipelineLayoutCreateInfo> {
   size_t operator()(const VkPipelineLayoutCreateInfo &info) const noexcept {
-    size_t h = info.flags;
-    h = h * 31 + info.setLayoutCount;
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.setLayoutCount);
     for (uint32_t i = 0; i < info.setLayoutCount; ++i) {
-      h = h * 31 + reinterpret_cast<size_t>(info.pSetLayouts[i]);
+      MergeHash(h, reinterpret_cast<size_t>(info.pSetLayouts[i]));
     }
-    h = h * 31 + info.pushConstantRangeCount;
+    MergeHash(h, info.pushConstantRangeCount);
     for (uint32_t i = 0; i < info.pushConstantRangeCount; ++i) {
-      h = h * 31 + info.pPushConstantRanges[i].stageFlags;
-      h = h * 31 + info.pPushConstantRanges[i].offset;
-      h = h * 31 + info.pPushConstantRanges[i].size;
+      MergeHash(h, info.pPushConstantRanges[i].stageFlags);
+      MergeHash(h, info.pPushConstantRanges[i].offset);
+      MergeHash(h, info.pPushConstantRanges[i].size);
     }
     return h;
   }
 };
+}|}
+
+let vk_graphics_pipeline_create_info_hash =
+  {|
+namespace std {
+
+template <> struct hash<VkPipelineShaderStageCreateInfo> {
+  size_t operator()(const VkPipelineShaderStageCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.stage);
+    MergeHash(h, reinterpret_cast<size_t>(info.module));
+    return h;
+  }
+};
+template <> struct hash<VkVertexInputBindingDescription> {
+  size_t operator()(const VkVertexInputBindingDescription &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.binding);
+    MergeHash(h, info.stride);
+    MergeHash(h, info.inputRate);
+    return h;
+  }
+};
+template <> struct hash<VkVertexInputAttributeDescription> {
+  size_t operator()(const VkVertexInputAttributeDescription &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.location);
+    MergeHash(h, info.binding);
+    MergeHash(h, info.format);
+    MergeHash(h, info.offset);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineVertexInputStateCreateInfo> {
+  size_t operator()(const VkPipelineVertexInputStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.vertexBindingDescriptionCount);
+    for (uint32_t i = 0; i < info.vertexBindingDescriptionCount; ++i) {
+      MergeHash(h, hash<VkVertexInputBindingDescription>{}(
+                       info.pVertexBindingDescriptions[i]));
+    }
+    MergeHash(h, info.vertexAttributeDescriptionCount);
+    for (uint32_t i = 0; i < info.vertexAttributeDescriptionCount; ++i) {
+      MergeHash(h, hash<VkVertexInputAttributeDescription>{}(
+                       info.pVertexAttributeDescriptions[i]));
+    }
+    return h;
+  }
+};
+template <> struct hash<VkPipelineInputAssemblyStateCreateInfo> {
+  size_t operator()(const VkPipelineInputAssemblyStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.topology);
+    MergeHash(h, info.primitiveRestartEnable);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineTessellationStateCreateInfo> {
+  size_t operator()(const VkPipelineTessellationStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.patchControlPoints);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineViewportStateCreateInfo> {
+  size_t operator()(const VkPipelineViewportStateCreateInfo &) const noexcept {
+    size_t h = 1;
+    // TODO ignore. This can be part of dynamic state.
+    return h;
+  }
+};
+template <> struct hash<VkPipelineRasterizationStateCreateInfo> {
+  size_t operator()(const VkPipelineRasterizationStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.depthClampEnable);
+    MergeHash(h, info.rasterizerDiscardEnable);
+    MergeHash(h, info.polygonMode);
+    MergeHash(h, info.cullMode);
+    MergeHash(h, info.frontFace);
+    MergeHash(h, info.depthBiasEnable);
+    // TODO: MergeHash(h, info.depthBiasConstantFactor);
+    // TODO: MergeHash(h, info.depthBiasClamp);
+    // TODO: MergeHash(h, info.depthBiasSlopeFactor);
+    // TODO: MergeHash(h, info.lineWidth);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineMultisampleStateCreateInfo> {
+  size_t operator()(const VkPipelineMultisampleStateCreateInfo &) const
+      noexcept {
+    size_t h = 1;
+    // TODO: ignore for now.
+    return h;
+  }
+};
+template <> struct hash<VkStencilOpState> {
+  size_t operator()(const VkStencilOpState &info) const noexcept {
+    size_t h = 1;
+    MergeHash(h, info.failOp);
+    MergeHash(h, info.passOp);
+    MergeHash(h, info.depthFailOp);
+    MergeHash(h, info.compareOp);
+    MergeHash(h, info.compareMask);
+    MergeHash(h, info.writeMask);
+    MergeHash(h, info.reference);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineDepthStencilStateCreateInfo> {
+  size_t operator()(const VkPipelineDepthStencilStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.depthTestEnable);
+    MergeHash(h, info.depthWriteEnable);
+    MergeHash(h, info.depthCompareOp);
+    MergeHash(h, info.depthBoundsTestEnable);
+    MergeHash(h, info.stencilTestEnable);
+    MergeHash(h, hash<VkStencilOpState>{}(info.front));
+    MergeHash(h, hash<VkStencilOpState>{}(info.back));
+    MergeHash(h, info.minDepthBounds);
+    MergeHash(h, info.maxDepthBounds);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineColorBlendAttachmentState> {
+  size_t operator()(const VkPipelineColorBlendAttachmentState &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.blendEnable);
+    MergeHash(h, info.srcColorBlendFactor);
+    MergeHash(h, info.dstColorBlendFactor);
+    MergeHash(h, info.colorBlendOp);
+    MergeHash(h, info.srcAlphaBlendFactor);
+    MergeHash(h, info.dstAlphaBlendFactor);
+    MergeHash(h, info.alphaBlendOp);
+    MergeHash(h, info.colorWriteMask);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineColorBlendStateCreateInfo> {
+  size_t operator()(const VkPipelineColorBlendStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.logicOpEnable);
+    MergeHash(h, info.logicOp);
+    MergeHash(h, info.attachmentCount);
+    for (uint32_t i = 0; i < info.attachmentCount; ++i) {
+      MergeHash(
+          h, hash<VkPipelineColorBlendAttachmentState>{}(info.pAttachments[i]));
+    }
+    MergeHash(h, info.blendConstants[0]);
+    MergeHash(h, info.blendConstants[1]);
+    MergeHash(h, info.blendConstants[2]);
+    MergeHash(h, info.blendConstants[3]);
+    return h;
+  }
+};
+template <> struct hash<VkPipelineDynamicStateCreateInfo> {
+  size_t operator()(const VkPipelineDynamicStateCreateInfo &info) const
+      noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.dynamicStateCount);
+    for (uint32_t i = 0; i < info.dynamicStateCount; ++i) {
+      MergeHash(h, info.pDynamicStates[i]);
+    }
+    return h;
+  }
+};
+template <> struct hash<VkGraphicsPipelineCreateInfo> {
+  size_t operator()(const VkGraphicsPipelineCreateInfo &info) const noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.stageCount);
+    for (uint32_t i = 0; i < info.stageCount; ++i) {
+      MergeHash(h, hash<VkPipelineShaderStageCreateInfo>{}(info.pStages[i]));
+    }
+    if (info.pVertexInputState != nullptr) {
+      MergeHash(h, hash<VkPipelineVertexInputStateCreateInfo>{}(
+                       *info.pVertexInputState));
+    }
+    if (info.pInputAssemblyState != nullptr) {
+      MergeHash(h, hash<VkPipelineInputAssemblyStateCreateInfo>{}(
+                       *info.pInputAssemblyState));
+    }
+    if (info.pTessellationState != nullptr) {
+      MergeHash(h, hash<VkPipelineTessellationStateCreateInfo>{}(
+                       *info.pTessellationState));
+    }
+    if (info.pViewportState != nullptr) {
+      MergeHash(
+          h, hash<VkPipelineViewportStateCreateInfo>{}(*info.pViewportState));
+    }
+    if (info.pRasterizationState != nullptr) {
+      MergeHash(h, hash<VkPipelineRasterizationStateCreateInfo>{}(
+                       *info.pRasterizationState));
+    }
+    if (info.pMultisampleState != nullptr) {
+      MergeHash(h, hash<VkPipelineMultisampleStateCreateInfo>{}(
+                       *info.pMultisampleState));
+    }
+    if (info.pDepthStencilState != nullptr) {
+      MergeHash(h, hash<VkPipelineDepthStencilStateCreateInfo>{}(
+                       *info.pDepthStencilState));
+    }
+    if (info.pColorBlendState != nullptr) {
+      MergeHash(h, hash<VkPipelineColorBlendStateCreateInfo>{}(
+                       *info.pColorBlendState));
+    }
+    if (info.pDynamicState != nullptr) {
+      MergeHash(h,
+                hash<VkPipelineDynamicStateCreateInfo>{}(*info.pDynamicState));
+    }
+    MergeHash(h, reinterpret_cast<size_t>(info.layout));
+    // MergeHash(h, reinterpret_cast<size_t>(info.renderPass));
+    // MergeHash(h, reinterpret_cast<size_t>(info.subpass));
+    return h;
+  }
+};
+
+template <> struct equal_to<VkGraphicsPipelineCreateInfo> {
+  size_t operator()(const VkGraphicsPipelineCreateInfo &info1,
+                    const VkGraphicsPipelineCreateInfo &info2) const noexcept {
+    // TODO implement
+    return hash<VkGraphicsPipelineCreateInfo>{}(info1) ==
+           hash<VkGraphicsPipelineCreateInfo>{}(info2);
+  }
+};
+
 }|}
 
 let gen_types_header root_elems =
@@ -879,13 +1585,15 @@ let gen_types_header root_elems =
     Cpp.Header.(
       empty "Types" |> add_include "<array>"
       |> add_include {|"glm/glm.hpp"|}
+      |> add_section merge_hash_function
       |> add_section render_pass_descriptor_struct
       |> add_section render_pass_descriptor_hash
       |> add_section framebuffer_descriptor_struct
       |> add_section framebuffer_descriptor_hash
       |> add_section vk_descriptor_set_layout_binding_hash
       |> add_section vk_descriptor_set_layout_create_info_hash
-      |> add_section vk_pipeline_layout_create_info_hash)
+      |> add_section vk_pipeline_layout_create_info_hash
+      |> add_section vk_graphics_pipeline_create_info_hash)
   in
   List.fold_left
     (fun acc tl ->
@@ -984,7 +1692,7 @@ let gen_pipelines cfg root_elems =
       | _ -> acc)
     (Ok MapString.empty) root_elems
 
-let gen_renderer_libraries cfg glsl_libraries root_elems =
+let gen_renderer_libraries cfg pipelines glsl_libraries root_elems =
   let pkg = String.concat "/" cfg.Config.cfg_bazel_package in
   List.fold_left
     (fun acc tl ->
@@ -992,7 +1700,8 @@ let gen_renderer_libraries cfg glsl_libraries root_elems =
       let L.{ loc; value } = tl in
       match value with
       | TypedAst.RendererDecl rd ->
-          gen_renderer_library loc cfg glsl_libraries rd >>= fun lib ->
+          gen_renderer_library loc cfg pipelines glsl_libraries rd
+          >>= fun lib ->
           let lib =
             List.fold_left
               (fun lib glsl_lib ->
@@ -1482,7 +2191,7 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
   in
   gen_pipelines cfg root_elems >>= fun pipelines ->
   gen_glsl_libraries root_env glsl_types pipelines >>= fun glsl_libraries ->
-  gen_renderer_libraries cfg glsl_libraries root_elems
+  gen_renderer_libraries cfg pipelines glsl_libraries root_elems
   >>= fun renderer_libraries ->
   let build =
     List.fold_left (flip Build.add_glsl_library) build glsl_libraries

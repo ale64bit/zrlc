@@ -120,12 +120,13 @@ let rec check_type env ctx_loc t =
   | Type.RenderTarget _ -> Ok t
   | Type.Primitive _ -> Ok t
 
-let build_function_environment env loc name typ =
+let build_function_environment ~mutable_args env loc name typ =
   match typ with
   | Type.Function (args, _) ->
+      let add_fn = if mutable_args then Env.add_var else Env.add_val in
       let env =
         List.fold_left
-          (fun env (name, t) -> Env.add_val name L.{ loc; value = t } env)
+          (fun env (name, t) -> add_fn name L.{ loc; value = t } env)
           env args
       in
       Env.add_builtin name env
@@ -1134,7 +1135,9 @@ let check_function_declaration env loc fd =
   let Ast.{ fd_name; fd_type; fd_body } = fd in
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
-  let env = build_function_environment env loc fd_name clean_type in
+  let env =
+    build_function_environment ~mutable_args:false env loc fd_name clean_type
+  in
   check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
   check_missing_return loc fd >>= fun () ->
   Ok
@@ -1177,7 +1180,9 @@ let check_pipeline_declaration_body env loc pd =
   let Ast.{ pd_name; pd_type; pd_functions } = pd in
   check_type env loc pd_type >>= fun clean_type ->
   let env = Env.enter_pipeline_scope pd_name clean_type env in
-  let env = build_function_environment env loc "" clean_type in
+  let env =
+    build_function_environment ~mutable_args:false env loc "" clean_type
+  in
   check_function_group env pd_functions >>= fun typed_functions ->
   Ok
     L.
@@ -1206,7 +1211,9 @@ let check_renderer_declaration_body env loc rd =
   let Ast.{ rd_name; rd_type; rd_functions } = rd in
   check_type env loc rd_type >>= fun clean_type ->
   let env = Env.enter_renderer_scope rd_name clean_type env in
-  let env = build_function_environment env loc "" clean_type in
+  let env =
+    build_function_environment ~mutable_args:true env loc "" clean_type
+  in
   check_function_group env rd_functions >>= fun typed_functions ->
   Ok
     L.
