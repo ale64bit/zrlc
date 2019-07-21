@@ -19,9 +19,9 @@ end
 type graphics_pipeline = {
   gp_name : string;
   gp_declaration : TypedAst.pipeline_declaration;
-  gp_uniforms : (string * Type.t) list;
-  gp_inputs : (string * Type.t) list;
-  gp_outputs : Type.t list;
+  gp_uniforms : (int * int * string * Type.t) list;
+  gp_inputs : (int * string * Type.t) list;
+  gp_outputs : (int * Type.t) list;
   gp_vertex_stage : TypedAst.function_declaration;
   gp_geometry_stage : TypedAst.function_declaration option;
   gp_fragment_stage : TypedAst.function_declaration option;
@@ -332,7 +332,7 @@ let gen_clear env lhs rhs r =
       let end_current_pass =
         Printf.sprintf
           {|  if (current_render_pass != VK_NULL_HANDLE && rt_%s_load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && rt_%s_load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
-    vkCmdEndRenderPass(gct_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
     current_render_pass = VK_NULL_HANDLE;
   }|}
           rt_name rt_name
@@ -443,11 +443,11 @@ let format_of_vertex_input_type t =
   | TypeRef "uvec4" -> "VK_FORMAT_R32G32B32_UINT"
   | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
 
-let gen_vertex_input_state_create_info env p =
+let gen_vertex_input_state_create_info p =
   let num_inputs = List.length p.gp_inputs in
   let vertex_bindings =
     List.map
-      (fun (i, (_, t)) ->
+      (fun (i, (_, _, t)) ->
         Printf.sprintf
           {|
     vertex_bindings[%d].binding = %d;
@@ -457,22 +457,19 @@ let gen_vertex_input_state_create_info env p =
           i i i (stride_of_type t) i)
       (List.index p.gp_inputs)
   in
-  let _, vertex_attributes =
-    List.fold_left
-      (fun (offset, attributes) (i, (_, t)) ->
-        let attr =
-          Printf.sprintf
-            {|
+  let vertex_attributes =
+    List.map
+      (fun (i, (location, _, t)) ->
+        Printf.sprintf
+          {|
     vertex_attributes[%d].location = %d;
     vertex_attributes[%d].binding = %d;
     vertex_attributes[%d].format = %s;
     vertex_attributes[%d].offset = 0;|}
-            i offset i i i
-            (format_of_vertex_input_type t)
-            i
-        in
-        (offset + glsl_type_locations env t, attr :: attributes))
-      (0, []) (List.index p.gp_inputs)
+          i location i i i
+          (format_of_vertex_input_type t)
+          i)
+      (List.index p.gp_inputs)
   in
   Printf.sprintf
     {|
@@ -498,9 +495,7 @@ let gen_vertex_input_state_create_info env p =
 let gen_create_and_bind_pipeline env p r lhs =
   let open RendererEnv in
   let shader_stages = gen_shader_stage_create_infos p in
-  let vertex_input_state_create_info =
-    gen_vertex_input_state_create_info env p
-  in
+  let vertex_input_state_create_info = gen_vertex_input_state_create_info p in
   let num_color_attachments =
     List.fold_left
       (fun acc (_, lhs) ->
@@ -660,7 +655,7 @@ let gen_create_and_bind_pipeline env p r lhs =
       pipeline = res->second;
     }
     if (pipeline != current_pipeline) {
-      vkCmdBindPipeline(gct_cmd_buffer_[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+      vkCmdBindPipeline(gc_cmd_buffer_[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
                         pipeline);
       current_pipeline = pipeline;
     }
@@ -668,7 +663,40 @@ let gen_create_and_bind_pipeline env p r lhs =
           shader_stages vertex_input_state_create_info num_color_attachments
           color_blend_attachments p.gp_name)
 
-let gen_write env pipeline lhs _ r =
+let collect_atom_bindings = function
+  | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
+      List.map
+        (function
+          | L.{ value = Ast.NamedArg (lhs, L.{ value = Ast.Id rhs; _ }); _ } ->
+              (lhs, rhs)
+          | expr ->
+              failwith
+                ( "unsupported pipeline atom binding: "
+                ^ Ast.string_of_expression expr ))
+        args
+  | _ -> failwith "unsupported right hand side of pipeline write statement"
+
+let gen_vertex_buffer_copies_and_bindings pipeline r bindings =
+  let is_input id =
+    List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
+  in
+  let is_uniform id =
+    List.exists (fun (_, _, name, _) -> id = name) pipeline.gp_uniforms
+  in
+  List.fold_left
+    (fun r (lhs, rhs) ->
+      if is_input lhs then (
+        (* TODO: implement *)
+        Printf.printf "binding atom %s to input %s\n" rhs lhs;
+        r )
+      else if is_uniform lhs then (
+        (* TODO: implement *)
+        Printf.printf "binding atom %s to uniform %s\n" rhs lhs;
+        r )
+      else r)
+    r bindings
+
+let gen_write env pipeline lhs rhs r =
   let open RendererEnv in
   let set_clear_value var rt_name = function
     | Color ->
@@ -686,6 +714,7 @@ let gen_write env pipeline lhs _ r =
         |}
           var rt_name rt_name
   in
+  let bindings = collect_atom_bindings rhs in
   let fb_imgs =
     List.map
       (fun (_, lhs) ->
@@ -749,7 +778,7 @@ let gen_write env pipeline lhs _ r =
     |> add_stmt_inside_render_passes
          "  if (current_render_pass != VK_NULL_HANDLE) {"
     |> add_stmt_inside_render_passes
-         "    vkCmdEndRenderPass(gct_cmd_buffer_[image_index]);"
+         "    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);"
     |> add_stmt_inside_render_passes "  }"
     |> add_stmt_inside_render_passes (String.concat "\n" layouts)
     |> add_stmt_inside_render_passes
@@ -770,12 +799,13 @@ let gen_write env pipeline lhs _ r =
     |> add_stmt_inside_render_passes
          "  begin_info.pClearValues = clear_values.data();"
     |> add_stmt_inside_render_passes
-         "  vkCmdBeginRenderPass(gct_cmd_buffer_[image_index], &begin_info, \
+         "  vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info, \
           VK_SUBPASS_CONTENTS_INLINE);"
     |> add_stmt_inside_render_passes "  current_render_pass = render_pass;"
     |> add_stmt_inside_render_passes "}"
   in
   let r = gen_create_and_bind_pipeline env pipeline r lhs in
+  let r = gen_vertex_buffer_copies_and_bindings pipeline r bindings in
   r |> add_stmt_inside_render_passes "}"
 
 let extract_pipeline_name_from_write = function
@@ -1061,7 +1091,7 @@ let gen_shader_modules cfg_bazel_package glsl_libraries r =
 
 let gen_descriptor_set_layouts p r =
   List.fold_left
-    (fun r (name, t) ->
+    (fun r (_, _, name, t) ->
       let descriptor_set_layout =
         Printf.sprintf "%s_%s_descriptor_set_layout_" p.gp_name name
       in
@@ -1120,7 +1150,7 @@ let gen_pipeline_layout pipeline r =
   let descriptor_set_layouts =
     List.rev
       (List.fold_left
-         (fun layouts (name, _) ->
+         (fun layouts (_, _, name, _) ->
            let descriptor_set_layout =
              Printf.sprintf "%s_%s_descriptor_set_layout_" pipeline.gp_name
                name
@@ -1619,7 +1649,7 @@ let check_stage_chaining loc from_stage to_stage =
   | _ -> failwith "stages must have Function types"
 
 let gen_graphics_pipeline loc pd =
-  let TypedAst.{ pd_name; pd_type; pd_functions; _ } = pd in
+  let TypedAst.{ pd_env; pd_name; pd_type; pd_functions } = pd in
   let find_func name =
     List.find (fun TypedAst.{ fd_name; _ } -> fd_name = name) pd_functions
   in
@@ -1639,12 +1669,25 @@ let gen_graphics_pipeline loc pd =
   check_stage_chaining loc vertex_type fragment_type >>= fun () ->
   match (pd_type, vertex_type) with
   | Type.Function (uniforms, outputs), Type.Function (inputs, _) ->
+      let uniforms =
+        List.(
+          map
+            (fun (i, (name, t)) -> (i / 8, i mod 8, name, t))
+            (index uniforms))
+      in
+      let _, inputs =
+        List.fold_left
+          (fun (offset, inputs) (name, t) ->
+            (offset + glsl_type_locations pd_env t, (offset, name, t) :: inputs))
+          (0, []) inputs
+      in
+      let outputs = List.index outputs in
       Ok
         {
           gp_name = pd_name;
           gp_declaration = pd;
           gp_uniforms = uniforms;
-          gp_inputs = inputs;
+          gp_inputs = List.rev inputs;
           gp_outputs = outputs;
           gp_vertex_stage = find_func "vertex";
           gp_geometry_stage = find_func_opt "geometry";
@@ -1658,7 +1701,7 @@ let gen_compute_pipeline loc _ =
   (* TODO: implement *)
   error loc (`Unsupported "compute pipelines not supported")
 
-let gen_pipeline loc _ pd =
+let gen_pipeline loc pd =
   let TypedAst.{ pd_functions; _ } = pd in
   let has_function name =
     List.exists (fun TypedAst.{ fd_name; _ } -> fd_name = name) pd_functions
@@ -1680,14 +1723,14 @@ let gen_pipeline loc _ pd =
           "unknown pipeline type: must have either 'vertex' or 'compute' \
            function")
 
-let gen_pipelines cfg root_elems =
+let gen_pipelines root_elems =
   List.fold_left
     (fun acc tl ->
       acc >>= fun pipelines ->
       let L.{ loc; value } = tl in
       match value with
       | TypedAst.PipelineDecl pd ->
-          gen_pipeline loc cfg pd >>= fun p ->
+          gen_pipeline loc pd >>= fun p ->
           Ok MapString.(pipelines |> add pd.pd_name p)
       | _ -> acc)
     (Ok MapString.empty) root_elems
@@ -2161,10 +2204,11 @@ let gen_glsl_libraries env glsl_types pipelines =
         List.map
           (fun shader ->
             List.fold_left
-              (fun shader (i, (name, t)) ->
-                Shader.add_uniform i i (glsl_uniform_format env t name) shader)
-              shader
-              (List.index pipeline.gp_uniforms))
+              (fun shader (set, binding, name, t) ->
+                Shader.add_uniform set binding
+                  (glsl_uniform_format env t name)
+                  shader)
+              shader pipeline.gp_uniforms)
           shaders
       in
       let lib =
@@ -2189,7 +2233,7 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
       |> set_copts "COPTS" |> set_defines "DEFINES"
       |> add_header cc_types_header)
   in
-  gen_pipelines cfg root_elems >>= fun pipelines ->
+  gen_pipelines root_elems >>= fun pipelines ->
   gen_glsl_libraries root_env glsl_types pipelines >>= fun glsl_libraries ->
   gen_renderer_libraries cfg pipelines glsl_libraries root_elems
   >>= fun renderer_libraries ->

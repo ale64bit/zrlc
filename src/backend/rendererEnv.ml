@@ -156,17 +156,35 @@ let create_command_buffers =
     empty "CreateCommandBuffers"
     |> set_return_type "std::vector<VkCommandBuffer>"
     |> add_param ("VkCommandPool", "pool")
+    |> add_param ("VkCommandBufferLevel", "level")
     |> add_param ("uint32_t", "count")
     |> append_code_section
          {|  const VkDevice device = core_.GetLogicalDevice().GetHandle();
   VkCommandBufferAllocateInfo alloc_info = {};
   alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   alloc_info.commandPool = pool;
-  alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  alloc_info.level = level;
   alloc_info.commandBufferCount = count;
   std::vector<VkCommandBuffer> cmd_buffers(count);
   CHECK_VK(vkAllocateCommandBuffers(device, &alloc_info, cmd_buffers.data()));
   return cmd_buffers;|})
+
+let create_events =
+  Function.(
+    empty "CreateEvents"
+    |> set_return_type "std::vector<VkEvent>"
+    |> add_param ("uint32_t", "count")
+    |> append_code_section
+         {|  const VkDevice device = core_.GetLogicalDevice().GetHandle();
+  VkEventCreateInfo event_create_info = {};
+  event_create_info.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
+  event_create_info.pNext = nullptr;
+  event_create_info.flags = 0;
+  std::vector<VkEvent> events(count);
+  for (size_t i = 0; i < events.size(); ++i) {
+    CHECK_VK(vkCreateEvent(device, &event_create_info, nullptr, &events[i]));
+  }
+  return events;|})
 
 let create_fences =
   Function.(
@@ -220,12 +238,10 @@ let create_color_render_target =
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
   constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_COLOR_BIT;
   return std::make_unique<zrl::Image>(
-      core_.GetLogicalDevice().GetHandle(),
-      core_.GetSwapchain().GetExtent(), 1, format,
+      core_, core_.GetSwapchain().GetExtent(), 1, format,
       VK_IMAGE_TILING_OPTIMAL, usage,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-      aspects,
-      core_.GetLogicalDevice().GetPhysicalDevice().GetMemoryProperties());|})
+      aspects);|})
 
 let create_depth_render_target =
   Function.(
@@ -236,28 +252,33 @@ let create_depth_render_target =
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
   return std::make_unique<zrl::Image>(
-      core_.GetLogicalDevice().GetHandle(), 
-      core_.GetSwapchain().GetExtent(), 1, format, 
+      core_, core_.GetSwapchain().GetExtent(), 1, format, 
       VK_IMAGE_TILING_OPTIMAL, 
-      usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects,
-      core_.GetLogicalDevice().GetPhysicalDevice().GetMemoryProperties());|})
+      usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
 let ctor_body =
   {|  const auto &device = core_.GetLogicalDevice();
+  DLOG << name_ << ": creating staging buffer\n";
+  staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_128MB);
   DLOG << name_ << ": creating gct command pool\n";
   gct_cmd_pool_ = CreateCommandPool(device.GetGCTQueueFamily());
-  gct_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_,
-                                         core_.GetSwapchain().GetImageCount());
+  gc_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_, 
+                                        VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+                                        core_.GetSwapchain().GetImageCount());
+  t_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_, 
+                                       VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+                                       core_.GetSwapchain().GetImageCount());
   gct_cmd_buffer_fence_ = CreateFences(core_.GetSwapchain().GetImageCount());
   if (device.IsSingleQueue()) {
     DLOG << name_ << ": reusing gct command pool as present command pool\n";
     present_cmd_pool_ = gct_cmd_pool_;
-    present_cmd_buffer_ = gct_cmd_buffer_;
+    present_cmd_buffer_ = gc_cmd_buffer_;
     present_cmd_buffer_fence_ = gct_cmd_buffer_fence_;
   } else {
     DLOG << name_ << ": creating present command pool\n";
     present_cmd_pool_ = CreateCommandPool(device.GetPresentQueueFamily());
-    present_cmd_buffer_ = CreateCommandBuffers(present_cmd_pool_,
+    present_cmd_buffer_ = CreateCommandBuffers(present_cmd_pool_, 
+                                               VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                                core_.GetSwapchain().GetImageCount());
     present_cmd_buffer_fence_ = CreateFences(core_.GetSwapchain().GetImageCount());
   }
@@ -277,7 +298,8 @@ let ctor_body =
 |}
 
 let dtor_body =
-  {|  for (auto image_view : rt_builtin_screen_) {
+  {|  staging_buffer_.reset();
+  for (auto image_view : rt_builtin_screen_) {
     vkDestroyImageView(device, image_view, nullptr);
   }
   DLOG << name_ << ": total graphics pipelines: " << pipeline_cache_.size() << '\n';
@@ -315,6 +337,7 @@ let begin_recording =
   CHECK_VK(vkAcquireNextImageKHR(device, core_.GetSwapchain().GetHandle(),
                                  std::numeric_limits<uint64_t>::max(),
                                  acquire_semaphore_, VK_NULL_HANDLE, &image_index));
+
   // Wait for cmd buffer to be ready.
   CHECK_VK(vkWaitForFences(device, 1, &gct_cmd_buffer_fence_[image_index], VK_TRUE,
                      std::numeric_limits<uint64_t>::max()));
@@ -324,14 +347,15 @@ let begin_recording =
   cmd_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   cmd_buffer_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   cmd_buffer_begin_info.pInheritanceInfo = nullptr;
-  CHECK_VK(vkBeginCommandBuffer(gct_cmd_buffer_[image_index],
-                                &cmd_buffer_begin_info));
+  CHECK_VK(vkBeginCommandBuffer(t_cmd_buffer_[image_index], &cmd_buffer_begin_info));
+  CHECK_VK(vkBeginCommandBuffer(gc_cmd_buffer_[image_index], &cmd_buffer_begin_info));
+  
   return image_index;
 |})
 
 let stop_recording_body =
   {|  if (current_render_pass != VK_NULL_HANDLE) {
-    vkCmdEndRenderPass(gct_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
   }
 
   // Extra render pass to flush pending screen clears and transition
@@ -359,13 +383,19 @@ let stop_recording_body =
     begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();
     begin_info.clearValueCount = 1;
     begin_info.pClearValues = &clear_value;
-    vkCmdBeginRenderPass(gct_cmd_buffer_[image_index], &begin_info,
+    vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info,
                          VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdEndRenderPass(gct_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
   }
-  
+
   // Stop recording.
-  CHECK_VK(vkEndCommandBuffer(gct_cmd_buffer_[image_index]));
+  CHECK_VK(vkEndCommandBuffer(t_cmd_buffer_[image_index]));
+  CHECK_VK(vkEndCommandBuffer(gc_cmd_buffer_[image_index]));
+
+  std::array<VkCommandBuffer, 2> cmd_buffers = {
+      t_cmd_buffer_[image_index],
+      gc_cmd_buffer_[image_index],
+  };
 
   // Submit render command buffer.
   constexpr std::array<VkPipelineStageFlags, 1> wait_stages = {
@@ -375,8 +405,8 @@ let stop_recording_body =
   submit_info.waitSemaphoreCount = 1;
   submit_info.pWaitSemaphores = &acquire_semaphore_;
   submit_info.pWaitDstStageMask = wait_stages.data();
-  submit_info.commandBufferCount = 1;
-  submit_info.pCommandBuffers = &gct_cmd_buffer_[image_index];
+  submit_info.commandBufferCount = static_cast<uint32_t>(cmd_buffers.size());
+  submit_info.pCommandBuffers = cmd_buffers.data();
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = &render_semaphore_;
 
@@ -426,15 +456,18 @@ let empty rname pkg =
         |> add_include "\"core/Core.h\""
         |> add_include "\"core/Image.h\""
         |> add_include "\"core/Log.h\""
+        |> add_include "\"core/StagingBuffer.h\""
         |> add_include "\"glm/glm.hpp\""
         |> add_include "\"glm/gtc/type_ptr.hpp\""
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")
+        |> add_private_member
+             ("std::unique_ptr<zrl::StagingBuffer>", "staging_buffer_")
         |> add_private_member ("VkCommandPool", "gct_cmd_pool_")
         |> add_private_member ("VkCommandPool", "present_cmd_pool_")
-        |> add_private_member
-             ("std::vector<VkCommandBuffer>", "gct_cmd_buffer_")
+        |> add_private_member ("std::vector<VkCommandBuffer>", "gc_cmd_buffer_")
+        |> add_private_member ("std::vector<VkCommandBuffer>", "t_cmd_buffer_")
         |> add_private_member
              ("std::vector<VkCommandBuffer>", "present_cmd_buffer_")
         |> add_private_member ("std::vector<VkFence>", "gct_cmd_buffer_fence_")
@@ -457,6 +490,7 @@ let empty rname pkg =
         |> add_private_member ("glm::fvec4", "rt_builtin_screen_clear_value")
         |> add_private_function create_command_pool
         |> add_private_function create_command_buffers
+        |> add_private_function create_events
         |> add_private_function create_fences
         |> add_private_function create_image_view
         |> add_private_function create_color_render_target
