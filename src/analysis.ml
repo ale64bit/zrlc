@@ -1060,8 +1060,8 @@ and check_forrange env loc it_var from_expr to_expr body =
   Ok (env, [ (stmt_env, L.{ loc; value = typed_stmt }) ])
 
 and check_return env loc exprs =
-  match Env.scope_summary env with
-  | Env.Function (_, Type.Function (_, ret_types)) ->
+  match Env.match_function_scope env with
+  | Some (Env.Function (_, Type.Function (_, ret_types))) ->
       let less_errfn have_types =
         error loc (`NotEnoughReturnArguments (have_types, ret_types))
       in
@@ -1118,17 +1118,30 @@ and check_stmt env loc =
 
 (* Top-Level Elements *)
 
+let rec exists_nested_stmt stmt_match stmts =
+  let open Ast in
+  List.exists
+    (fun L.{ value = stmt; _ } ->
+      stmt_match stmt
+      ||
+      match stmt with
+      | If { if_true; if_false; _ } ->
+          exists_nested_stmt stmt_match if_true
+          || exists_nested_stmt stmt_match if_false
+      | ForIter { foriter_body; _ } ->
+          exists_nested_stmt stmt_match foriter_body
+      | ForRange { forrange_body; _ } ->
+          exists_nested_stmt stmt_match forrange_body
+      | other -> stmt_match other)
+    stmts
+
 let check_missing_return loc fd =
   let Ast.{ fd_name; fd_type; fd_body } = fd in
   match fd_type with
   | Type.Function (_, _ :: _) ->
-      if
-        not
-          (List.exists
-             (function L.{ value = Ast.Return _; _ } -> true | _ -> false)
-             fd_body)
-      then error loc (`MissingReturn fd_name)
-      else Ok ()
+      let stmt_match = function Ast.Return _ -> true | _ -> false in
+      if exists_nested_stmt stmt_match fd_body then Ok ()
+      else error loc (`MissingReturn fd_name)
   | _ -> Ok ()
 
 let check_function_declaration env loc fd =
@@ -1136,7 +1149,7 @@ let check_function_declaration env loc fd =
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
   let env =
-    build_function_environment ~mutable_args:false env loc fd_name clean_type
+    build_function_environment ~mutable_args:true env loc fd_name clean_type
   in
   check_stmt_list env fd_body >>= fun (env, typed_stmts) ->
   check_missing_return loc fd >>= fun () ->

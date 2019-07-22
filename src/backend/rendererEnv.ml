@@ -10,10 +10,6 @@ type t = {
   render : Function.t;
   ctor : Function.t;
   dtor : Function.t;
-  before_recording : string list;
-  outside_render_passes : string list;
-  inside_render_passes : string list;
-  after_recording : string list;
 }
 
 let get_or_create_render_pass =
@@ -348,33 +344,30 @@ let dtor_body =
 
 let begin_recording =
   Function.(
-    empty "BeginRecording" |> set_return_type "uint32_t"
+    empty "BeginRecording" |> set_return_type "void"
     |> append_code_section
          {|  const VkDevice device = core_.GetLogicalDevice().GetHandle();
   // Acquire swapchain image.
-  uint32_t image_index = 0;
   CHECK_VK(vkAcquireNextImageKHR(device, core_.GetSwapchain().GetHandle(),
                                  std::numeric_limits<uint64_t>::max(),
-                                 acquire_semaphore_, VK_NULL_HANDLE, &image_index));
+                                 acquire_semaphore_, VK_NULL_HANDLE, &image_index_));
 
   // Wait for cmd buffer to be ready.
-  CHECK_VK(vkWaitForFences(device, 1, &gct_cmd_buffer_fence_[image_index], VK_TRUE,
+  CHECK_VK(vkWaitForFences(device, 1, &gct_cmd_buffer_fence_[image_index_], VK_TRUE,
                      std::numeric_limits<uint64_t>::max()));
-  CHECK_VK(vkResetFences(device, 1, &gct_cmd_buffer_fence_[image_index]));
+  CHECK_VK(vkResetFences(device, 1, &gct_cmd_buffer_fence_[image_index_]));
 
   VkCommandBufferBeginInfo cmd_buffer_begin_info = {};
   cmd_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   cmd_buffer_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   cmd_buffer_begin_info.pInheritanceInfo = nullptr;
-  CHECK_VK(vkBeginCommandBuffer(t_cmd_buffer_[image_index], &cmd_buffer_begin_info));
-  CHECK_VK(vkBeginCommandBuffer(gc_cmd_buffer_[image_index], &cmd_buffer_begin_info));
-  
-  return image_index;
+  CHECK_VK(vkBeginCommandBuffer(t_cmd_buffer_[image_index_], &cmd_buffer_begin_info));
+  CHECK_VK(vkBeginCommandBuffer(gc_cmd_buffer_[image_index_], &cmd_buffer_begin_info));
 |})
 
 let stop_recording_body =
   {|  if (current_render_pass_ != VK_NULL_HANDLE) {
-    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
   }
 
   // Extra render pass to flush pending screen clears and transition
@@ -396,19 +389,19 @@ let stop_recording_body =
     begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();
     begin_info.clearValueCount = 1;
     begin_info.pClearValues = &builtin.screen->clear_value;
-    vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info,
+    vkCmdBeginRenderPass(gc_cmd_buffer_[image_index_], &begin_info,
                          VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
     builtin.screen->current_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
   }
 
   // Stop recording.
-  CHECK_VK(vkEndCommandBuffer(t_cmd_buffer_[image_index]));
-  CHECK_VK(vkEndCommandBuffer(gc_cmd_buffer_[image_index]));
+  CHECK_VK(vkEndCommandBuffer(t_cmd_buffer_[image_index_]));
+  CHECK_VK(vkEndCommandBuffer(gc_cmd_buffer_[image_index_]));
 
   std::array<VkCommandBuffer, 2> cmd_buffers = {
-      t_cmd_buffer_[image_index],
-      gc_cmd_buffer_[image_index],
+      t_cmd_buffer_[image_index_],
+      gc_cmd_buffer_[image_index_],
   };
 
   // Submit render command buffer.
@@ -425,7 +418,7 @@ let stop_recording_body =
   submit_info.pSignalSemaphores = &render_semaphore_;
 
   CHECK_VK(vkQueueSubmit(core_.GetLogicalDevice().GetGCTQueue(), 1, &submit_info,
-                         gct_cmd_buffer_fence_[image_index]));
+                         gct_cmd_buffer_fence_[image_index_]));
 
   // TODO(ale64bit): if gct and present queues are not the same, an additional
   // barrier is needed here.
@@ -439,7 +432,7 @@ let stop_recording_body =
   present_info.pWaitSemaphores = &render_semaphore_;
   present_info.swapchainCount = 1;
   present_info.pSwapchains = swapchains;
-  present_info.pImageIndices = &image_index;
+  present_info.pImageIndices = &image_index_;
   present_info.pResults = nullptr;
 
   CHECK_VK(vkQueuePresentKHR(core_.GetLogicalDevice().GetPresentQueue(), &present_info));
@@ -476,6 +469,7 @@ let empty rname pkg =
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")
+        |> add_private_member ("uint32_t", "image_index_")
         |> add_private_member
              ("std::unique_ptr<zrl::StagingBuffer>", "staging_buffer_")
         |> add_private_member ("VkCommandPool", "gct_cmd_pool_")
@@ -517,7 +511,18 @@ let empty rname pkg =
         |> add_private_function get_or_create_render_pass
         |> add_private_function get_or_create_framebuffer
         |> add_private_function begin_recording);
-    render = Function.(empty "Render" |> set_return_type "void");
+    render =
+      Function.(
+        empty "Render" |> set_return_type "void"
+        |> append_code_section "BeginRecording();"
+        |> append_code_section "current_render_pass_ = VK_NULL_HANDLE;"
+        |> append_code_section "current_pipeline_ = VK_NULL_HANDLE;"
+        |> append_code_section
+             "builtin.screen = &rt_builtin_screen_ref_[image_index_];"
+        |> append_code_section
+             "builtin.screen->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
+        |> append_code_section
+             "builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;");
     ctor =
       Function.(
         empty rname
@@ -532,54 +537,42 @@ let empty rname pkg =
         |> add_member_initializer ("current_pipeline_", "VK_NULL_HANDLE")
         |> append_code_section ctor_body);
     dtor = Function.(empty ("~" ^ rname));
-    before_recording =
-      List.rev
-        [ "current_render_pass_ = VK_NULL_HANDLE;";
-          "current_pipeline_ = VK_NULL_HANDLE;"
-        ];
-    outside_render_passes = [];
-    inside_render_passes = [];
-    after_recording = [];
   }
 
-let add_stmt_before_recording stmt t =
-  { t with before_recording = stmt :: t.before_recording }
-
-let add_stmt_outside_render_passes stmt t =
-  { t with outside_render_passes = stmt :: t.outside_render_passes }
-
-let add_stmt_inside_render_passes stmt t =
-  { t with inside_render_passes = stmt :: t.inside_render_passes }
-
-let add_stmt_after_recording stmt t =
-  { t with after_recording = stmt :: t.after_recording }
+let flip f x y = f y x
 
 let export t =
+  let open Cpp in
   let dtor =
     Function.(
       t.dtor
       |> prepend_code_section wait_device_and_queues_idle
       |> append_code_section dtor_body)
   in
+  let main =
+    List.find
+      (fun f -> Function.name f = "main")
+      (Class.private_functions t.rclass)
+  in
+  let render =
+    List.fold_left
+      (flip Function.add_template_param)
+      t.render
+      (Function.template_params main)
+  in
+  let render =
+    List.fold_left (flip Function.add_param) render (Function.params main)
+  in
+  let arg_names =
+    String.concat ", "
+      (List.map (fun (_, name) -> name) (Function.params main))
+  in
   let render =
     Function.(
-      t.render
-      |> append_code_section "// ====== Before recording ======"
-      |> append_code_sections (List.rev t.before_recording)
-      |> append_code_section "const uint32_t image_index = BeginRecording();"
-      |> append_code_section
-           "builtin.screen = &rt_builtin_screen_ref_[image_index];"
-      |> append_code_section
-           "builtin.screen->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
-      |> append_code_section
-           "builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;"
-      |> append_code_section "// ====== Outside render passes ======"
-      |> append_code_sections (List.rev t.outside_render_passes)
-      |> append_code_section "// ====== Inside render passes ======"
-      |> append_code_sections (List.rev t.inside_render_passes)
-      |> append_code_section stop_recording_body
-      |> append_code_section "// ====== After recording ======"
-      |> append_code_sections (List.rev t.after_recording))
+      render
+      |> set_return_type (Function.return_type main)
+      |> append_code_section (Printf.sprintf "  main(%s);" arg_names)
+      |> append_code_section stop_recording_body)
   in
   Class.(
     t.rclass |> add_public_function t.ctor |> add_public_function dtor

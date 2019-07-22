@@ -20,6 +20,14 @@ module Function = struct
       body = [];
     }
 
+  let name f = f.name
+
+  let params f = List.rev f.parameters
+
+  let template_params f = List.rev f.template_parameters
+
+  let return_type f = f.return_type
+
   let is_template f =
     match f.template_parameters with [] -> false | _ -> true
 
@@ -106,6 +114,8 @@ module Class = struct
     }
 
   let name c = c.name
+
+  let private_functions c = c.private_functions
 
   let set_package p c = { c with package = p }
 

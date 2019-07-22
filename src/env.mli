@@ -38,6 +38,8 @@ val is_renderer_scope : t -> bool
 
 val is_function_scope : t -> bool
 
+val match_function_scope : t -> summary option
+
 (* Exists *)
 val constant_exists : string -> t -> bool
 

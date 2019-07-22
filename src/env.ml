@@ -407,8 +407,18 @@ let rec is_renderer_scope env =
 let rec is_function_scope env =
   match env.summary with
   | Function _ -> true
-  | _ -> (
+  | Block _ -> (
       match env.parent with Some env -> is_function_scope env | None -> false )
+  | _ -> false
+
+let rec match_function_scope env =
+  match env.summary with
+  | Function _ -> Some env.summary
+  | Block _ -> (
+      match env.parent with
+      | Some env -> match_function_scope env
+      | None -> None )
+  | _ -> None
 
 (* Others *)
 let add_builtin fname env =

@@ -3,6 +3,14 @@ module Function : sig
 
   val empty : string -> t
 
+  val name : t -> string
+
+  val params : t -> (string * string) list
+
+  val template_params : t -> string list
+
+  val return_type : t -> string
+
   val is_template : t -> bool
 
   val set_return_type : string -> t -> t
@@ -34,6 +42,8 @@ module Class : sig
   val empty : string -> t
 
   val name : t -> string
+
+  val private_functions : t -> Function.t list
 
   val set_package : string list -> t -> t
 

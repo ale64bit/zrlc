@@ -32,13 +32,6 @@ let flip f x y = f y x
 
 let error loc e = Error L.{ loc; value = e }
 
-let find_func name funcs err =
-  match
-    List.find_opt (fun TypedAst.{ fd_name; _ } -> fd_name = name) funcs
-  with
-  | Some f -> Ok f
-  | None -> err
-
 let rec glsl_type_locations env = function
   | Type.TypeRef "int" -> 1
   | Type.TypeRef "bool" -> 1
@@ -160,84 +153,6 @@ let reorder_call_args env expr args =
       List.sort cmp args
   | _ -> failwith "unexpected non-Function type in call expression"
 
-let gen_renderer_signature loc rd_name rd_functions r =
-  let open Cpp in
-  let err = error loc (`MissingRendererEntryPoint rd_name) in
-  find_func "main" rd_functions err >>= fun TypedAst.{ fd_type; _ } ->
-  match fd_type with
-  | Type.Function (params, _) ->
-      List.fold_left
-        (fun acc (name, t) ->
-          acc >>= fun r ->
-          match t with
-          | Type.TypeRef (("int" | "float" | "bool") as tname) ->
-              Ok
-                RendererEnv.
-                  {
-                    r with
-                    render = Function.(r.render |> add_param (tname, name));
-                  }
-          (* TODO: support vector/matrix types via GLM *)
-          | Type.TypeRef "atom" ->
-              let tmpl_param = name ^ "AtomType" in
-              let param = (Printf.sprintf "const %s&" tmpl_param, name) in
-              Ok
-                RendererEnv.
-                  {
-                    r with
-                    render =
-                      Function.(
-                        r.render
-                        |> add_template_param ("class " ^ tmpl_param)
-                        |> add_param param);
-                  }
-          | Type.TypeRef "atomset" ->
-              let tmpl_param = name ^ "AtomType" in
-              let param =
-                ( Printf.sprintf "const std::unordered_set<%s>&" tmpl_param,
-                  name )
-              in
-              Ok
-                RendererEnv.
-                  {
-                    r with
-                    render =
-                      Function.(
-                        r.render
-                        |> add_template_param ("class " ^ tmpl_param)
-                        |> add_param param);
-                  }
-          | Type.TypeRef "atomlist" ->
-              let tmpl_param = name ^ "AtomType" in
-              let param =
-                (Printf.sprintf "const std::vector<%s>&" tmpl_param, name)
-              in
-              Ok
-                RendererEnv.
-                  {
-                    r with
-                    render =
-                      Function.(
-                        r.render
-                        |> add_template_param ("class " ^ tmpl_param)
-                        |> add_param param);
-                  }
-          | Type.TypeRef tname ->
-              let cr = "const " ^ tname ^ "&" in
-              Ok
-                RendererEnv.
-                  {
-                    r with
-                    render = Function.(r.render |> add_param (cr, name));
-                  }
-          | _ ->
-              error loc
-                (`Unsupported
-                  (Printf.sprintf "cannot use type %s as renderer argument"
-                     (Type.string_of_type t))))
-        (Ok r) params
-  | _ -> failwith "renderer entry point must be of Function type"
-
 let gen_cpp_builtin_call_id = function
   | "ivec2" -> "glm::ivec2"
   | "ivec3" -> "glm::ivec3"
@@ -323,17 +238,17 @@ let is_rt_clear_or_write env op lvalues =
         lvalues
   | _ -> false
 
-let gen_clear env lhs rhs r =
+let gen_clear env lhs rhs f =
   let bindings = List.combine lhs rhs in
   List.fold_left
-    (fun r ((_, lhs), (_, rhs)) ->
+    (fun f ((_, lhs), (_, rhs)) ->
       let rt_var =
         Printf.sprintf "RenderTargetReference *_rt = (%s);"
           (gen_cpp_expression env lhs)
       in
       let end_current_pass =
         {|  if (current_render_pass_ != VK_NULL_HANDLE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
-    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+    vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
     current_render_pass_ = VK_NULL_HANDLE;
   }|}
       in
@@ -344,13 +259,12 @@ let gen_clear env lhs rhs r =
           "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof (%s));"
           clear_value_expr clear_value_expr
       in
-      RendererEnv.(
-        r
-        |> add_stmt_inside_render_passes rt_var
-        |> add_stmt_inside_render_passes end_current_pass
-        |> add_stmt_inside_render_passes update_load_op
-        |> add_stmt_inside_render_passes update_clear_value))
-    r bindings
+      Cpp.Function.(
+        f |> append_code_section rt_var
+        |> append_code_section end_current_pass
+        |> append_code_section update_load_op
+        |> append_code_section update_clear_value))
+    f bindings
 
 let gen_shader_stage_create_infos p =
   let vertex_stage =
@@ -493,21 +407,17 @@ let gen_vertex_input_state_create_info p =
     (String.concat "\n" vertex_bindings)
     (String.concat "\n" (List.rev vertex_attributes))
 
-let gen_create_and_bind_pipeline env p r lhs =
-  let open RendererEnv in
+let gen_create_and_bind_pipeline env p f lhs =
   let shader_stages = gen_shader_stage_create_infos p in
   let vertex_input_state_create_info = gen_vertex_input_state_create_info p in
   let num_color_attachments =
     List.fold_left
       (fun acc (_, lhs) ->
-        let rt_name =
-          match gen_cpp_expression env lhs with
-          | "builtin.screen" -> "builtin_screen"
-          | other -> other
-        in
-        match MapString.find rt_name r.render_targets with
-        | Color -> 1 + acc
-        | DepthStencil -> acc)
+        match Analysis.check_expr env lhs with
+        | Ok [ Type.TypeRef "rt_rgb" ] -> 1 + acc
+        | Ok [ Type.TypeRef "rt_rgba" ] -> 1 + acc
+        | Ok [ Type.TypeRef "rt_ds" ] -> acc
+        | _ -> failwith "unexpected expression type")
       0 lhs
   in
   let color_blend_attachments =
@@ -528,10 +438,11 @@ let gen_create_and_bind_pipeline env p r lhs =
   |}
              i i i i i i i i))
   in
-  r
-  |> add_stmt_inside_render_passes
-       (Printf.sprintf
-          {|{
+  Cpp.Function.(
+    f
+    |> append_code_section
+         (Printf.sprintf
+            {|{
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
 
     %s
@@ -656,13 +567,13 @@ let gen_create_and_bind_pipeline env p r lhs =
       pipeline = res->second;
     }
     if (pipeline != current_pipeline_) {
-      vkCmdBindPipeline(gc_cmd_buffer_[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+      vkCmdBindPipeline(gc_cmd_buffer_[image_index_], VK_PIPELINE_BIND_POINT_GRAPHICS,
                         pipeline);
       current_pipeline_ = pipeline;
     }
 }|}
-          shader_stages vertex_input_state_create_info num_color_attachments
-          color_blend_attachments p.gp_name)
+            shader_stages vertex_input_state_create_info num_color_attachments
+            color_blend_attachments p.gp_name))
 
 let collect_atom_bindings = function
   | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
@@ -677,7 +588,7 @@ let collect_atom_bindings = function
         args
   | _ -> failwith "unsupported right hand side of pipeline write statement"
 
-let gen_vertex_buffer_copies_and_bindings pipeline r bindings =
+let gen_vertex_buffer_copies_and_bindings pipeline f bindings =
   let is_input id =
     List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
   in
@@ -685,37 +596,37 @@ let gen_vertex_buffer_copies_and_bindings pipeline r bindings =
     List.exists (fun (_, _, name, _) -> id = name) pipeline.gp_uniforms
   in
   List.fold_left
-    (fun r (lhs, rhs) ->
+    (fun f (lhs, rhs) ->
       if is_input lhs then (
         (* TODO: implement *)
         Printf.printf "binding atom %s to input %s\n" rhs lhs;
-        r )
+        f )
       else if is_uniform lhs then (
         (* TODO: implement *)
         Printf.printf "binding atom %s to uniform %s\n" rhs lhs;
-        r )
-      else r)
-    r bindings
+        f )
+      else f)
+    f bindings
 
-let gen_write env pipeline lhs rhs r =
-  let open RendererEnv in
+let gen_write env pipeline lhs rhs f =
   let bindings = collect_atom_bindings rhs in
   let rt_exprs =
     String.concat ", "
       (List.map (fun (_, lhs) -> gen_cpp_expression env lhs) lhs)
   in
-  let r =
-    r
-    |> add_stmt_inside_render_passes
-         (Printf.sprintf
-            {|{
+  let f =
+    Cpp.Function.(
+      f
+      |> append_code_section
+           (Printf.sprintf
+              {|{
             const std::vector<RenderTargetReference*> rts = {%s};
             for (auto rt : rts) { rt->target_layout = VK_IMAGE_LAYOUT_GENERAL; }
             VkRenderPass render_pass = GetOrCreateRenderPass(rts);
             VkFramebuffer framebuffer = GetOrCreateFramebuffer(rts, render_pass);
             if (current_render_pass_ != render_pass) {
               if (current_render_pass_ != VK_NULL_HANDLE) {
-                vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+                vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
               }
               std::vector<VkClearValue> clear_values(rts.size());
               for (size_t i = 0; i < clear_values.size(); ++i) {
@@ -730,33 +641,34 @@ let gen_write env pipeline lhs rhs r =
               begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();
               begin_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
               begin_info.pClearValues = clear_values.data();
-              vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info, 
+              vkCmdBeginRenderPass(gc_cmd_buffer_[image_index_], &begin_info, 
                                    VK_SUBPASS_CONTENTS_INLINE);
               current_render_pass_ = render_pass;
               for (auto rt : rts) { rt->current_layout = rt->target_layout; }
             }
             |}
-            rt_exprs)
+              rt_exprs))
   in
-  let r = gen_create_and_bind_pipeline env pipeline r lhs in
-  let r = gen_vertex_buffer_copies_and_bindings pipeline r bindings in
-  r |> add_stmt_inside_render_passes "}"
+  let f = gen_create_and_bind_pipeline env pipeline f lhs in
+  let f = gen_vertex_buffer_copies_and_bindings pipeline f bindings in
+  Cpp.Function.(f |> append_code_section "}")
 
 let extract_pipeline_name_from_write = function
   | _, L.{ value = Ast.Call (L.{ value = Ast.Id id; _ }, _); _ } -> id
   | _ -> failwith "unexpected right-hand side in pipeline write statement"
 
-let gen_clear_or_write env pipelines lhs op rhs r =
+let gen_clear_or_write env pipelines lhs op rhs f =
   match op with
-  | Ast.Assign -> gen_clear env lhs rhs r
+  | Ast.Assign -> gen_clear env lhs rhs f
   | Ast.AssignPlus ->
       let () = assert (List.length rhs = 1) in
       let pid = extract_pipeline_name_from_write (List.hd rhs) in
       let p = MapString.find pid pipelines in
-      gen_write env p lhs rhs r
+      gen_write env p lhs rhs f
   | _ -> failwith ("unexpected operator: " ^ Ast.string_of_assignop op)
 
-let rec gen_cpp_stmt pipelines stmt r =
+let rec gen_cpp_stmt pipelines stmt f =
+  let open Cpp in
   let open TypedAst in
   let env, L.{ value = stmt; _ } = stmt in
   match stmt with
@@ -767,36 +679,36 @@ let rec gen_cpp_stmt pipelines stmt r =
             Printf.sprintf "%s %s = %s;" (zrl_to_cpp_type typ) id
               (gen_cpp_expression env value)
           in
-          RendererEnv.(r |> add_stmt_inside_render_passes decl)
+          Function.(f |> append_code_section decl)
       | ids, [ (types, value) ] ->
           let bindings = List.combine ids types in
-          let r =
+          let f =
             List.fold_left
-              (fun r (id, typ) ->
+              (fun f (id, typ) ->
                 let decl = Printf.sprintf "%s %s;" (zrl_to_cpp_type typ) id in
-                RendererEnv.(r |> add_stmt_inside_render_passes decl))
-              r bindings
+                Function.(f |> append_code_section decl))
+              f bindings
           in
           let assignment =
             Printf.sprintf "std::tie(%s) = %s;" (String.concat ", " ids)
               (gen_cpp_expression env value)
           in
-          RendererEnv.(r |> add_stmt_inside_render_passes assignment)
+          Function.(f |> append_code_section assignment)
       | ids, values ->
           let bindings = List.combine ids values in
           List.fold_left
-            (fun r (id, (t, value)) ->
+            (fun f (id, (t, value)) ->
               let decl =
                 Printf.sprintf "%s %s = %s;"
                   (zrl_to_cpp_type (List.hd t))
                   id
                   (gen_cpp_expression env value)
               in
-              RendererEnv.(r |> add_stmt_inside_render_passes decl))
-            r bindings )
+              Function.(f |> append_code_section decl))
+            f bindings )
   | Assignment { asg_op; asg_lvalues; asg_rvalues } -> (
       if is_rt_clear_or_write env asg_op asg_lvalues then
-        gen_clear_or_write env pipelines asg_lvalues asg_op asg_rvalues r
+        gen_clear_or_write env pipelines asg_lvalues asg_op asg_rvalues f
       else
         match (asg_lvalues, asg_rvalues) with
         | [ (_, lhs) ], [ ([ _ ], rhs) ] ->
@@ -806,7 +718,7 @@ let rec gen_cpp_stmt pipelines stmt r =
                 (Ast.string_of_assignop asg_op)
                 (gen_cpp_expression env rhs)
             in
-            RendererEnv.(r |> add_stmt_inside_render_passes decl)
+            Function.(f |> append_code_section decl)
         | lhs, [ (_, rhs) ] ->
             let lvalues =
               String.concat ", "
@@ -816,44 +728,36 @@ let rec gen_cpp_stmt pipelines stmt r =
               Printf.sprintf "std::tie(%s) = %s;" lvalues
                 (gen_cpp_expression env rhs)
             in
-            RendererEnv.(r |> add_stmt_inside_render_passes assignment)
+            Function.(f |> append_code_section assignment)
         | lhs, rhs ->
             let bindings = List.combine lhs rhs in
             List.fold_left
-              (fun r ((_, lhs), (_, rhs)) ->
+              (fun f ((_, lhs), (_, rhs)) ->
                 let assignment =
                   Printf.sprintf "%s %s %s;"
                     (gen_cpp_expression env lhs)
                     (Ast.string_of_assignop asg_op)
                     (gen_cpp_expression env rhs)
                 in
-                RendererEnv.(r |> add_stmt_inside_render_passes assignment))
-              r bindings )
+                Function.(f |> append_code_section assignment))
+              f bindings )
   | If { if_cond = _, cond_expr; if_true; if_false } ->
       let cond =
         Printf.sprintf "if (%s) {" (gen_cpp_expression env cond_expr)
       in
-      let r = RendererEnv.(r |> add_stmt_inside_render_passes cond) in
-      let r =
-        List.fold_left (fun r stmt -> gen_cpp_stmt pipelines stmt r) r if_true
-      in
-      let r = RendererEnv.(r |> add_stmt_inside_render_passes "} else {") in
-      let r =
-        List.fold_left (fun r stmt -> gen_cpp_stmt pipelines stmt r) r if_false
-      in
-      RendererEnv.(r |> add_stmt_inside_render_passes "}")
+      let f = Function.(f |> append_code_section cond) in
+      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f if_true in
+      let f = Function.(f |> append_code_section "} else {") in
+      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f if_false in
+      Function.(f |> append_code_section "}")
   | ForIter { foriter_id; foriter_it = _, it_expr; foriter_body } ->
       let header =
         Printf.sprintf "for (const auto &%s : %s) {" foriter_id
           (gen_cpp_expression env it_expr)
       in
-      let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
-      let r =
-        List.fold_left
-          (fun r stmt -> gen_cpp_stmt pipelines stmt r)
-          r foriter_body
-      in
-      RendererEnv.(r |> add_stmt_inside_render_passes "}")
+      let f = Function.(f |> append_code_section header) in
+      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f foriter_body in
+      Function.(f |> append_code_section "}")
   | ForRange
       { forrange_id;
         forrange_from = _, from_expr;
@@ -866,54 +770,116 @@ let rec gen_cpp_stmt pipelines stmt r =
           (gen_cpp_expression env to_expr)
           forrange_id
       in
-      let r = RendererEnv.(r |> add_stmt_inside_render_passes header) in
-      let r =
-        List.fold_left
-          (fun r stmt -> gen_cpp_stmt pipelines stmt r)
-          r forrange_body
-      in
-      RendererEnv.(r |> add_stmt_inside_render_passes "}")
+      let f = Function.(f |> append_code_section header) in
+      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f forrange_body in
+      Function.(f |> append_code_section "}")
   | Return [ (_, expr) ] ->
       let return = Printf.sprintf "return %s;" (gen_cpp_expression env expr) in
-      RendererEnv.(r |> add_stmt_inside_render_passes return)
+      Function.(f |> append_code_section return)
   | Return exprs ->
       let return =
         Printf.sprintf "return std::make_tuple(%s);"
           (String.concat ", "
              (List.map (fun (_, expr) -> gen_cpp_expression env expr) exprs))
       in
-      RendererEnv.(
-        r
-        |> add_stmt_inside_render_passes return
-        |> add_stmt_inside_render_passes "}")
+      Function.(f |> append_code_section return |> append_code_section "}")
   | Discard ->
       failwith "'discard' statement cannot be used outside fragment shaders"
 
-let rec gen_cpp_function pipelines fd_body r =
-  match fd_body with
-  | [] -> Ok r
-  | stmt :: body ->
-      gen_cpp_function pipelines body (gen_cpp_stmt pipelines stmt r)
+let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
+  let open Cpp in
+  let f = Function.empty fd_name in
+  let ret_type =
+    match fd_type with
+    | Type.Function (_, []) -> "void"
+    | Type.Function (_, [ ret ]) -> zrl_to_cpp_type ret
+    | Type.Function (_, rets) ->
+        Printf.sprintf "std::tuple<%s>"
+          (String.concat ", " (List.map zrl_to_cpp_type rets))
+    | t ->
+        failwith
+          ( "C++ function must have Function type but got: "
+          ^ Type.string_of_type t )
+  in
+  let f = Function.set_return_type ret_type f in
+  let f =
+    match fd_type with
+    | Type.Function (params, _) ->
+        List.fold_left
+          (fun f (pname, t) ->
+            match t with
+            | Type.TypeRef (("int" | "float" | "bool") as tname) ->
+                Function.(f |> add_param (tname, pname))
+            (* TODO: support vector/matrix types via GLM *)
+            | Type.TypeRef "atom" ->
+                let tmpl_param = pname ^ "AtomType" in
+                let param = (Printf.sprintf "const %s&" tmpl_param, pname) in
+                Function.(
+                  f
+                  |> add_template_param ("class " ^ tmpl_param)
+                  |> add_param param)
+            | Type.TypeRef "atomset" ->
+                let tmpl_param = pname ^ "AtomType" in
+                let param =
+                  ( Printf.sprintf "const std::unordered_set<%s>&" tmpl_param,
+                    pname )
+                in
+                Function.(
+                  f
+                  |> add_template_param ("class " ^ tmpl_param)
+                  |> add_param param)
+            | Type.TypeRef "atomlist" ->
+                let tmpl_param = pname ^ "AtomType" in
+                let param =
+                  (Printf.sprintf "const std::vector<%s>&" tmpl_param, pname)
+                in
+                Function.(
+                  f
+                  |> add_template_param ("class " ^ tmpl_param)
+                  |> add_param param)
+            | Type.TypeRef "rt_rgb" ->
+                Function.(f |> add_param ("RenderTargetReference*", pname))
+            | Type.TypeRef "rt_rgba" ->
+                Function.(f |> add_param ("RenderTargetReference*", pname))
+            | Type.TypeRef "rt_ds" ->
+                Function.(f |> add_param ("RenderTargetReference*", pname))
+            | Type.TypeRef tname ->
+                let cr = "const " ^ tname ^ "&" in
+                Function.(f |> add_param (cr, pname))
+            | _ ->
+                failwith
+                  (Printf.sprintf "cannot use type %s as renderer argument"
+                     (Type.string_of_type t)))
+          f params
+    | _ -> failwith "renderer functions must be of Function type"
+  in
+  let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f fd_body in
+  f
 
-let gen_renderer_code loc pipelines rd_name rd_functions r =
-  let err = error loc (`MissingRendererEntryPoint rd_name) in
-  find_func "main" rd_functions err >>= fun TypedAst.{ fd_body; _ } ->
-  gen_cpp_function pipelines fd_body r
+let gen_renderer_code pipelines rd_functions r =
+  let open RendererEnv in
+  Ok
+    (List.fold_left
+       (fun r fd ->
+         let f = gen_cpp_function pipelines fd in
+         let rclass = Cpp.Class.(r.rclass |> add_private_function f) in
+         { r with rclass })
+       r rd_functions)
 
 let gen_render_targets rd_type r =
   let open Cpp in
   match rd_type with
   | Type.Function (params, _) ->
       List.fold_left
-        (fun acc (name, t) ->
+        (fun acc (pname, t) ->
           acc >>= fun r ->
           match t with
           | Type.TypeRef (("rt_rgba" | "rt_ds") as rt_type_name) ->
-              let img_id = name ^ "_image_" in
-              let ref_id = name ^ "_ref_" in
+              let img_id = pname ^ "_image_" in
+              let ref_id = pname ^ "_ref_" in
               let img_member = ("zrl::Image", img_id) in
               let ref_member = ("RenderTargetReference", ref_id) in
-              let ptr_member = ("RenderTargetReference *", name) in
+              let ptr_member = ("RenderTargetReference *", pname) in
               let rt_type, format =
                 if rt_type_name = "rt_rgba" then
                   (RendererEnv.Color, "VK_FORMAT_B8G8R8A8_UNORM")
@@ -949,7 +915,7 @@ let gen_render_targets rd_type r =
                   {
                     r with
                     render_targets =
-                      MapString.(r.render_targets |> add name rt_type);
+                      MapString.(r.render_targets |> add pname rt_type);
                     rclass =
                       Class.(
                         r.rclass
@@ -961,28 +927,27 @@ let gen_render_targets rd_type r =
                         r.ctor
                         |> add_member_initializer (img_id, img_ctor_args)
                         |> add_member_initializer (ref_id, ref_ctor_args)
-                        |> add_member_initializer (name, "nullptr"));
+                        |> add_member_initializer (pname, "nullptr"));
+                    render =
+                      Function.(
+                        r.render
+                        |> append_code_section
+                             (Printf.sprintf "%s = &%s;" pname ref_id)
+                        |> append_code_section
+                             (Printf.sprintf
+                                "%s->current_layout = \
+                                 VK_IMAGE_LAYOUT_UNDEFINED;"
+                                pname)
+                        |> append_code_section
+                             (Printf.sprintf
+                                "%s->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;"
+                                pname));
                   }
               in
-              Ok
-                RendererEnv.(
-                  r
-                  |> add_stmt_before_recording
-                       (Printf.sprintf "%s = &%s;" name ref_id)
-                  |> add_stmt_before_recording
-                       (Printf.sprintf
-                          "%s->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
-                          name)
-                  |> add_stmt_before_recording
-                       (Printf.sprintf
-                          "%s->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;" name))
+              Ok r
           | _ -> acc)
         (Ok r) params
   | _ -> failwith "renderer must be of Function type"
-
-let check_single_entry_point loc rd_functions =
-  if List.length rd_functions <= 1 then Ok ()
-  else error loc (`Unsupported "only one function per renderer is allowed")
 
 let gen_shader_modules cfg_bazel_package glsl_libraries r =
   let pkg = String.concat "/" cfg_bazel_package in
@@ -1156,16 +1121,14 @@ let gen_pipeline_members pipelines r =
        r
        (MapString.bindings pipelines))
 
-let gen_renderer_library loc Config.{ cfg_bazel_package; _ } pipelines
+let gen_renderer_library Config.{ cfg_bazel_package; _ } pipelines
     glsl_libraries TypedAst.{ rd_name; rd_type; rd_functions; _ } =
   let open Cpp in
   let r = RendererEnv.empty rd_name cfg_bazel_package in
-  check_single_entry_point loc rd_functions >>= fun () ->
   gen_shader_modules cfg_bazel_package glsl_libraries r
   >>= gen_pipeline_members pipelines
   >>= gen_render_targets rd_type
-  >>= gen_renderer_signature loc rd_name rd_functions
-  >>= gen_renderer_code loc pipelines rd_name rd_functions
+  >>= gen_renderer_code pipelines rd_functions
   >>= fun r ->
   let output_class = RendererEnv.export r in
   let types_target = "//" ^ String.concat "/" cfg_bazel_package ^ ":Types" in
@@ -1719,11 +1682,10 @@ let gen_renderer_libraries cfg pipelines glsl_libraries root_elems =
   List.fold_left
     (fun acc tl ->
       acc >>= fun renderer_libraries ->
-      let L.{ loc; value } = tl in
+      let L.{ value; _ } = tl in
       match value with
       | TypedAst.RendererDecl rd ->
-          gen_renderer_library loc cfg pipelines glsl_libraries rd
-          >>= fun lib ->
+          gen_renderer_library cfg pipelines glsl_libraries rd >>= fun lib ->
           let lib =
             List.fold_left
               (fun lib glsl_lib ->
