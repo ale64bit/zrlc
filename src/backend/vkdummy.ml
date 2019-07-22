@@ -129,6 +129,9 @@ let rec zrl_to_cpp_type = function
         | d :: ds -> arr (aux ds) d
       in
       aux dims
+  | Type.TypeRef "rt_rgb" -> "RenderTargetReference*"
+  | Type.TypeRef "rt_rgba" -> "RenderTargetReference*"
+  | Type.TypeRef "rt_ds" -> "RenderTargetReference*"
   | Type.TypeRef s -> s
   | t -> failwith "unsupported type: " ^ Type.string_of_type t
 
@@ -324,28 +327,26 @@ let gen_clear env lhs rhs r =
   let bindings = List.combine lhs rhs in
   List.fold_left
     (fun r ((_, lhs), (_, rhs)) ->
-      let rt_name =
-        match gen_cpp_expression env lhs with
-        | "builtin.screen" -> "builtin_screen"
-        | other -> other
+      let rt_var =
+        Printf.sprintf "RenderTargetReference *_rt = (%s);"
+          (gen_cpp_expression env lhs)
       in
       let end_current_pass =
-        Printf.sprintf
-          {|  if (current_render_pass != VK_NULL_HANDLE && rt_%s_load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && rt_%s_load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
+        {|  if (current_render_pass_ != VK_NULL_HANDLE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
-    current_render_pass = VK_NULL_HANDLE;
+    current_render_pass_ = VK_NULL_HANDLE;
   }|}
-          rt_name rt_name
       in
-      let update_load_op =
-        Printf.sprintf "rt_%s_load_op = VK_ATTACHMENT_LOAD_OP_CLEAR;" rt_name
-      in
+      let update_load_op = "_rt->load_op = VK_ATTACHMENT_LOAD_OP_CLEAR;" in
+      let clear_value_expr = gen_cpp_expression env rhs in
       let update_clear_value =
-        Printf.sprintf "rt_%s_clear_value = %s;" rt_name
-          (gen_cpp_expression env rhs)
+        Printf.sprintf
+          "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof (%s));"
+          clear_value_expr clear_value_expr
       in
       RendererEnv.(
         r
+        |> add_stmt_inside_render_passes rt_var
         |> add_stmt_inside_render_passes end_current_pass
         |> add_stmt_inside_render_passes update_load_op
         |> add_stmt_inside_render_passes update_clear_value))
@@ -638,7 +639,7 @@ let gen_create_and_bind_pipeline env p r lhs =
     graphics_pipeline_create_info.pColorBlendState = &color_blend_state;
     graphics_pipeline_create_info.pDynamicState = nullptr;
     graphics_pipeline_create_info.layout = %s_pipeline_layout_;
-    graphics_pipeline_create_info.renderPass = current_render_pass;
+    graphics_pipeline_create_info.renderPass = current_render_pass_;
     graphics_pipeline_create_info.subpass = 0;
     graphics_pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
     graphics_pipeline_create_info.basePipelineIndex = 0;
@@ -654,10 +655,10 @@ let gen_create_and_bind_pipeline env p r lhs =
     } else {
       pipeline = res->second;
     }
-    if (pipeline != current_pipeline) {
+    if (pipeline != current_pipeline_) {
       vkCmdBindPipeline(gc_cmd_buffer_[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
                         pipeline);
-      current_pipeline = pipeline;
+      current_pipeline_ = pipeline;
     }
 }|}
           shader_stages vertex_input_state_create_info num_color_attachments
@@ -698,111 +699,44 @@ let gen_vertex_buffer_copies_and_bindings pipeline r bindings =
 
 let gen_write env pipeline lhs rhs r =
   let open RendererEnv in
-  let set_clear_value var rt_name = function
-    | Color ->
-        Printf.sprintf
-          {|
-          std::memcpy(%s.color.float32, glm::value_ptr(rt_%s_clear_value), sizeof %s.color);
-          rt_%s_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
-        |}
-          var rt_name var rt_name
-    | DepthStencil ->
-        Printf.sprintf
-          {|
-            %s.depthStencil.depth = rt_%s_clear_value.x;
-            rt_%s_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
-        |}
-          var rt_name rt_name
-  in
   let bindings = collect_atom_bindings rhs in
-  let fb_imgs =
-    List.map
-      (fun (_, lhs) ->
-        match gen_cpp_expression env lhs with
-        | "builtin.screen" -> "rt_builtin_screen_[image_index]"
-        | id -> Printf.sprintf "rt_%s_->GetViewHandle()" id)
-      lhs
-  in
-  let rp_tuples, clear_values =
-    List.split
-      (List.map
-         (fun (i, (_, lhs)) ->
-           let rt_name =
-             match gen_cpp_expression env lhs with
-             | "builtin.screen" -> "builtin_screen"
-             | other -> other
-           in
-           let rt_type = MapString.find rt_name r.render_targets in
-           let tuple =
-             Printf.sprintf
-               "std::make_tuple(rt_%s_format, rt_%s_load_op, rt_%s_layout, \
-                VK_IMAGE_LAYOUT_GENERAL)"
-               rt_name rt_name rt_name
-           in
-           let cv_var = Printf.sprintf "clear_values[%d]" i in
-           let cv =
-             Printf.sprintf
-               "if (rt_%s_load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {%s}" rt_name
-               (set_clear_value cv_var rt_name rt_type)
-           in
-           (tuple, cv))
-         List.(combine (init (length lhs) (fun i -> i)) lhs))
-  in
-  let layouts =
-    List.map
-      (fun (_, lhs) ->
-        let rt_name =
-          match gen_cpp_expression env lhs with
-          | "builtin.screen" -> "builtin_screen"
-          | other -> other
-        in
-        Printf.sprintf "rt_%s_layout = VK_IMAGE_LAYOUT_GENERAL;" rt_name)
-      lhs
+  let rt_exprs =
+    String.concat ", "
+      (List.map (fun (_, lhs) -> gen_cpp_expression env lhs) lhs)
   in
   let r =
     r
-    |> add_stmt_inside_render_passes "{"
     |> add_stmt_inside_render_passes
-         (Printf.sprintf "RenderPassDescriptor rp_desc {{%s}};"
-            (String.concat ", " rp_tuples))
-    |> add_stmt_inside_render_passes
-         (Printf.sprintf "FramebufferDescriptor fb_desc {{%s}};"
-            (String.concat ", " fb_imgs))
-    |> add_stmt_inside_render_passes
-         "VkRenderPass render_pass = GetOrCreateRenderPass(rp_desc);"
-    |> add_stmt_inside_render_passes
-         "VkFramebuffer framebuffer = GetOrCreateFramebuffer(fb_desc, \
-          render_pass);"
-    |> add_stmt_inside_render_passes
-         "if (current_render_pass != render_pass) {"
-    |> add_stmt_inside_render_passes
-         "  if (current_render_pass != VK_NULL_HANDLE) {"
-    |> add_stmt_inside_render_passes
-         "    vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);"
-    |> add_stmt_inside_render_passes "  }"
-    |> add_stmt_inside_render_passes (String.concat "\n" layouts)
-    |> add_stmt_inside_render_passes
-         "  std::vector<VkClearValue> clear_values(rp_desc.attachments.size());"
-    |> add_stmt_inside_render_passes (String.concat "\n" clear_values)
-    |> add_stmt_inside_render_passes "  VkRenderPassBeginInfo begin_info = {};"
-    |> add_stmt_inside_render_passes
-         "  begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;"
-    |> add_stmt_inside_render_passes "  begin_info.pNext = nullptr;"
-    |> add_stmt_inside_render_passes "  begin_info.renderPass = render_pass;"
-    |> add_stmt_inside_render_passes "  begin_info.framebuffer = framebuffer;"
-    |> add_stmt_inside_render_passes "  begin_info.renderArea.offset = {0, 0};"
-    |> add_stmt_inside_render_passes
-         "  begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();"
-    |> add_stmt_inside_render_passes
-         "  begin_info.clearValueCount = \
-          static_cast<uint32_t>(clear_values.size());"
-    |> add_stmt_inside_render_passes
-         "  begin_info.pClearValues = clear_values.data();"
-    |> add_stmt_inside_render_passes
-         "  vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info, \
-          VK_SUBPASS_CONTENTS_INLINE);"
-    |> add_stmt_inside_render_passes "  current_render_pass = render_pass;"
-    |> add_stmt_inside_render_passes "}"
+         (Printf.sprintf
+            {|{
+            const std::vector<RenderTargetReference*> rts = {%s};
+            for (auto rt : rts) { rt->target_layout = VK_IMAGE_LAYOUT_GENERAL; }
+            VkRenderPass render_pass = GetOrCreateRenderPass(rts);
+            VkFramebuffer framebuffer = GetOrCreateFramebuffer(rts, render_pass);
+            if (current_render_pass_ != render_pass) {
+              if (current_render_pass_ != VK_NULL_HANDLE) {
+                vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+              }
+              std::vector<VkClearValue> clear_values(rts.size());
+              for (size_t i = 0; i < clear_values.size(); ++i) {
+                clear_values[i] = rts[i]->clear_value;
+              }
+              VkRenderPassBeginInfo begin_info = {};
+              begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+              begin_info.pNext = nullptr;
+              begin_info.renderPass = render_pass;
+              begin_info.framebuffer = framebuffer;
+              begin_info.renderArea.offset = {0, 0};
+              begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();
+              begin_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
+              begin_info.pClearValues = clear_values.data();
+              vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info, 
+                                   VK_SUBPASS_CONTENTS_INLINE);
+              current_render_pass_ = render_pass;
+              for (auto rt : rts) { rt->current_layout = rt->target_layout; }
+            }
+            |}
+            rt_exprs)
   in
   let r = gen_create_and_bind_pipeline env pipeline r lhs in
   let r = gen_vertex_buffer_copies_and_bindings pipeline r bindings in
@@ -975,23 +909,40 @@ let gen_render_targets rd_type r =
           acc >>= fun r ->
           match t with
           | Type.TypeRef (("rt_rgba" | "rt_ds") as rt_type_name) ->
-              let id = "rt_" ^ name ^ "_" in
-              let image = ("std::unique_ptr<zrl::Image>", id) in
-              let rt_type, fname, fmt, clear_value_cpp_type =
+              let img_id = name ^ "_image_" in
+              let ref_id = name ^ "_ref_" in
+              let img_member = ("zrl::Image", img_id) in
+              let ref_member = ("RenderTargetReference", ref_id) in
+              let ptr_member = ("RenderTargetReference *", name) in
+              let rt_type, format =
                 if rt_type_name = "rt_rgba" then
-                  ( RendererEnv.Color,
-                    "CreateColorRenderTarget",
-                    "VK_FORMAT_B8G8R8A8_UNORM",
-                    "glm::fvec4" )
-                else
-                  ( RendererEnv.DepthStencil,
-                    "CreateDepthRenderTarget",
-                    "VK_FORMAT_D32_SFLOAT",
-                    "glm::fvec2" )
+                  (RendererEnv.Color, "VK_FORMAT_B8G8R8A8_UNORM")
+                else if rt_type_name = "rt_ds" then
+                  (RendererEnv.DepthStencil, "VK_FORMAT_D32_SFLOAT")
+                else failwith "unsupported render target type"
               in
-              let load_op_member = ("VkAttachmentLoadOp", id ^ "load_op") in
-              let clear_value_member =
-                (clear_value_cpp_type, id ^ "clear_value")
+              let img_ctor_args =
+                match rt_type with
+                | RendererEnv.Color ->
+                    "{core_, core_.GetSwapchain().GetExtent(), 1, \
+                     VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | \
+                     VK_IMAGE_USAGE_SAMPLED_BIT, \
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
+                     VK_IMAGE_ASPECT_COLOR_BIT}"
+                | RendererEnv.DepthStencil ->
+                    "{core_, core_.GetSwapchain().GetExtent(), 1, \
+                     VK_FORMAT_D32_SFLOAT, VK_IMAGE_TILING_OPTIMAL, \
+                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, \
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
+                     VK_IMAGE_ASPECT_DEPTH_BIT}"
+              in
+              let ref_ctor_args =
+                Printf.sprintf
+                  "{%s, %s.GetViewHandle(), VK_IMAGE_LAYOUT_UNDEFINED, \
+                   VK_IMAGE_LAYOUT_UNDEFINED, \
+                   VK_ATTACHMENT_LOAD_OP_DONT_CARE, {}}"
+                  format img_id
               in
               let r =
                 RendererEnv.
@@ -1001,32 +952,30 @@ let gen_render_targets rd_type r =
                       MapString.(r.render_targets |> add name rt_type);
                     rclass =
                       Class.(
-                        r.rclass |> add_private_member image
-                        |> add_private_member load_op_member
-                        |> add_private_member clear_value_member);
+                        r.rclass
+                        |> add_private_member img_member
+                        |> add_private_member ref_member
+                        |> add_private_member ptr_member);
                     ctor =
                       Function.(
                         r.ctor
-                        |> append_code_section
-                             (Printf.sprintf "  %s = %s();" id fname)
-                        |> add_member_initializer
-                             (id ^ "load_op", "VK_ATTACHMENT_LOAD_OP_DONT_CARE"));
-                    dtor =
-                      Function.(
-                        r.dtor |> prepend_code_section ("  " ^ id ^ ".reset();"));
+                        |> add_member_initializer (img_id, img_ctor_args)
+                        |> add_member_initializer (ref_id, ref_ctor_args)
+                        |> add_member_initializer (name, "nullptr"));
                   }
               in
               Ok
                 RendererEnv.(
                   r
                   |> add_stmt_before_recording
-                       (Printf.sprintf "constexpr VkFormat rt_%s_format = %s;"
-                          name fmt)
+                       (Printf.sprintf "%s = &%s;" name ref_id)
                   |> add_stmt_before_recording
                        (Printf.sprintf
-                          "VkImageLayout rt_%s_layout = \
-                           VK_IMAGE_LAYOUT_UNDEFINED;"
-                          name))
+                          "%s->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
+                          name)
+                  |> add_stmt_before_recording
+                       (Printf.sprintf
+                          "%s->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;" name))
           | _ -> acc)
         (Ok r) params
   | _ -> failwith "renderer must be of Function type"
@@ -1269,52 +1218,75 @@ let merge_hash_function =
   h1 = h1 * 31 + static_cast<size_t>(h2);
 }|}
 
-let render_pass_descriptor_struct =
-  {|struct RenderPassDescriptor {
-  std::vector<std::tuple<VkFormat, VkAttachmentLoadOp, VkImageLayout, VkImageLayout>> attachments;
+let render_target_reference_struct =
+  {|struct RenderTargetReference {
+  const VkFormat format = VK_FORMAT_UNDEFINED;
+  const VkImageView attachment = VK_NULL_HANDLE;
+  VkImageLayout current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_MAX_ENUM;
+  VkClearValue clear_value;
+};|}
 
-  bool operator==(const RenderPassDescriptor &that) const {
-    return attachments == that.attachments;
+let render_pass_hash =
+  {|struct RenderPassHash { 
+  size_t operator()(const std::vector<RenderTargetReference> &rts) const noexcept {
+    size_t h = 1;
+    for (auto rt : rts) {
+      MergeHash(h, rt.format);
+      MergeHash(h, rt.current_layout);
+      MergeHash(h, rt.target_layout);
+      MergeHash(h, rt.load_op);
+    }
+    return h;
   }
 };|}
 
-let framebuffer_descriptor_struct =
-  {|struct FramebufferDescriptor {
-  std::vector<VkImageView> attachments;
-
-  bool operator==(const FramebufferDescriptor &that) const {
-    return attachments == that.attachments;
+let render_pass_equal_to =
+  {|struct RenderPassEqualTo {
+  constexpr bool operator()(const std::vector<RenderTargetReference> &a,
+                  const std::vector<RenderTargetReference> &b) const noexcept {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+      if (a[i].format != b[i].format ||
+          a[i].current_layout != b[i].current_layout ||
+          a[i].target_layout != b[i].target_layout ||
+          a[i].load_op != b[i].load_op) {
+        return false;
+      }
+    }
+    return true;
   }
 };|}
 
-let render_pass_descriptor_hash =
-  {|namespace std {
-  template<> struct hash<RenderPassDescriptor> { 
-    size_t operator()(const RenderPassDescriptor &desc) const noexcept {
-      size_t h = 1;
-      for (const auto &t : desc.attachments) {
-        MergeHash(h, std::get<0>(t));
-        MergeHash(h, std::get<1>(t));
-        MergeHash(h, std::get<2>(t));
-        MergeHash(h, std::get<3>(t));
-      }
-      return h;
+let framebuffer_hash =
+  {|struct FramebufferHash {
+  size_t operator()(const std::vector<RenderTargetReference> &rts) const noexcept {
+    size_t h = 1;
+    for (auto rt : rts) {
+      MergeHash(h, reinterpret_cast<size_t>(rt.attachment));
     }
-  };
-}|}
+    return h;
+  }
+};|}
 
-let framebuffer_descriptor_hash =
-  {|namespace std {
-  template<> struct hash<FramebufferDescriptor> {
-    size_t operator()(const FramebufferDescriptor &desc) const noexcept {
-      size_t h = 1;
-      for (const auto &a : desc.attachments) {
-        MergeHash(h, reinterpret_cast<size_t>(a));
-      }
-      return h;
+let framebuffer_equal_to =
+  {|struct FramebufferEqualTo {
+  constexpr bool operator()(const std::vector<RenderTargetReference> &a,
+                  const std::vector<RenderTargetReference> &b) const noexcept {
+    if (a.size() != b.size()) {
+      return false;
     }
-  };
-}|}
+    for (size_t i = 0; i < a.size(); ++i) {
+      if (a[i].attachment != b[i].attachment) {
+        return false;
+      }
+    }
+    return true;
+  }
+};|}
 
 let vk_descriptor_set_layout_binding_hash =
   {|namespace std {
@@ -1610,16 +1582,23 @@ template <> struct equal_to<VkGraphicsPipelineCreateInfo> {
 
 }|}
 
+let builtin_struct =
+  {|struct Builtin {
+  RenderTargetReference *screen = nullptr;
+};|}
+
 let gen_types_header root_elems =
   let cc_header =
     Cpp.Header.(
       empty "Types" |> add_include "<array>"
       |> add_include {|"glm/glm.hpp"|}
       |> add_section merge_hash_function
-      |> add_section render_pass_descriptor_struct
-      |> add_section render_pass_descriptor_hash
-      |> add_section framebuffer_descriptor_struct
-      |> add_section framebuffer_descriptor_hash
+      |> add_section render_target_reference_struct
+      |> add_section render_pass_hash
+      |> add_section render_pass_equal_to
+      |> add_section framebuffer_hash
+      |> add_section framebuffer_equal_to
+      |> add_section builtin_struct
       |> add_section vk_descriptor_set_layout_binding_hash
       |> add_section vk_descriptor_set_layout_create_info_hash
       |> add_section vk_pipeline_layout_create_info_hash

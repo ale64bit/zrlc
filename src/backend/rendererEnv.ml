@@ -20,9 +20,13 @@ let get_or_create_render_pass =
   Function.(
     empty "GetOrCreateRenderPass"
     |> set_return_type "VkRenderPass"
-    |> add_param ("const RenderPassDescriptor&", "desc")
+    |> add_param ("const std::vector<RenderTargetReference*> &", "rts")
     |> append_code_section
-         {|  auto res = render_pass_cache_.find(desc);
+         {|  std::vector<RenderTargetReference> key;
+  for (auto rt : rts) {
+    key.emplace_back(*rt);
+  }
+  auto res = render_pass_cache_.find(key);
   if (res == render_pass_cache_.end()) {
     DLOG << name_ << ": creating new render pass" << '\n';
     std::vector<VkAttachmentDescription> attachment_descriptions;
@@ -32,24 +36,24 @@ let get_or_create_render_pass =
     depth_stencil_attachment.attachment = VK_ATTACHMENT_UNUSED;
     
     uint32_t attachment_number = 0;
-    for (const auto &p : desc.attachments) {
+    for (auto rt : rts) {
       VkAttachmentDescription description = {};
-      description.format = std::get<0>(p);
+      description.format = rt->format;
       description.samples = VK_SAMPLE_COUNT_1_BIT;
-      description.loadOp = std::get<1>(p);
+      description.loadOp = rt->load_op;
       description.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      description.initialLayout = std::get<2>(p);
-      description.finalLayout = std::get<3>(p);
+      description.initialLayout = rt->current_layout;
+      description.finalLayout = rt->target_layout;
     
       VkAttachmentReference reference = {};
       reference.attachment = attachment_number;
-      reference.layout = (std::get<0>(p)== VK_FORMAT_B8G8R8A8_UNORM
+      reference.layout = (rt->format == VK_FORMAT_B8G8R8A8_UNORM
                           ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                           : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     
-      if (std::get<0>(p) == VK_FORMAT_B8G8R8A8_UNORM) {
+      if (rt->format == VK_FORMAT_B8G8R8A8_UNORM) {
         color_attachments.push_back(reference);
       } else {
         depth_stencil_attachment = reference;
@@ -105,7 +109,7 @@ let get_or_create_render_pass =
     CHECK_VK(vkCreateRenderPass(core_.GetLogicalDevice().GetHandle(),
                                 &create_info, nullptr, &rp));
     
-    render_pass_cache_[desc] = rp;
+    render_pass_cache_[key] = rp;
     return rp;
   }
   return res->second;|})
@@ -114,24 +118,33 @@ let get_or_create_framebuffer =
   Function.(
     empty "GetOrCreateFramebuffer"
     |> set_return_type "VkFramebuffer"
-    |> add_param ("const FramebufferDescriptor&", "desc")
+    |> add_param ("const std::vector<RenderTargetReference*> &", "rts")
     |> add_param ("VkRenderPass", "render_pass")
     |> append_code_section
-         {|  auto res = framebuffer_cache_.find(desc);
+         {|  std::vector<RenderTargetReference> key;
+  for (auto rt : rts) {
+    key.emplace_back(*rt);
+  }
+  auto res = framebuffer_cache_.find(key);
   if (res == framebuffer_cache_.end()) {
     DLOG << name_ << ": creating new framebuffer" << '\n';
+    std::vector<VkImageView> attachments;
+    for (auto rt : rts) {
+      attachments.push_back(rt->attachment);
+    }
+
     VkFramebuffer fb = VK_NULL_HANDLE;
     VkFramebufferCreateInfo create_info = {};
     create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     create_info.renderPass = render_pass;
-    create_info.attachmentCount = static_cast<uint32_t>(desc.attachments.size());
-    create_info.pAttachments = desc.attachments.data();
+    create_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+    create_info.pAttachments = attachments.data();
     create_info.width = core_.GetSwapchain().GetExtent().width;
     create_info.height = core_.GetSwapchain().GetExtent().height;
     create_info.layers = 1;
     CHECK_VK(vkCreateFramebuffer(core_.GetLogicalDevice().GetHandle(),
                                  &create_info, nullptr, &fb));
-    framebuffer_cache_[desc] = fb;
+    framebuffer_cache_[key] = fb;
     return fb;
   }
   return res->second;|})
@@ -290,17 +303,23 @@ let ctor_body =
   CHECK_VK(vkCreateSemaphore(device.GetHandle(), &semaphore_create_info, nullptr, 
                              &render_semaphore_));
 
-  rt_builtin_screen_.resize(core_.GetSwapchain().GetImageCount());
-  for (size_t i = 0; i < rt_builtin_screen_.size(); ++i) {
-    rt_builtin_screen_[i] = CreateImageView(core_.GetSwapchain().GetImages()[i],
-                                            core_.GetSwapchain().GetSurfaceFormat());
+  rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
+  for (size_t i = 0; i < rt_builtin_screen_img_view_.size(); ++i) {
+    VkImageView view = CreateImageView(core_.GetSwapchain().GetImages()[i],
+                                       core_.GetSwapchain().GetSurfaceFormat());
+    rt_builtin_screen_img_view_[i] = view;
+    rt_builtin_screen_ref_.push_back({VK_FORMAT_B8G8R8A8_UNORM, view, 
+                                          VK_IMAGE_LAYOUT_UNDEFINED, 
+                                          VK_IMAGE_LAYOUT_UNDEFINED, 
+                                          VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
+                                          VkClearValue{}});
   }
 |}
 
 let dtor_body =
   {|  staging_buffer_.reset();
-  for (auto image_view : rt_builtin_screen_) {
-    vkDestroyImageView(device, image_view, nullptr);
+  for (auto rt : rt_builtin_screen_ref_) {
+    vkDestroyImageView(device, rt.attachment, nullptr);
   }
   DLOG << name_ << ": total graphics pipelines: " << pipeline_cache_.size() << '\n';
   for (auto p : pipeline_cache_) {
@@ -354,25 +373,19 @@ let begin_recording =
 |})
 
 let stop_recording_body =
-  {|  if (current_render_pass != VK_NULL_HANDLE) {
+  {|  if (current_render_pass_ != VK_NULL_HANDLE) {
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
   }
 
   // Extra render pass to flush pending screen clears and transition
   // swapchain image view into PRESENT layout.
   {
-    RenderPassDescriptor rp_desc{{std::make_tuple(
-        rt_builtin_screen_format, rt_builtin_screen_load_op, 
-        rt_builtin_screen_layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)}};
-    FramebufferDescriptor fb_desc{{rt_builtin_screen_[image_index]}};
-    VkRenderPass render_pass = GetOrCreateRenderPass(rp_desc);
-    VkFramebuffer framebuffer = GetOrCreateFramebuffer(fb_desc, render_pass);
-    VkClearValue clear_value = {};
-    if (rt_builtin_screen_load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-      std::memcpy(clear_value.color.float32,
-                  glm::value_ptr(rt_builtin_screen_clear_value),
-                  sizeof clear_value.color);
-      rt_builtin_screen_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
+    builtin.screen->target_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    const std::vector<RenderTargetReference*> desc = {builtin.screen};
+    VkRenderPass render_pass = GetOrCreateRenderPass(desc);
+    VkFramebuffer framebuffer = GetOrCreateFramebuffer(desc, render_pass);
+    if (builtin.screen->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+      builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
     }
     VkRenderPassBeginInfo begin_info = {};
     begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -382,10 +395,11 @@ let stop_recording_body =
     begin_info.renderArea.offset = {0, 0};
     begin_info.renderArea.extent = core_.GetSwapchain().GetExtent();
     begin_info.clearValueCount = 1;
-    begin_info.pClearValues = &clear_value;
+    begin_info.pClearValues = &builtin.screen->clear_value;
     vkCmdBeginRenderPass(gc_cmd_buffer_[image_index], &begin_info,
                          VK_SUBPASS_CONTENTS_INLINE);
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index]);
+    builtin.screen->current_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
   }
 
   // Stop recording.
@@ -476,18 +490,23 @@ let empty rname pkg =
         |> add_private_member ("VkSemaphore", "acquire_semaphore_")
         |> add_private_member ("VkSemaphore", "render_semaphore_")
         |> add_private_member
-             ( "std::unordered_map<RenderPassDescriptor, VkRenderPass>",
+             ( "std::unordered_map<std::vector<RenderTargetReference>, \
+                VkRenderPass, RenderPassHash, RenderPassEqualTo>",
                "render_pass_cache_" )
         |> add_private_member
-             ( "std::unordered_map<FramebufferDescriptor, VkFramebuffer>",
+             ( "std::unordered_map<std::vector<RenderTargetReference>, \
+                VkFramebuffer, FramebufferHash, FramebufferEqualTo>",
                "framebuffer_cache_" )
         |> add_private_member
              ( "std::unordered_map<VkGraphicsPipelineCreateInfo, VkPipeline>",
                "pipeline_cache_" )
-        |> add_private_member ("std::vector<VkImageView>", "rt_builtin_screen_")
+        |> add_private_member ("VkRenderPass", "current_render_pass_")
+        |> add_private_member ("VkPipeline", "current_pipeline_")
+        |> add_private_member ("Builtin", "builtin")
         |> add_private_member
-             ("VkAttachmentLoadOp", "rt_builtin_screen_load_op")
-        |> add_private_member ("glm::fvec4", "rt_builtin_screen_clear_value")
+             ("std::vector<VkImageView>", "rt_builtin_screen_img_view_")
+        |> add_private_member
+             ("std::vector<RenderTargetReference>", "rt_builtin_screen_ref_")
         |> add_private_function create_command_pool
         |> add_private_function create_command_buffers
         |> add_private_function create_events
@@ -509,17 +528,14 @@ let empty rname pkg =
         |> add_member_initializer ("present_cmd_pool_", "VK_NULL_HANDLE")
         |> add_member_initializer ("acquire_semaphore_", "VK_NULL_HANDLE")
         |> add_member_initializer ("render_semaphore_", "VK_NULL_HANDLE")
-        |> add_member_initializer
-             ("rt_builtin_screen_load_op", "VK_ATTACHMENT_LOAD_OP_DONT_CARE")
+        |> add_member_initializer ("current_render_pass_", "VK_NULL_HANDLE")
+        |> add_member_initializer ("current_pipeline_", "VK_NULL_HANDLE")
         |> append_code_section ctor_body);
     dtor = Function.(empty ("~" ^ rname));
     before_recording =
       List.rev
-        [ "VkRenderPass current_render_pass = VK_NULL_HANDLE;";
-          "VkPipeline current_pipeline = VK_NULL_HANDLE;";
-          "constexpr VkFormat rt_builtin_screen_format = \
-           VK_FORMAT_B8G8R8A8_UNORM;";
-          "VkImageLayout rt_builtin_screen_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
+        [ "current_render_pass_ = VK_NULL_HANDLE;";
+          "current_pipeline_ = VK_NULL_HANDLE;"
         ];
     outside_render_passes = [];
     inside_render_passes = [];
@@ -551,6 +567,12 @@ let export t =
       |> append_code_section "// ====== Before recording ======"
       |> append_code_sections (List.rev t.before_recording)
       |> append_code_section "const uint32_t image_index = BeginRecording();"
+      |> append_code_section
+           "builtin.screen = &rt_builtin_screen_ref_[image_index];"
+      |> append_code_section
+           "builtin.screen->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
+      |> append_code_section
+           "builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;"
       |> append_code_section "// ====== Outside render passes ======"
       |> append_code_sections (List.rev t.outside_render_passes)
       |> append_code_section "// ====== Inside render passes ======"
