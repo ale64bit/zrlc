@@ -42,7 +42,6 @@ and raw_expression =
   | Call of expression * expression list
   | Cast of Type.t * expression
   | NamedArg of string * expression
-  | BundledArg of expression list
   | BinExpr of expression * binop * expression
   | UnExpr of unop * expression
   | BoolLiteral of bool
@@ -192,9 +191,6 @@ let rec string_of_expression Located.{ value = e; _ } =
         (string_of_expression expr)
   | NamedArg (id, expr) ->
       Printf.sprintf "%s = %s" id (string_of_expression expr)
-  | BundledArg exprs ->
-      Printf.sprintf "{%s}"
-        (String.concat ", " (List.map string_of_expression exprs))
   | BinExpr (lhs, op, rhs) ->
       Printf.sprintf "%s %s %s" (string_of_expression lhs) (string_of_binop op)
         (string_of_expression rhs)

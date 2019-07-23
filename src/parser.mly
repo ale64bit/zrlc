@@ -180,16 +180,10 @@ let unary_expr :=
       ~ = unary_op; ~ = unary_expr; <Ast.UnExpr>
     )
 
-let bundled_arg ==
-  located(
-    LBRACE; ~ = separated_nonempty_list(COMMA, expr); RBRACE; <Ast.BundledArg>
-  )
-
 let arg_expr :=
   | expr
   | located(
     | ~ = ID; ASSIGN; ~ = expr; <Ast.NamedArg>
-    | ~ = ID; ASSIGN; ~ = bundled_arg; <Ast.NamedArg>
     )
 
 let primary_expr :=

@@ -650,14 +650,6 @@ and check_pipeline_call env loc f_name params arg_exprs arg_types =
     error loc
       (`Unimplemented "pipelines can be called only from renderer scope")
 
-and check_bundled_arg env exprs =
-  List.fold_results
-    (fun acc expr ->
-      acc >>= fun expr_types ->
-      check_single_value_expr env expr >>= fun expr_type ->
-      Ok (expr_type :: expr_types))
-    (Ok []) exprs
-
 and check_id env loc id =
   match Env.find_rvalue id env with
   | Some L.{ value = typ; _ } -> Ok [ typ ]
@@ -780,7 +772,6 @@ and check_expr env expr =
   | NamedArg (_, expr) ->
       check_single_value_expr env expr >>= fun typ ->
       Ok [ typ ]
-  | BundledArg exprs -> check_bundled_arg env exprs
   | BinExpr (lhs, op, rhs) ->
       check_single_value_expr env lhs >>= fun ltyp ->
       check_single_value_expr env rhs >>= fun rtyp ->

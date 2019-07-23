@@ -130,10 +130,6 @@ and dot_raw_expr s g = function
       G.add_edge g named_node id_node;
       G.add_edge g named_node expr_node;
       named_node
-  | Ast.BundledArg e ->
-      let bundled_node = new_dummy_node s g "bundled_args" in
-      List.iter (G.add_edge g bundled_node) (List.map (dot_expr s g) e);
-      bundled_node
   | Ast.BinExpr (lhs, op, rhs) ->
       let op_node = new_op_node s g (string_of_binop op) in
       let lhs_node = dot_expr s g lhs in

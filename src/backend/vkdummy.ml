@@ -207,9 +207,6 @@ let rec gen_cpp_expression env L.{ value; _ } =
       Printf.sprintf "static_cast<%s>(%s)" (zrl_to_cpp_type t)
         (gen_cpp_expression env expr)
   | NamedArg (_, expr) -> gen_cpp_expression env expr
-  | BundledArg exprs ->
-      Printf.sprintf "std::make_tuple(%s)"
-        (String.concat ", " (List.map (gen_cpp_expression env) exprs))
   | BinExpr (lhs, op, rhs) ->
       Printf.sprintf "%s %s %s"
         (gen_cpp_expression env lhs)
@@ -1758,8 +1755,6 @@ let rec gen_glsl_expression env L.{ value; _ } =
       Printf.sprintf "%s(%s)" (zrl_to_glsl_type t)
         (gen_glsl_expression env expr)
   | NamedArg (_, expr) -> gen_glsl_expression env expr
-  | BundledArg _ ->
-      failwith "cannot convert BundledArg expression to GLSL expression"
   | BinExpr (lhs, op, rhs) ->
       Printf.sprintf "%s %s %s"
         (gen_glsl_expression env lhs)
