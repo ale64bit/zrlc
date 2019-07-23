@@ -341,18 +341,18 @@ let format_of_vertex_input_type t =
   | TypeRef "float" -> "VK_FORMAT_R32_SFLOAT"
   | TypeRef "int" -> "VK_FORMAT_R32_SINT"
   | TypeRef "uint" -> "VK_FORMAT_R32_UINT"
-  | TypeRef "bvec2" -> "VK_FORMAT_R32_UINT"
-  | TypeRef "bvec3" -> "VK_FORMAT_R32G32_UINT"
-  | TypeRef "bvec4" -> "VK_FORMAT_R32G32B32_UINT"
-  | TypeRef "fvec2" -> "VK_FORMAT_R32_SFLOAT"
-  | TypeRef "fvec3" -> "VK_FORMAT_R32G32_SFLOAT"
-  | TypeRef "fvec4" -> "VK_FORMAT_R32G32B32_SFLOAT"
-  | TypeRef "ivec2" -> "VK_FORMAT_R32_SINT"
-  | TypeRef "ivec3" -> "VK_FORMAT_R32G32_SINT"
-  | TypeRef "ivec4" -> "VK_FORMAT_R32G32B32_SINT"
-  | TypeRef "uvec2" -> "VK_FORMAT_R32_UINT"
-  | TypeRef "uvec3" -> "VK_FORMAT_R32G32_UINT"
-  | TypeRef "uvec4" -> "VK_FORMAT_R32G32B32_UINT"
+  | TypeRef "bvec2" -> "VK_FORMAT_R32G32_UINT"
+  | TypeRef "bvec3" -> "VK_FORMAT_R32G32B32_UINT"
+  | TypeRef "bvec4" -> "VK_FORMAT_R32G32B32A32_UINT"
+  | TypeRef "fvec2" -> "VK_FORMAT_R32G32_SFLOAT"
+  | TypeRef "fvec3" -> "VK_FORMAT_R32G32B32_SFLOAT"
+  | TypeRef "fvec4" -> "VK_FORMAT_R32G32B32A32_SFLOAT"
+  | TypeRef "ivec2" -> "VK_FORMAT_R32G32_SINT"
+  | TypeRef "ivec3" -> "VK_FORMAT_R32G32B32_SINT"
+  | TypeRef "ivec4" -> "VK_FORMAT_R32G32B32A32_SINT"
+  | TypeRef "uvec2" -> "VK_FORMAT_R32G32_UINT"
+  | TypeRef "uvec3" -> "VK_FORMAT_R32G32B32_UINT"
+  | TypeRef "uvec4" -> "VK_FORMAT_R32G32B32A32_UINT"
   | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
 
 let gen_vertex_input_state_create_info p =
@@ -576,8 +576,7 @@ let collect_atom_bindings = function
   | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
       List.map
         (function
-          | L.{ value = Ast.NamedArg (lhs, L.{ value = Ast.Id rhs; _ }); _ } ->
-              (lhs, rhs)
+          | L.{ value = Ast.NamedArg (lhs, rhs); _ } -> (lhs, rhs)
           | expr ->
               failwith
                 ( "unsupported pipeline atom binding: "
@@ -585,7 +584,65 @@ let collect_atom_bindings = function
         args
   | _ -> failwith "unsupported right hand side of pipeline write statement"
 
-let gen_vertex_buffer_copies_and_bindings pipeline f bindings =
+let gen_uniform_atom_binding _ pipeline id expr f =
+  Printf.printf "TODO: bind '%s' to uniform '%s' of pipeline '%s'\n"
+    (Ast.string_of_expression expr)
+    id pipeline.gp_name;
+  f
+
+let gen_input_atom_binding env pipeline id expr f =
+  let open Cpp in
+  let location, _, t =
+    List.find (fun (_, name, _) -> name = id) pipeline.gp_inputs
+  in
+  let bind_comment =
+    Printf.sprintf "// BIND: pipeline=%s input=%s expr='%s'" pipeline.gp_name
+      id
+      (Ast.string_of_expression expr)
+  in
+  let trait_id = Printf.sprintf "%s_%s_vertex_buffer" pipeline.gp_name id in
+  Function.(
+    f
+    |> append_code_section
+         (Printf.sprintf
+            {|%s
+    {
+      const auto &atom = %s;
+      int32_t uid = 0;
+      size_t size = 0;
+      const void *src = nullptr;
+      %s<std::remove_const_t<
+         std::remove_reference_t<
+         decltype(atom)>>>{}(atom, uid, &src, size);
+
+      const VkBuffer buffer = vertex_buffer_pool_->GetHandle();
+      VkDeviceSize offset = 0;
+      auto it = vertex_buffer_cache_.find(uid);
+      if (it == vertex_buffer_cache_.end()) {
+        VkDeviceSize src_offset = staging_buffer_->PushData(size, src);
+        auto block = vertex_buffer_pool_->Alloc(size);
+        VkBufferCopy buffer_copy = {};
+        buffer_copy.srcOffset = src_offset;
+        buffer_copy.dstOffset = block.second;
+        buffer_copy.size = size;
+        vertex_buffer_copies_.push_back(buffer_copy);
+        vertex_buffer_cache_[uid] = block;
+        offset = block.second;
+      } else {
+        offset = it->second.second;
+      }
+
+      vkCmdBindVertexBuffers(gc_cmd_buffer_[image_index_], %d, 1, &buffer, &offset);
+
+      if (vertex_count == 0) {
+        vertex_count = size / sizeof(%s);
+      }
+    }|}
+            bind_comment
+            (gen_cpp_expression env expr)
+            trait_id location (zrl_to_cpp_type t)))
+
+let gen_atom_bindings env pipeline f bindings =
   let is_input id =
     List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
   in
@@ -594,14 +651,9 @@ let gen_vertex_buffer_copies_and_bindings pipeline f bindings =
   in
   List.fold_left
     (fun f (lhs, rhs) ->
-      if is_input lhs then (
-        (* TODO: implement *)
-        Printf.printf "binding atom %s to input %s\n" rhs lhs;
-        f )
-      else if is_uniform lhs then (
-        (* TODO: implement *)
-        Printf.printf "binding atom %s to uniform %s\n" rhs lhs;
-        f )
+      if is_input lhs then gen_input_atom_binding env pipeline lhs rhs f
+      else if is_uniform lhs then
+        gen_uniform_atom_binding env pipeline lhs rhs f
       else f)
     f bindings
 
@@ -616,11 +668,18 @@ let gen_write env pipeline lhs rhs f =
       f
       |> append_code_section
            (Printf.sprintf
-              {|{
+              {|{ // WRITE
+            uint32_t vertex_count = 0;
+            {  
             const std::vector<RenderTargetReference*> rts = {%s};
             for (auto rt : rts) { rt->target_layout = VK_IMAGE_LAYOUT_GENERAL; }
             VkRenderPass render_pass = GetOrCreateRenderPass(rts);
             VkFramebuffer framebuffer = GetOrCreateFramebuffer(rts, render_pass);
+            for (auto rt : rts) { 
+              if (rt->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+                rt->load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
+              }
+            }
             if (current_render_pass_ != render_pass) {
               if (current_render_pass_ != VK_NULL_HANDLE) {
                 vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
@@ -642,13 +701,16 @@ let gen_write env pipeline lhs rhs f =
                                    VK_SUBPASS_CONTENTS_INLINE);
               current_render_pass_ = render_pass;
               for (auto rt : rts) { rt->current_layout = rt->target_layout; }
-            }
-            |}
+            }|}
               rt_exprs))
   in
   let f = gen_create_and_bind_pipeline env pipeline f lhs in
-  let f = gen_vertex_buffer_copies_and_bindings pipeline f bindings in
-  Cpp.Function.(f |> append_code_section "}")
+  let f = gen_atom_bindings env pipeline f bindings in
+  Cpp.Function.(
+    f
+    |> append_code_section
+         "vkCmdDraw(gc_cmd_buffer_[image_index_], vertex_count, 1, 0, 0);"
+    |> append_code_section "}}")
 
 let extract_pipeline_name_from_write = function
   | _, L.{ value = Ast.Call (L.{ value = Ast.Id id; _ }, _); _ } -> id
@@ -1192,7 +1254,7 @@ let render_target_reference_struct =
   const VkImageView attachment = VK_NULL_HANDLE;
   VkImageLayout current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-  VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_MAX_ENUM;
+  VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   VkClearValue clear_value;
 };|}
 
@@ -1555,7 +1617,7 @@ let builtin_struct =
   RenderTargetReference *screen = nullptr;
 };|}
 
-let gen_types_header root_elems =
+let gen_types_header pipelines root_elems =
   let cc_header =
     Cpp.Header.(
       empty "Types" |> add_include "<array>"
@@ -1571,6 +1633,31 @@ let gen_types_header root_elems =
       |> add_section vk_descriptor_set_layout_create_info_hash
       |> add_section vk_pipeline_layout_create_info_hash
       |> add_section vk_graphics_pipeline_create_info_hash)
+  in
+  let bind_traits =
+    List.map
+      (fun (pname, pipeline) ->
+        let uniforms =
+          List.map
+            (fun (_, _, name, _) ->
+              Printf.sprintf "template<class T> struct %s_%s_uniform;" pname
+                name)
+            pipeline.gp_uniforms
+        in
+        let inputs =
+          List.map
+            (fun (_, name, _) ->
+              Printf.sprintf "template<class T> struct %s_%s_vertex_buffer;"
+                pname name)
+            pipeline.gp_inputs
+        in
+        uniforms @ inputs)
+      (MapString.bindings pipelines)
+  in
+  let cc_header =
+    List.fold_left
+      (flip Cpp.Header.add_section)
+      cc_header (List.flatten bind_traits)
   in
   List.fold_left
     (fun acc tl ->
@@ -2179,14 +2266,15 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
       |> load "//core:builddefs.bzl" "DEFINES"
       |> load "//core:glsl_library.bzl" "glsl_library")
   in
-  gen_types_header root_elems >>= fun (glsl_types, cc_types_header) ->
+  gen_pipelines root_elems >>= fun pipelines ->
+  gen_types_header pipelines root_elems
+  >>= fun (glsl_types, cc_types_header) ->
   let cc_types =
     Cpp.Library.(
       empty "Types" cfg.Config.cfg_bazel_package
       |> set_copts "COPTS" |> set_defines "DEFINES"
       |> add_header cc_types_header)
   in
-  gen_pipelines root_elems >>= fun pipelines ->
   gen_glsl_libraries root_env glsl_types pipelines >>= fun glsl_libraries ->
   gen_renderer_libraries cfg pipelines glsl_libraries root_elems
   >>= fun renderer_libraries ->

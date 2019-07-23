@@ -269,6 +269,13 @@ let ctor_body =
   {|  const auto &device = core_.GetLogicalDevice();
   DLOG << name_ << ": creating staging buffer\n";
   staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_128MB);
+  DLOG << name_ << ": creating vertex buffer pool\n";
+  vertex_buffer_pool_ = std::make_unique<zrl::BufferPool>(core, zrl::_128MB, 
+                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | 
+                                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                          zrl::_1KB);
   DLOG << name_ << ": creating gct command pool\n";
   gct_cmd_pool_ = CreateCommandPool(device.GetGCTQueueFamily());
   gc_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_, 
@@ -314,6 +321,7 @@ let ctor_body =
 
 let dtor_body =
   {|  staging_buffer_.reset();
+  vertex_buffer_pool_.reset();
   for (auto rt : rt_builtin_screen_ref_) {
     vkDestroyImageView(device, rt.attachment, nullptr);
   }
@@ -377,9 +385,6 @@ let stop_recording_body =
     const std::vector<RenderTargetReference*> desc = {builtin.screen};
     VkRenderPass render_pass = GetOrCreateRenderPass(desc);
     VkFramebuffer framebuffer = GetOrCreateFramebuffer(desc, render_pass);
-    if (builtin.screen->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-      builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
-    }
     VkRenderPassBeginInfo begin_info = {};
     begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     begin_info.pNext = nullptr;
@@ -393,6 +398,15 @@ let stop_recording_body =
                          VK_SUBPASS_CONTENTS_INLINE);
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
     builtin.screen->current_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  }
+
+  staging_buffer_->Flush();
+
+  if (vertex_buffer_copies_.size() > 0) {
+    vkCmdCopyBuffer(t_cmd_buffer_[image_index_], staging_buffer_->GetHandle(),
+                    vertex_buffer_pool_->GetHandle(), 
+                    static_cast<uint32_t>(vertex_buffer_copies_.size()),
+                    vertex_buffer_copies_.data());
   }
 
   // Stop recording.
@@ -464,6 +478,7 @@ let empty rname pkg =
         |> add_include "\"core/Image.h\""
         |> add_include "\"core/Log.h\""
         |> add_include "\"core/StagingBuffer.h\""
+        |> add_include "\"core/BufferPool.h\""
         |> add_include "\"glm/glm.hpp\""
         |> add_include "\"glm/gtc/type_ptr.hpp\""
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
@@ -472,6 +487,14 @@ let empty rname pkg =
         |> add_private_member ("uint32_t", "image_index_")
         |> add_private_member
              ("std::unique_ptr<zrl::StagingBuffer>", "staging_buffer_")
+        |> add_private_member
+             ("std::unique_ptr<zrl::BufferPool>", "vertex_buffer_pool_")
+        |> add_private_member
+             ( "std::unordered_map<int32_t, std::pair<VkDeviceSize, \
+                VkDeviceSize>>",
+               "vertex_buffer_cache_" )
+        |> add_private_member
+             ("std::vector<VkBufferCopy>", "vertex_buffer_copies_")
         |> add_private_member ("VkCommandPool", "gct_cmd_pool_")
         |> add_private_member ("VkCommandPool", "present_cmd_pool_")
         |> add_private_member ("std::vector<VkCommandBuffer>", "gc_cmd_buffer_")
@@ -515,6 +538,7 @@ let empty rname pkg =
       Function.(
         empty "Render" |> set_return_type "void"
         |> append_code_section "BeginRecording();"
+        |> append_code_section "vertex_buffer_copies_.clear();"
         |> append_code_section "current_render_pass_ = VK_NULL_HANDLE;"
         |> append_code_section "current_pipeline_ = VK_NULL_HANDLE;"
         |> append_code_section

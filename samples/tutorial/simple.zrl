@@ -2,22 +2,22 @@ module simple
 
 pipeline Pipeline(): fvec4 {
 
-  def vertex(pos: fvec3): fvec3 {
+  def vertex(pos: fvec4, col: fvec4): fvec4 {
     builtin.position = fvec4(pos.x, pos.y, pos.z, 1.0)
-    return pos
+    return col
   }
 
-  def fragment(pos: fvec3): fvec4 {
-    return fvec4(pos.x, pos.y, pos.z, 1.0)
+  def fragment(c: fvec4): fvec4 {
+    return fvec4(c.x, c.y, c.z, 1.0)
   }
 }
 
 renderer Simple() {
 
-  def main(geometry: atomlist, col: float) {
-    builtin.screen = fvec4(col, 1.0 - col, 0.0, 1.0)
+  def main(geometry: atomlist) {
+    builtin.screen = fvec4(0.4, 0.4, 0.4, 1.0) 
     for g in geometry {
-      builtin.screen += Pipeline(pos = g)
+      builtin.screen += Pipeline(pos = g, col = g)
     }
   }
 }
