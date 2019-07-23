@@ -151,6 +151,14 @@ and dot_raw_expr s g = function
 let rec dot_stmt s g e = dot_raw_stmt s g e.Located.value
 
 and dot_raw_stmt s g = function
+  | Ast.CallExpr (id, rhs) ->
+      let call_node = new_op_node s g "()" in
+      let id_node = new_node s g id in
+      let args_node = new_dummy_node s g "args" in
+      G.add_edge g call_node id_node;
+      G.add_edge g call_node args_node;
+      List.iter (G.add_edge g args_node) (List.map (dot_expr s g) rhs);
+      call_node
   | Ast.Var { bind_ids; bind_values } ->
       let var_node = new_node s g "var" in
       let id_node = new_dummy_node s g "ids" in

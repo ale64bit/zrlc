@@ -107,6 +107,9 @@ let func :=
   DEF; id = ID; fsign = function_signature; LBRACE; body = stmt*; RBRACE; 
     { {fd_name = id; fd_type = fsign; fd_body = body} }
 
+let call_expr ==
+  ~ = ID; LPAREN; ~ = separated_list(COMMA, expr); RPAREN; <Ast.CallExpr>
+
 let var_declaration ==
   VAR; 
   bind_ids=separated_nonempty_list(COMMA, ID); 
@@ -151,6 +154,7 @@ let discard ==
 
 let stmt :=
   located(
+  | call_expr
   | var_declaration
   | val_declaration
   | assignment

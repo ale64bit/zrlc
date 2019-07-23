@@ -87,6 +87,7 @@ and for_range_stmt = {
 and stmt = raw_stmt Located.t [@@deriving to_yojson]
 
 and raw_stmt =
+  | CallExpr of string * expression list
   | Var of binding
   | Val of binding
   | Assignment of assignment

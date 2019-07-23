@@ -669,6 +669,15 @@ let rec gen_cpp_stmt pipelines stmt f =
   let open TypedAst in
   let env, L.{ value = stmt; _ } = stmt in
   match stmt with
+  | CallExpr (id, args) ->
+      let arg_exprs =
+        String.concat ", "
+          (List.map (fun (_, expr) -> gen_cpp_expression env expr) args)
+      in
+      Function.(
+        f
+        |> append_code_section
+             (Printf.sprintf "%s(%s);" (gen_cpp_builtin_call_id id) arg_exprs))
   | Var { bind_ids; bind_values } | Val { bind_ids; bind_values } -> (
       match (bind_ids, bind_values) with
       | [ id ], [ ([ typ ], value) ] ->
@@ -807,7 +816,6 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
             match t with
             | Type.TypeRef (("int" | "float" | "bool") as tname) ->
                 Function.(f |> add_param (tname, pname))
-            (* TODO: support vector/matrix types via GLM *)
             | Type.TypeRef "atom" ->
                 let tmpl_param = pname ^ "AtomType" in
                 let param = (Printf.sprintf "const %s&" tmpl_param, pname) in
@@ -840,8 +848,8 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
                 Function.(f |> add_param ("RenderTargetReference*", pname))
             | Type.TypeRef "rt_ds" ->
                 Function.(f |> add_param ("RenderTargetReference*", pname))
-            | Type.TypeRef tname ->
-                let cr = "const " ^ tname ^ "&" in
+            | Type.TypeRef _ ->
+                let cr = "const " ^ zrl_to_cpp_type t ^ "&" in
                 Function.(f |> add_param (cr, pname))
             | _ ->
                 failwith
@@ -1774,6 +1782,15 @@ let rec gen_glsl_stmt stmt f =
   let open Glsl in
   let env, L.{ value = stmt; _ } = stmt in
   match stmt with
+  | CallExpr (id, args) ->
+      let arg_exprs =
+        String.concat ", "
+          (List.map (fun (_, expr) -> gen_glsl_expression env expr) args)
+      in
+      Function.(
+        f
+        |> append_code_section
+             (Printf.sprintf "%s(%s);" (gen_glsl_builtin_call_id id) arg_exprs))
   | Var { bind_ids; bind_values } | Val { bind_ids; bind_values } -> (
       match (bind_ids, bind_values) with
       | [ id ], [ ([ typ ], value) ] ->

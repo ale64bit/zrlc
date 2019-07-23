@@ -1089,6 +1089,16 @@ and check_stmt_list env stmts =
 and check_stmt env loc =
   let open Ast in
   function
+  | CallExpr (id, arg_exprs) ->
+      check_call env loc L.{ value = Ast.Id id; loc } arg_exprs >>= fun _ ->
+      List.fold_results
+        (fun acc expr ->
+          acc >>= fun arg_exprs ->
+          check_expr env expr >>= fun expr_types ->
+          Ok ((expr_types, expr) :: arg_exprs))
+        (Ok []) arg_exprs
+      >>= fun arg_exprs ->
+      Ok (env, [ (env, L.{ loc; value = TypedAst.CallExpr (id, arg_exprs) }) ])
   | Var { bind_ids; bind_values } ->
       check_binding env loc bind_ids bind_values Env.add_var (fun b ->
           TypedAst.Var b)
