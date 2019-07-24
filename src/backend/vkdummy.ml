@@ -519,13 +519,15 @@ let gen_create_and_bind_pipeline env p f lhs =
     graphics_pipeline_create_info.basePipelineIndex = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    auto res = pipeline_cache_.find(graphics_pipeline_create_info);
+    const size_t h = std::hash<VkGraphicsPipelineCreateInfo>{}(
+        graphics_pipeline_create_info);
+    auto res = pipeline_cache_.find(h);
     if (res == pipeline_cache_.end()) {
       DLOG << name_ << ": creating new graphics pipeline" << '\n';
       CHECK_VK(vkCreateGraphicsPipelines(core_.GetLogicalDevice().GetHandle(),
                                          nullptr, 1, &graphics_pipeline_create_info,
                                          nullptr, &pipeline));
-      pipeline_cache_[graphics_pipeline_create_info] = pipeline;
+      pipeline_cache_[h] = pipeline;
     } else {
       pipeline = res->second;
     }
@@ -1583,16 +1585,6 @@ template <> struct hash<VkGraphicsPipelineCreateInfo> {
     return h;
   }
 };
-
-template <> struct equal_to<VkGraphicsPipelineCreateInfo> {
-  size_t operator()(const VkGraphicsPipelineCreateInfo &info1,
-                    const VkGraphicsPipelineCreateInfo &info2) const noexcept {
-    // TODO implement
-    return hash<VkGraphicsPipelineCreateInfo>{}(info1) ==
-           hash<VkGraphicsPipelineCreateInfo>{}(info2);
-  }
-};
-
 }|}
 
 let builtin_struct =
@@ -2176,22 +2168,26 @@ let gen_shaders env name glsl_types pipeline =
   in
   Ok (List.flatten [ vertex_shader; fragment_shader ])
 
+let wrap_uniform_basic_type t name =
+  let block_name = name ^ "WrapperBlock_" in
+  (Printf.sprintf "%s { %s %s; }" block_name (zrl_to_glsl_type t) name, "")
+
 let glsl_uniform_format env t name =
   match t with
-  | Type.TypeRef "int" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "float" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fvec2" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fvec3" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fvec4" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "ivec2" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "ivec3" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "ivec4" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "uvec2" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "uvec3" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "uvec4" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fmat2" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fmat3" -> (zrl_to_glsl_type t, name)
-  | Type.TypeRef "fmat4" -> (zrl_to_glsl_type t, name)
+  | Type.TypeRef "int" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "float" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fvec2" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fvec3" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fvec4" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "ivec2" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "ivec3" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "ivec4" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "uvec2" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "uvec3" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "uvec4" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fmat2" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fmat3" -> wrap_uniform_basic_type t name
+  | Type.TypeRef "fmat4" -> wrap_uniform_basic_type t name
   | Type.TypeRef "sampler2D" -> (zrl_to_glsl_type t, name)
   | Type.Array (t, dims) ->
       let dims =

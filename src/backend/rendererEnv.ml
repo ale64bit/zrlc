@@ -538,8 +538,7 @@ let empty rname pkg =
                 VkFramebuffer, FramebufferHash, FramebufferEqualTo>",
                "framebuffer_cache_" )
         |> add_private_member
-             ( "std::unordered_map<VkGraphicsPipelineCreateInfo, VkPipeline>",
-               "pipeline_cache_" )
+             ("std::unordered_map<size_t, VkPipeline>", "pipeline_cache_")
         |> add_private_member ("VkRenderPass", "current_render_pass_")
         |> add_private_member ("VkPipeline", "current_pipeline_")
         |> add_private_member ("Builtin", "builtin")
