@@ -300,40 +300,6 @@ let gen_shader_stage_create_infos p =
   let stages = List.flatten [ vertex_stage; fragment_stage ] in
   String.concat "\n" stages
 
-let rec stride_of_type t =
-  let open Type in
-  match t with
-  | TypeRef "bool" -> 4
-  | TypeRef "float" -> 4
-  | TypeRef "int" -> 4
-  | TypeRef "uint" -> 4
-  | TypeRef "bvec2" -> 2 * stride_of_type (TypeRef "bool")
-  | TypeRef "bvec3" -> 3 * stride_of_type (TypeRef "bool")
-  | TypeRef "bvec4" -> 4 * stride_of_type (TypeRef "bool")
-  | TypeRef "fvec2" -> 2 * stride_of_type (TypeRef "float")
-  | TypeRef "fvec3" -> 3 * stride_of_type (TypeRef "float")
-  | TypeRef "fvec4" -> 4 * stride_of_type (TypeRef "float")
-  | TypeRef "ivec2" -> 2 * stride_of_type (TypeRef "int")
-  | TypeRef "ivec3" -> 3 * stride_of_type (TypeRef "int")
-  | TypeRef "ivec4" -> 4 * stride_of_type (TypeRef "int")
-  | TypeRef "uvec2" -> 2 * stride_of_type (TypeRef "uint")
-  | TypeRef "uvec3" -> 3 * stride_of_type (TypeRef "uint")
-  | TypeRef "uvec4" -> 4 * stride_of_type (TypeRef "uint")
-  | TypeRef "fmat2" -> 2 * 2 * stride_of_type (TypeRef "float")
-  | TypeRef "fmat3" -> 3 * 3 * stride_of_type (TypeRef "float")
-  | TypeRef "fmat4" -> 4 * 4 * stride_of_type (TypeRef "float")
-  | Array (t, dims) ->
-      let total =
-        List.fold_left
-          (fun acc d ->
-            match d with
-            | OfInt i -> i * acc
-            | _ -> failwith "unexpected dimension type")
-          1 dims
-      in
-      total * stride_of_type t
-  | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
-
 let format_of_vertex_input_type t =
   let open Type in
   match t with
@@ -363,10 +329,10 @@ let gen_vertex_input_state_create_info p =
         Printf.sprintf
           {|
     vertex_bindings[%d].binding = %d;
-    vertex_bindings[%d].stride = %d;
+    vertex_bindings[%d].stride = sizeof(%s);
     vertex_bindings[%d].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     |}
-          i i i (stride_of_type t) i)
+          i i i (zrl_to_cpp_type t) i)
       (List.index p.gp_inputs)
   in
   let vertex_attributes =
@@ -585,10 +551,27 @@ let collect_atom_bindings = function
   | _ -> failwith "unsupported right hand side of pipeline write statement"
 
 let gen_uniform_atom_binding _ pipeline id expr f =
-  Printf.printf "TODO: bind '%s' to uniform '%s' of pipeline '%s'\n"
-    (Ast.string_of_expression expr)
-    id pipeline.gp_name;
-  f
+  let open Cpp in
+  let _, _, _, _ =
+    List.find (fun (_, _, name, _) -> name = id) pipeline.gp_uniforms
+  in
+  let bind_comment =
+    Printf.sprintf "// BIND: pipeline=%s uniform=%s expr='%s'" pipeline.gp_name
+      id
+      (Ast.string_of_expression expr)
+  in
+  Function.(
+    f
+    |> append_code_section
+         (Printf.sprintf
+            {|%s
+    {
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.pNext = nullptr;
+      // TODO: implement
+    }|}
+            bind_comment))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -2128,6 +2111,18 @@ let gen_shader env helpers structs name stage
               loc = builtin_loc;
             } )
       in
+      let param_types = List.map (fun (_, t) -> [ t ]) params in
+      let entry_point_stmt =
+        if List.length rets = 0 then
+          TypedAst.CallExpr (fd_name, List.combine param_types entry_point_args)
+        else
+          TypedAst.Assignment
+            {
+              asg_op = Ast.Assign;
+              asg_lvalues = output_names;
+              asg_rvalues = [ entry_point_call ];
+            }
+      in
       let entry_point =
         TypedAst.
           {
@@ -2135,19 +2130,7 @@ let gen_shader env helpers structs name stage
             fd_name = "main";
             fd_type = Type.Function ([], []);
             fd_body =
-              [ ( fd_env,
-                  L.
-                    {
-                      value =
-                        TypedAst.Assignment
-                          {
-                            asg_op = Ast.Assign;
-                            asg_lvalues = output_names;
-                            asg_rvalues = [ entry_point_call ];
-                          };
-                      loc = builtin_loc;
-                    } )
-              ];
+              [ (fd_env, L.{ value = entry_point_stmt; loc = builtin_loc }) ];
           }
       in
       let main_fn, _ = gen_glsl_function entry_point in

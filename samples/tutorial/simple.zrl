@@ -7,15 +7,15 @@ pipeline Pipeline(): fvec4 {
     return col
   }
 
-  def fragment(c: fvec4): fvec4 {
-    return fvec4(c.x, c.y, c.z, 1.0)
+  def fragment(col: fvec4): fvec4 {
+    return fvec4(col.x, col.y, col.z, 1.0)
   }
 }
 
 renderer Simple() {
 
   def main(geometry: atomlist) {
-    builtin.screen = fvec4(0.4, 0.4, 0.4, 1.0) 
+    builtin.screen = fvec4(1.0, 1.0, 1.0, 1.0) 
     for g in geometry {
       builtin.screen += Pipeline(pos = g, col = g)
     }
