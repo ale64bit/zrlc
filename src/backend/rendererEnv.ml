@@ -352,13 +352,35 @@ let dtor_body =
 
 let begin_recording =
   Function.(
-    empty "BeginRecording" |> set_return_type "void"
+    empty "BeginRecording" |> set_return_type "bool"
     |> append_code_section
          {|  const VkDevice device = core_.GetLogicalDevice().GetHandle();
   // Acquire swapchain image.
-  CHECK_VK(vkAcquireNextImageKHR(device, core_.GetSwapchain().GetHandle(),
-                                 std::numeric_limits<uint64_t>::max(),
-                                 acquire_semaphore_, VK_NULL_HANDLE, &image_index_));
+  VkResult result = 
+      vkAcquireNextImageKHR(device, core_.GetSwapchain().GetHandle(),
+                            std::numeric_limits<uint64_t>::max(),
+                            acquire_semaphore_, VK_NULL_HANDLE, &image_index_);
+  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    LOG(WARNING) << name_ << ": swapchain out of date\n";
+    core_.UpdateSwapchain();
+    for (auto img_view : rt_builtin_screen_img_view_) {
+      vkDestroyImageView(device, img_view, nullptr);
+    }
+    rt_builtin_screen_ref_.clear();
+    rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
+    for (size_t i = 0; i < rt_builtin_screen_img_view_.size(); ++i) {
+      VkImageView view =
+          CreateImageView(core_.GetSwapchain().GetImages()[i],
+                          core_.GetSwapchain().GetSurfaceFormat());
+      rt_builtin_screen_img_view_[i] = view;
+      rt_builtin_screen_ref_.push_back(
+          {VK_FORMAT_B8G8R8A8_UNORM, view, VK_IMAGE_LAYOUT_UNDEFINED,
+           VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+           VkClearValue{}});
+    }
+    return true;
+  }
+  CHECK_VK(result);
 
   // Wait for cmd buffer to be ready.
   CHECK_VK(vkWaitForFences(device, 1, &gct_cmd_buffer_fence_[image_index_], VK_TRUE,
@@ -371,6 +393,7 @@ let begin_recording =
   cmd_buffer_begin_info.pInheritanceInfo = nullptr;
   CHECK_VK(vkBeginCommandBuffer(t_cmd_buffer_[image_index_], &cmd_buffer_begin_info));
   CHECK_VK(vkBeginCommandBuffer(gc_cmd_buffer_[image_index_], &cmd_buffer_begin_info));
+  return false;
 |})
 
 let stop_recording_body =
@@ -455,11 +478,11 @@ let stop_recording_body =
 let wait_device_and_queues_idle =
   {|  const VkDevice device = core_.GetLogicalDevice().GetHandle();
   LOG(INFO) << name_ << ": waiting for gct queue to be idle\n";
-  vkQueueWaitIdle(core_.GetLogicalDevice().GetGCTQueue());
+  CHECK_VK(vkQueueWaitIdle(core_.GetLogicalDevice().GetGCTQueue()));
   LOG(INFO) << name_ << ": waiting for present queue to be idle\n";
-  vkQueueWaitIdle(core_.GetLogicalDevice().GetPresentQueue());
+  CHECK_VK(vkQueueWaitIdle(core_.GetLogicalDevice().GetPresentQueue()));
   LOG(INFO) << name_ << ": waiting for device to be idle\n";
-  vkDeviceWaitIdle(device);
+  CHECK_VK(vkDeviceWaitIdle(device));
 |}
 
 let empty rname pkg =
@@ -537,7 +560,7 @@ let empty rname pkg =
     render =
       Function.(
         empty "Render" |> set_return_type "void"
-        |> append_code_section "BeginRecording();"
+        |> append_code_section "if (BeginRecording()) { return; };"
         |> append_code_section "vertex_buffer_copies_.clear();"
         |> append_code_section "current_render_pass_ = VK_NULL_HANDLE;"
         |> append_code_section "current_pipeline_ = VK_NULL_HANDLE;"
