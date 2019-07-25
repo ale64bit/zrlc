@@ -19,7 +19,8 @@ end
 type graphics_pipeline = {
   gp_name : string;
   gp_declaration : TypedAst.pipeline_declaration;
-  gp_uniforms : (int * int * string * Type.t) list;
+  gp_uniforms : (int * int * int * string * Type.t) list;
+  gp_uniform_set : int MapString.t;
   gp_inputs : (int * string * Type.t) list;
   gp_outputs : (int * Type.t) list;
   gp_vertex_stage : TypedAst.function_declaration;
@@ -31,6 +32,12 @@ type graphics_pipeline = {
 let flip f x y = f y x
 
 let error loc e = Error L.{ loc; value = e }
+
+let array_type_size dims =
+  List.fold_left
+    (fun acc -> function Type.OfInt i -> i * acc
+      | _ -> failwith "array dimensions must be known at compile time")
+    1 dims
 
 let rec glsl_type_locations env = function
   | Type.TypeRef "int" -> 1
@@ -49,14 +56,7 @@ let rec glsl_type_locations env = function
   | Type.TypeRef "fmat3" -> 3
   | Type.TypeRef "fmat4" -> 4
   | Type.Array (t, dims) ->
-      let size =
-        List.fold_left
-          (fun acc dim ->
-            match dim with
-            | Type.OfInt i -> acc * i
-            | _ -> failwith "unsupported array dimension")
-          1 dims
-      in
+      let size = array_type_size dims in
       size * glsl_type_locations env t
   | Type.Record fields ->
       List.fold_left
@@ -95,25 +95,28 @@ let rec zrl_to_glsl_type = function
       Printf.sprintf "%s%s" (zrl_to_glsl_type t) (String.concat "" dims)
   | t -> failwith "unsupported type: " ^ Type.string_of_type t
 
-let rec zrl_to_cpp_type = function
-  | Type.TypeRef "int" -> "int"
-  | Type.TypeRef "bool" -> "bool"
-  | Type.TypeRef "float" -> "float"
-  | Type.TypeRef "fvec2" -> "glm::fvec2"
-  | Type.TypeRef "fvec3" -> "glm::fvec3"
-  | Type.TypeRef "fvec4" -> "glm::fvec4"
-  | Type.TypeRef "ivec2" -> "glm::ivec2"
-  | Type.TypeRef "ivec3" -> "glm::ivec3"
-  | Type.TypeRef "ivec4" -> "glm::ivec4"
-  | Type.TypeRef "uvec2" -> "glm::uvec2"
-  | Type.TypeRef "uvec3" -> "glm::uvec3"
-  | Type.TypeRef "uvec4" -> "glm::uvec4"
-  | Type.TypeRef "fmat2" -> "glm::fmat2"
-  | Type.TypeRef "fmat3" -> "glm::fmat3"
-  | Type.TypeRef "fmat4" -> "glm::fmat4"
-  | Type.Array (t, dims) ->
+let rec zrl_to_cpp_type =
+  let open Type in
+  function
+  | TypeRef "int" -> "int32_t"
+  | TypeRef "uint" -> "uint32_t"
+  | TypeRef "bool" -> "bool"
+  | TypeRef "float" -> "float"
+  | TypeRef "fvec2" -> "glm::fvec2"
+  | TypeRef "fvec3" -> "glm::fvec3"
+  | TypeRef "fvec4" -> "glm::fvec4"
+  | TypeRef "ivec2" -> "glm::ivec2"
+  | TypeRef "ivec3" -> "glm::ivec3"
+  | TypeRef "ivec4" -> "glm::ivec4"
+  | TypeRef "uvec2" -> "glm::uvec2"
+  | TypeRef "uvec3" -> "glm::uvec3"
+  | TypeRef "uvec4" -> "glm::uvec4"
+  | TypeRef "fmat2" -> "glm::fmat2"
+  | TypeRef "fmat3" -> "glm::fmat3"
+  | TypeRef "fmat4" -> "glm::fmat4"
+  | Array (t, dims) ->
       let arr t = function
-        | Type.OfInt i -> Printf.sprintf "std::array<%s, %d>" t i
+        | OfInt i -> Printf.sprintf "std::array<%s, %d>" t i
         | _ -> failwith "unsupported array dimension"
       in
       let rec aux = function
@@ -122,11 +125,12 @@ let rec zrl_to_cpp_type = function
         | d :: ds -> arr (aux ds) d
       in
       aux dims
-  | Type.TypeRef "rt_rgb" -> "RenderTargetReference*"
-  | Type.TypeRef "rt_rgba" -> "RenderTargetReference*"
-  | Type.TypeRef "rt_ds" -> "RenderTargetReference*"
-  | Type.TypeRef s -> s
-  | t -> failwith "unsupported type: " ^ Type.string_of_type t
+  | TypeRef "rt_rgb" -> "RenderTargetReference*"
+  | TypeRef "rt_rgba" -> "RenderTargetReference*"
+  | TypeRef "rt_ds" -> "RenderTargetReference*"
+  | TypeRef "sampler2D" -> "SampledImageReference*"
+  | TypeRef s -> s
+  | t -> failwith "unsupported type: " ^ string_of_type t
 
 let call_has_named_args args =
   List.for_all
@@ -554,13 +558,14 @@ let collect_atom_bindings = function
 
 let gen_uniform_atom_binding _ pipeline id expr f =
   let open Cpp in
-  let _, _, _, _ =
-    List.find (fun (_, _, name, _) -> name = id) pipeline.gp_uniforms
+  let _, _, _, _, _ =
+    List.find (fun (_, _, _, name, _) -> name = id) pipeline.gp_uniforms
   in
   let bind_comment =
-    Printf.sprintf "// BIND: pipeline=%s uniform=%s expr='%s'" pipeline.gp_name
-      id
+    Printf.sprintf "// BIND UNIFORM: pipeline=%s uniform=%s expr='%s' set=%d"
+      pipeline.gp_name id
       (Ast.string_of_expression expr)
+      (MapString.find id pipeline.gp_uniform_set)
   in
   Function.(
     f
@@ -581,11 +586,11 @@ let gen_input_atom_binding env pipeline id expr f =
     List.find (fun (_, name, _) -> name = id) pipeline.gp_inputs
   in
   let bind_comment =
-    Printf.sprintf "// BIND: pipeline=%s input=%s expr='%s'" pipeline.gp_name
-      id
+    Printf.sprintf "// BIND INPUT: pipeline=%s input=%s expr='%s'"
+      pipeline.gp_name id
       (Ast.string_of_expression expr)
   in
-  let trait_id = Printf.sprintf "%s_%s_vertex_buffer" pipeline.gp_name id in
+  let trait_id = Printf.sprintf "%s_%s" pipeline.gp_name id in
   Function.(
     f
     |> append_code_section
@@ -632,7 +637,7 @@ let gen_atom_bindings env pipeline f bindings =
     List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
   in
   let is_uniform id =
-    List.exists (fun (_, _, name, _) -> id = name) pipeline.gp_uniforms
+    List.exists (fun (_, _, _, name, _) -> id = name) pipeline.gp_uniforms
   in
   List.fold_left
     (fun f (lhs, rhs) ->
@@ -1056,16 +1061,35 @@ let gen_shader_modules cfg_bazel_package glsl_libraries r =
   Ok r
 
 let gen_descriptor_set_layouts p r =
+  let sets = List.map (fun (set, _, _, _, _) -> set) p.gp_uniforms in
+  let sets = List.sort_uniq ( - ) sets in
   List.fold_left
-    (fun r (_, _, name, t) ->
+    (fun r set ->
       let descriptor_set_layout =
-        Printf.sprintf "%s_%s_descriptor_set_layout_" p.gp_name name
+        Printf.sprintf "%s_%d_descriptor_set_layout_" p.gp_name set
       in
-      let descriptor_type =
-        match t with
-        | Type.TypeRef "sampler2D" ->
-            "VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER"
-        | _ -> "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER"
+      let bindings =
+        List.map
+          (fun (_, binding, count, name, t) ->
+            let descriptor_type =
+              match t with
+              | Type.TypeRef "sampler2D" | Type.Array (TypeRef "sampler2D", _)
+                ->
+                  "VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER"
+              | _ -> "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER"
+            in
+            Printf.sprintf
+              {|
+                // %s
+                bindings[%d].binding = %d;
+                bindings[%d].descriptorType = %s;
+                bindings[%d].descriptorCount = %d;
+                bindings[%d].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+                bindings[%d].pImmutableSamplers = nullptr;
+              |}
+              name binding binding binding descriptor_type binding count
+              binding binding)
+          (List.find_all (fun (s, _, _, _, _) -> s = set) p.gp_uniforms)
       in
       let rclass =
         Cpp.Class.(
@@ -1078,24 +1102,23 @@ let gen_descriptor_set_layouts p r =
           |> add_member_initializer (descriptor_set_layout, "VK_NULL_HANDLE")
           |> append_code_section
                (Printf.sprintf
-                  {|{
-    VkDescriptorSetLayoutBinding binding = {};
-    binding.binding = 0;
-    binding.descriptorType = %s;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
-    binding.pImmutableSamplers = nullptr;
+                  {|{ // SET %d
+    std::array<VkDescriptorSetLayoutBinding, %d> bindings;
+
+    %s
 
     VkDescriptorSetLayoutCreateInfo create_info = {};
     create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     create_info.pNext = nullptr;
     create_info.flags = 0;
-    create_info.bindingCount = 1;
-    create_info.pBindings = &binding;
+    create_info.bindingCount = static_cast<uint32_t>(bindings.size());
+    create_info.pBindings = bindings.data();
     CHECK_VK(vkCreateDescriptorSetLayout(core_.GetLogicalDevice().GetHandle(), 
                                          &create_info, nullptr, &%s));
 }|}
-                  descriptor_type descriptor_set_layout))
+                  set (List.length bindings)
+                  (String.concat "\n" bindings)
+                  descriptor_set_layout))
       in
       let dtor =
         Cpp.Function.(
@@ -1107,22 +1130,27 @@ let gen_descriptor_set_layouts p r =
                   descriptor_set_layout))
       in
       RendererEnv.{ r with rclass; ctor; dtor })
-    r p.gp_uniforms
+    r sets
 
 let gen_pipeline_layout pipeline r =
   let pipeline_layout =
     Printf.sprintf "%s_pipeline_layout_" pipeline.gp_name
   in
+  let sets =
+    List.sort_uniq ( - )
+      (List.map
+         (fun (_, set) -> set)
+         (MapString.bindings pipeline.gp_uniform_set))
+  in
   let descriptor_set_layouts =
     List.rev
       (List.fold_left
-         (fun layouts (_, _, name, _) ->
+         (fun layouts set ->
            let descriptor_set_layout =
-             Printf.sprintf "%s_%s_descriptor_set_layout_" pipeline.gp_name
-               name
+             Printf.sprintf "%s_%d_descriptor_set_layout_" pipeline.gp_name set
            in
            descriptor_set_layout :: layouts)
-         [] pipeline.gp_uniforms)
+         [] sets)
   in
   let rclass =
     Cpp.Class.(
@@ -1241,6 +1269,11 @@ let render_target_reference_struct =
   VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   VkClearValue clear_value;
+};|}
+
+let sampled_image_reference_struct =
+  {|struct SampledImageReference {
+  // TODO implement
 };|}
 
 let render_pass_hash =
@@ -1599,6 +1632,7 @@ let gen_types_header pipelines root_elems =
       |> add_include {|"glm/glm.hpp"|}
       |> add_section merge_hash_function
       |> add_section render_target_reference_struct
+      |> add_section sampled_image_reference_struct
       |> add_section render_pass_hash
       |> add_section render_pass_equal_to
       |> add_section framebuffer_hash
@@ -1614,7 +1648,7 @@ let gen_types_header pipelines root_elems =
       (fun (pname, pipeline) ->
         let uniforms =
           List.map
-            (fun (_, _, name, _) ->
+            (fun (_, _, _, name, _) ->
               Printf.sprintf "template<class T> struct %s_%s_uniform;" pname
                 name)
             pipeline.gp_uniforms
@@ -1622,8 +1656,7 @@ let gen_types_header pipelines root_elems =
         let inputs =
           List.map
             (fun (_, name, _) ->
-              Printf.sprintf "template<class T> struct %s_%s_vertex_buffer;"
-                pname name)
+              Printf.sprintf "template<class T> struct %s_%s;" pname name)
             pipeline.gp_inputs
         in
         uniforms @ inputs)
@@ -1657,6 +1690,26 @@ let check_stage_chaining loc from_stage to_stage =
         error loc (`Unsupported "stage outputs must match next stage inputs")
   | _ -> failwith "stages must have Function types"
 
+let gen_uniform_bindings env set id t =
+  let open Type in
+  match t with
+  | Array (_, dims) ->
+      let count = array_type_size dims in
+      [ (set, 0, count, id, t) ]
+  | TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = Record fields; _ } ->
+          List.map
+            (fun (i, (name, t)) ->
+              match t with
+              | Array (_, dims) ->
+                  let count = array_type_size dims in
+                  (set, i, count, name, t)
+              | _ -> (set, i, 1, name, t))
+            (List.index fields)
+      | _ -> [ (set, 0, 1, id, t) ] )
+  | _ -> [ (set, 0, 1, id, t) ]
+
 let gen_graphics_pipeline loc pd =
   let TypedAst.{ pd_env; pd_name; pd_type; pd_functions } = pd in
   let find_func name =
@@ -1678,11 +1731,17 @@ let gen_graphics_pipeline loc pd =
   check_stage_chaining loc vertex_type fragment_type >>= fun () ->
   match (pd_type, vertex_type) with
   | Type.Function (uniforms, outputs), Type.Function (inputs, _) ->
+      let uniform_set =
+        List.fold_left
+          (fun s (i, (name, _)) -> MapString.add name i s)
+          MapString.empty (List.index uniforms)
+      in
       let uniforms =
-        List.(
-          map
-            (fun (i, (name, t)) -> (i / 8, i mod 8, name, t))
-            (index uniforms))
+        List.flatten
+          List.(
+            map
+              (fun (i, (name, t)) -> gen_uniform_bindings pd_env i name t)
+              (index uniforms))
       in
       let _, inputs =
         List.fold_left
@@ -1696,6 +1755,7 @@ let gen_graphics_pipeline loc pd =
           gp_name = pd_name;
           gp_declaration = pd;
           gp_uniforms = uniforms;
+          gp_uniform_set = uniform_set;
           gp_inputs = List.rev inputs;
           gp_outputs = outputs;
           gp_vertex_stage = find_func "vertex";
@@ -2168,50 +2228,17 @@ let gen_shaders env name glsl_types pipeline =
   in
   Ok (List.flatten [ vertex_shader; fragment_shader ])
 
-let wrap_uniform_basic_type t name =
-  let block_name = name ^ "WrapperBlock_" in
-  (Printf.sprintf "%s { %s %s; }" block_name (zrl_to_glsl_type t) name, "")
-
-let glsl_uniform_format env t name =
+let wrap_uniform set binding t name =
+  let open Type in
   match t with
-  | Type.TypeRef "int" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "float" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fvec2" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fvec3" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fvec4" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "ivec2" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "ivec3" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "ivec4" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "uvec2" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "uvec3" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "uvec4" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fmat2" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fmat3" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "fmat4" -> wrap_uniform_basic_type t name
-  | Type.TypeRef "sampler2D" -> (zrl_to_glsl_type t, name)
-  | Type.Array (t, dims) ->
-      let dims =
-        List.map
-          (function
-            | Type.OfInt i -> Printf.sprintf "[%d]" i
-            | _ -> failwith "unsupported array dimension")
-          dims
+  | TypeRef "sampler2D" | Array (TypeRef "sampler2D", _) ->
+      (* Cannot wrap opaque types in blocks in GLSL *)
+      (zrl_to_glsl_type t, name)
+  | _ ->
+      let block_name =
+        Printf.sprintf "Set%dBinding%dWrapperBlock_" set binding
       in
-      (zrl_to_glsl_type t ^ String.concat "" dims, name)
-  | Type.TypeRef s -> (
-      match Env.find_type ~local:false s env with
-      | Some L.{ value = Type.Record fields; _ } ->
-          let fields =
-            List.map
-              (fun (name, t) -> zrl_to_glsl_type t ^ " " ^ name ^ ";")
-              fields
-          in
-          let t = Printf.sprintf "{ %s }" (String.concat " " fields) in
-          (name, t)
-      | Some L.{ value = t; _ } ->
-          failwith ("cannot inline non-record type: " ^ Type.string_of_type t)
-      | None -> failwith ("unknown type: " ^ Type.string_of_type t) )
-  | t -> failwith ("unsupported type: " ^ Type.string_of_type t)
+      (Printf.sprintf "%s { %s %s; }" block_name (zrl_to_glsl_type t) name, "")
 
 let gen_glsl_libraries env glsl_types pipelines =
   let open Glsl in
@@ -2223,9 +2250,9 @@ let gen_glsl_libraries env glsl_types pipelines =
         List.map
           (fun shader ->
             List.fold_left
-              (fun shader (set, binding, name, t) ->
+              (fun shader (set, binding, _, name, t) ->
                 Shader.add_uniform set binding
-                  (glsl_uniform_format env t name)
+                  (wrap_uniform set binding t name)
                   shader)
               shader pipeline.gp_uniforms)
           shaders
