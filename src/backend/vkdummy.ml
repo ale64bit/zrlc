@@ -539,10 +539,17 @@ let gen_create_and_bind_pipeline env p f lhs =
       vkCmdBindPipeline(gc_cmd_buffer_[image_index_], VK_PIPELINE_BIND_POINT_GRAPHICS,
                         pipeline);
       current_pipeline_ = pipeline;
+      const VkPipelineLayout next_pipeline_layout = %s_pipeline_layout_;
+      const int first_disturbed_set = pipeline_layout_lcp_.at(
+          std::make_pair(current_pipeline_layout_, next_pipeline_layout));
+      for (int i = first_disturbed_set; i < kDescriptorSetRegisterCount; ++i) {
+        ClearDescriptorSetRegister(i);
+      }
+      current_pipeline_layout_ = next_pipeline_layout;
     }
 }|}
             shader_stages vertex_input_state_create_info num_color_attachments
-            color_blend_attachments p.gp_name))
+            color_blend_attachments p.gp_name p.gp_name))
 
 let collect_atom_bindings = function
   | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
@@ -556,16 +563,23 @@ let collect_atom_bindings = function
         args
   | _ -> failwith "unsupported right hand side of pipeline write statement"
 
-let gen_uniform_atom_binding _ pipeline id expr f =
+let gen_uniform_atom_binding env pipeline id expr f =
   let open Cpp in
-  let _, _, _, _, _ =
-    List.find (fun (_, _, _, name, _) -> name = id) pipeline.gp_uniforms
+  let set = MapString.find id pipeline.gp_uniform_set in
+  let set_layout =
+    Printf.sprintf "%s_%d_descriptor_set_layout_" pipeline.gp_name set
   in
+  (*
+  let bindings =
+    List.find_all (fun (s, _, _, _, _) -> s = set) pipeline.gp_uniforms
+  in
+*)
+  let trait_id = Printf.sprintf "%s_%s" pipeline.gp_name id in
   let bind_comment =
     Printf.sprintf "// BIND UNIFORM: pipeline=%s uniform=%s expr='%s' set=%d"
       pipeline.gp_name id
       (Ast.string_of_expression expr)
-      (MapString.find id pipeline.gp_uniform_set)
+      set
   in
   Function.(
     f
@@ -573,12 +587,48 @@ let gen_uniform_atom_binding _ pipeline id expr f =
          (Printf.sprintf
             {|%s
     {
-      VkWriteDescriptorSet write = {};
-      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      write.pNext = nullptr;
-      // TODO: implement
+      const auto &atom = %s;
+      int32_t uid = -1;
+      %s<std::remove_const_t<
+         std::remove_reference_t<
+         decltype(atom)>>>{}(atom, uid);
+
+      // const int set_index = %d;
+      // const VkDescriptorSetLayout set_layout = %s;
+      // if (uid >= 0 && uid == descriptor_set_registers_[set_index].uid) {
+      //   // Nothing to do. Already bound.
+      // } else {
+      //   // Clear any descriptor set previously bound.
+      //   ClearDescriptorSetRegister(set_index);
+      //   // Recycle or allocate a compatible descriptor set.
+      //   VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+      //   if (recycled_descriptor_sets_[image_index_][set_layout].size() > 0) {
+      //     descriptor_set = recycled_descriptor_sets_[image_index_][set_layout].back();
+      //     recycled_descriptor_sets_[image_index_][set_layout].pop_back();
+      //   } else {
+      //     VkDescriptorSetAllocateInfo alloc_info = {};
+      //     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+      //     alloc_info.pNext = nullptr;
+      //     alloc_info.descriptorPool = descriptor_pool_;
+      //     alloc_info.descriptorSetCount = 1;
+      //     alloc_info.pSetLayouts = &set_layout;
+      //     CHECK_VK(vkAllocateDescriptorSets(core_.
+      //                                       GetLogicalDevice().GetHandle(), &alloc_info,
+      //                                       &descriptor_set));
+      //   }
+      //   // Update the corresponding register.
+      //   descriptor_set_registers_[set_index].uid = uid;
+      //   descriptor_set_registers_[set_index].in_use = true;
+      //   // Bind the descriptor set.
+      //   vkCmdBindDescriptorSets(gc_cmd_buffer_[image_index_], 
+      //                           VK_PIPELINE_BIND_POINT_GRAPHICS,
+      //                           current_pipeline_layout_,
+      //                           set_index, 1, &descriptor_set, 0, nullptr);
+      // }
     }|}
-            bind_comment))
+            bind_comment
+            (gen_cpp_expression env expr)
+            trait_id set set_layout))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -597,32 +647,64 @@ let gen_input_atom_binding env pipeline id expr f =
          (Printf.sprintf
             {|%s
     {
+      using UID = int32_t;
+      using Block = std::pair<VkDeviceSize, VkDeviceSize>;
       const auto &atom = %s;
-      int32_t uid = 0;
+      UID uid = 0;
       size_t size = 0;
       const void *src = nullptr;
       %s<std::remove_const_t<
          std::remove_reference_t<
          decltype(atom)>>>{}(atom, uid, &src, size);
 
-      const VkBuffer buffer = vertex_buffer_pool_->GetHandle();
-      VkDeviceSize offset = 0;
-      auto it = vertex_buffer_cache_.find(uid);
-      if (it == vertex_buffer_cache_.end()) {
-        VkDeviceSize src_offset = staging_buffer_->PushData(size, src);
-        auto block = vertex_buffer_pool_->Alloc(size);
+      // Find an appropriate block for the vertex buffer.
+      Block block = zrl::kEmptyBlock;
+      if (uid < 0) { // This vertex buffer is transient.
+        // Make room for new buffer.
+        while (vb_buffer_pool_->LargestBlock() < size) {
+          const UID oldest_uid = vb_lru_.Pop();
+          const Block oldest_block = vb_cache_.at(oldest_uid);
+          vb_cache_.erase(oldest_uid);
+          vb_buffer_pool_->Free(oldest_block);
+        }
+        block = vb_buffer_pool_->Alloc(size);
+        CHECK_PC(block != zrl::kEmptyBlock, "out of memory for vertex buffer");
+        vb_discarded_blocks_[image_index_].push_back(block);
+        // Schedule a buffer copy.
         VkBufferCopy buffer_copy = {};
-        buffer_copy.srcOffset = src_offset;
+        buffer_copy.srcOffset = staging_buffer_->PushData(size, src);
         buffer_copy.dstOffset = block.second;
         buffer_copy.size = size;
-        vertex_buffer_copies_.push_back(buffer_copy);
-        vertex_buffer_cache_[uid] = block;
-        offset = block.second;
+        vb_pending_copies_.push_back(buffer_copy);
       } else {
-        offset = it->second.second;
+        auto it = vb_cache_.find(uid);
+        if (it == vb_cache_.end()) { // Vertex buffer is not cached.
+          // Make room for new buffer.
+          while (vb_buffer_pool_->LargestBlock() < size) {
+            const UID oldest_uid = vb_lru_.Pop();
+            const Block oldest_block = vb_cache_.at(oldest_uid);
+            vb_cache_.erase(oldest_uid);
+            vb_buffer_pool_->Free(oldest_block);
+          }
+          block = vb_buffer_pool_->Alloc(size);
+          CHECK_PC(block != zrl::kEmptyBlock, "out of memory for vertex buffer");
+          vb_lru_.Push(uid);
+          vb_cache_[uid] = block;
+          // Schedule a buffer copy.
+          VkBufferCopy buffer_copy = {};
+          buffer_copy.srcOffset = staging_buffer_->PushData(size, src);
+          buffer_copy.dstOffset = block.second;
+          buffer_copy.size = size;
+          vb_pending_copies_.push_back(buffer_copy);
+        } else {
+          vb_lru_.Push(uid);
+          block = it->second;
+          // No need to schedule copy. Buffer is already available to device.
+        }
       }
 
-      vkCmdBindVertexBuffers(gc_cmd_buffer_[image_index_], %d, 1, &buffer, &offset);
+      const VkBuffer buffer = vb_buffer_pool_->GetHandle();
+      vkCmdBindVertexBuffers(gc_cmd_buffer_[image_index_], %d, 1, &buffer, &block.second);
 
       if (vertex_count == 0) {
         vertex_count = size / sizeof(%s);
@@ -1201,12 +1283,63 @@ let gen_pipeline_members pipelines r =
        r
        (MapString.bindings pipelines))
 
+let gen_pipeline_layout_lcp_entries pipelines =
+  let lcp xs ys =
+    let rec aux acc xs ys =
+      match (xs, ys) with
+      | x :: xs, y :: ys -> if x = y then aux (acc + 1) xs ys else acc
+      | _ -> acc
+    in
+    aux 0 xs ys
+  in
+  let layouts =
+    List.map
+      (fun (pname, p) ->
+        match p.gp_declaration.pd_type with
+        | Type.Function (params, _) ->
+            let types = List.map (fun (_, t) -> t) params in
+            (pname, types)
+        | _ -> failwith "pipeline type must be a Function type")
+      (MapString.bindings pipelines)
+  in
+  let pairs =
+    List.flatten
+      (List.map (fun x -> List.map (fun y -> (x, y)) layouts) layouts)
+  in
+  let null_entries =
+    List.map
+      (fun (pname, _) ->
+        Printf.sprintf
+          "pipeline_layout_lcp_[std::make_pair(reinterpret_cast<VkPipelineLayout>(VK_NULL_HANDLE), \
+           %s_pipeline_layout_)] = 0;"
+          pname)
+      layouts
+  in
+  let entries =
+    List.map
+      (fun ((p1, t1), (p2, t2)) ->
+        Printf.sprintf
+          "pipeline_layout_lcp_[std::make_pair(%s_pipeline_layout_, \
+           %s_pipeline_layout_)] = %d;"
+          p1 p2 (lcp t1 t2))
+      pairs
+  in
+  String.concat "\n" (null_entries @ entries)
+
+let gen_pipeline_layout_lcp pipelines r =
+  let entries = gen_pipeline_layout_lcp_entries pipelines in
+  let ctor =
+    Cpp.Function.(r.RendererEnv.ctor |> append_code_section entries)
+  in
+  Ok RendererEnv.{ r with ctor }
+
 let gen_renderer_library Config.{ cfg_bazel_package; _ } pipelines
     glsl_libraries TypedAst.{ rd_name; rd_type; rd_functions; _ } =
   let open Cpp in
   let r = RendererEnv.empty rd_name cfg_bazel_package in
   gen_shader_modules cfg_bazel_package glsl_libraries r
   >>= gen_pipeline_members pipelines
+  >>= gen_pipeline_layout_lcp pipelines
   >>= gen_render_targets rd_type
   >>= gen_renderer_code pipelines rd_functions
   >>= fun r ->
@@ -1256,10 +1389,29 @@ let gen_cpp_type loc td_name td_type =
           ( "cannot generate c++ type for non-record type: "
           ^ string_of_type td_type ))
 
+let descriptor_set_register_struct =
+  {|struct DescriptorSetRegister {
+  int32_t uid = -1;
+  bool in_use = false;
+  bool cached = false;
+  char buf[8 << 10]; 
+};|}
+
 let merge_hash_function =
   {|template <class T> inline void MergeHash(size_t &h1, const T h2) {
   h1 = h1 * 31 + static_cast<size_t>(h2);
 }|}
+
+let uniform_resource_struct =
+  {|struct UniformResource {
+  using Block = std::pair<VkDeviceSize, VkDeviceSize>;
+
+  const int32_t uid = -1;
+  const VkDescriptorSet set = VK_NULL_HANDLE;
+  const VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+  const std::vector<Block> blocks;
+  // TODO: images
+};|}
 
 let render_target_reference_struct =
   {|struct RenderTargetReference {
@@ -1620,6 +1772,18 @@ template <> struct hash<VkGraphicsPipelineCreateInfo> {
 };
 }|}
 
+let pipeline_layout_transition_hash =
+  {|namespace std {
+template <> struct hash<std::pair<VkPipelineLayout, VkPipelineLayout>> {
+  size_t operator()(const std::pair<VkPipelineLayout, VkPipelineLayout> &p) const noexcept {
+    size_t h = 1;
+    MergeHash(h, reinterpret_cast<size_t>(p.first));
+    MergeHash(h, reinterpret_cast<size_t>(p.second));
+    return h;
+  }
+};
+}|}
+
 let builtin_struct =
   {|struct Builtin {
   RenderTargetReference *screen = nullptr;
@@ -1629,8 +1793,12 @@ let gen_types_header pipelines root_elems =
   let cc_header =
     Cpp.Header.(
       empty "Types" |> add_include "<array>"
+      |> add_include "<unordered_map>"
       |> add_include {|"glm/glm.hpp"|}
+      |> add_section "constexpr int kDescriptorSetRegisterCount = 8;"
       |> add_section merge_hash_function
+      |> add_section descriptor_set_register_struct
+      |> add_section uniform_resource_struct
       |> add_section render_target_reference_struct
       |> add_section sampled_image_reference_struct
       |> add_section render_pass_hash
@@ -1641,7 +1809,8 @@ let gen_types_header pipelines root_elems =
       |> add_section vk_descriptor_set_layout_binding_hash
       |> add_section vk_descriptor_set_layout_create_info_hash
       |> add_section vk_pipeline_layout_create_info_hash
-      |> add_section vk_graphics_pipeline_create_info_hash)
+      |> add_section vk_graphics_pipeline_create_info_hash
+      |> add_section pipeline_layout_transition_hash)
   in
   let bind_traits =
     List.map
@@ -1649,8 +1818,7 @@ let gen_types_header pipelines root_elems =
         let uniforms =
           List.map
             (fun (_, _, _, name, _) ->
-              Printf.sprintf "template<class T> struct %s_%s_uniform;" pname
-                name)
+              Printf.sprintf "template<class T> struct %s_%s;" pname name)
             pipeline.gp_uniforms
         in
         let inputs =
@@ -1827,36 +1995,12 @@ let gen_renderer_libraries cfg pipelines glsl_libraries root_elems =
     (Ok []) root_elems
 
 let gen_glsl_builtin_call_id = function
-  | "ivec2" -> "ivec2"
-  | "ivec3" -> "ivec3"
-  | "ivec4" -> "ivec4"
-  | "uvec2" -> "uvec2"
-  | "uvec3" -> "uvec3"
-  | "uvec4" -> "uvec4"
   | "fvec2" -> "vec2"
   | "fvec3" -> "vec3"
   | "fvec4" -> "vec4"
-  | "dvec2" -> "dvec2"
-  | "dvec3" -> "dvec3"
-  | "dvec4" -> "dvec4"
-  | "bvec2" -> "bvec2"
-  | "bvec3" -> "bvec3"
-  | "bvec4" -> "bvec4"
-  | "imat2" -> "imat2"
-  | "imat3" -> "imat3"
-  | "imat4" -> "imat4"
-  | "umat2" -> "umat2"
-  | "umat3" -> "umat3"
-  | "umat4" -> "umat4"
   | "fmat2" -> "mat2"
   | "fmat3" -> "mat3"
   | "fmat4" -> "mat4"
-  | "dmat2" -> "dmat2"
-  | "dmat3" -> "dmat3"
-  | "dmat4" -> "dmat4"
-  | "bmat2" -> "bmat2"
-  | "bmat3" -> "bmat3"
-  | "bmat4" -> "bmat4"
   | other -> other
 
 let rec gen_glsl_expression env L.{ value; _ } =

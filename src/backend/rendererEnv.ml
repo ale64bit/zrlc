@@ -267,20 +267,15 @@ let create_depth_render_target =
 
 let ctor_body =
   {|  const auto &device = core_.GetLogicalDevice();
-  DLOG << name_ << ": creating staging buffer\n";
-  staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_128MB);
-  DLOG << name_ << ": creating vertex buffer pool\n";
-  vertex_buffer_pool_ = std::make_unique<zrl::BufferPool>(core, zrl::_128MB, 
-                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | 
-                                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                          zrl::_1KB);
+  //======================================================================
+  // Command Pools and Command Buffers and Sync Primitives
   DLOG << name_ << ": creating gct command pool\n";
   gct_cmd_pool_ = CreateCommandPool(device.GetGCTQueueFamily());
+  DLOG << name_ << ": allocating graphics-compute command buffer\n";
   gc_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_, 
                                         VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                         core_.GetSwapchain().GetImageCount());
+  DLOG << name_ << ": allocating transfer command buffer\n";
   t_cmd_buffer_ = CreateCommandBuffers(gct_cmd_pool_, 
                                        VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                        core_.GetSwapchain().GetImageCount());
@@ -293,35 +288,83 @@ let ctor_body =
   } else {
     DLOG << name_ << ": creating present command pool\n";
     present_cmd_pool_ = CreateCommandPool(device.GetPresentQueueFamily());
+    DLOG << name_ << ": allocating present command buffer\n";
     present_cmd_buffer_ = CreateCommandBuffers(present_cmd_pool_, 
                                                VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                                core_.GetSwapchain().GetImageCount());
     present_cmd_buffer_fence_ = CreateFences(core_.GetSwapchain().GetImageCount());
   }
-
+  DLOG << name_ << ": creating semaphores\n";
   VkSemaphoreCreateInfo semaphore_create_info = {};
   semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
   CHECK_VK(vkCreateSemaphore(device.GetHandle(), &semaphore_create_info, nullptr, 
                              &acquire_semaphore_));
   CHECK_VK(vkCreateSemaphore(device.GetHandle(), &semaphore_create_info, nullptr, 
                              &render_semaphore_));
+  //======================================================================
+  // Descriptor Pool and Descriptor Sets
+  DLOG << name_ << ": creating descriptor pool\n";
+  // TODO: make descriptor set counts configurable
+  std::array<VkDescriptorPoolSize, 2> descriptor_pool_sizes = {
+      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1<<10},
+      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1<<20}
+  };
 
+  // TODO: make maxSets configurable
+  VkDescriptorPoolCreateInfo descriptor_pool_create_info = {};
+  descriptor_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  descriptor_pool_create_info.pNext = nullptr;
+  descriptor_pool_create_info.flags = 0;
+  descriptor_pool_create_info.maxSets = 1<<20;
+  descriptor_pool_create_info.poolSizeCount = static_cast<uint32_t>(descriptor_pool_sizes.size());
+  descriptor_pool_create_info.pPoolSizes = descriptor_pool_sizes.data();
+  CHECK_VK(vkCreateDescriptorPool(device.GetHandle(), &descriptor_pool_create_info, 
+                                  nullptr, &descriptor_pool_));
+  discarded_descriptor_sets_.resize(core_.GetSwapchain().GetImageCount());
+  //======================================================================
+  // Staging Buffer
+  DLOG << name_ << ": creating staging buffer\n";
+  staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_128MB);
+  //======================================================================
+  // Vertex Buffer State
+  DLOG << name_ << ": creating vertex buffer pool\n";
+  vb_buffer_pool_ = std::make_unique<zrl::BufferPool>(
+      core, zrl::_128MB, 
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+      VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+      zrl::_1KB);
+  vb_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
+  //======================================================================
+  // Uniform Buffer State
+  DLOG << name_ << ": creating uniform buffer pool\n";
+  ubo_buffer_pool_ = std::make_unique<zrl::BufferPool>(
+      core, zrl::_128MB, 
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+      256);
+  ubo_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
+  //======================================================================
+  // Render Target State
+  DLOG << name_ << ": initializing render targets\n";
   rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
   for (size_t i = 0; i < rt_builtin_screen_img_view_.size(); ++i) {
     VkImageView view = CreateImageView(core_.GetSwapchain().GetImages()[i],
                                        core_.GetSwapchain().GetSurfaceFormat());
     rt_builtin_screen_img_view_[i] = view;
     rt_builtin_screen_ref_.push_back({VK_FORMAT_B8G8R8A8_UNORM, view, 
-                                          VK_IMAGE_LAYOUT_UNDEFINED, 
-                                          VK_IMAGE_LAYOUT_UNDEFINED, 
-                                          VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
-                                          VkClearValue{}});
+                                      VK_IMAGE_LAYOUT_UNDEFINED, 
+                                      VK_IMAGE_LAYOUT_UNDEFINED, 
+                                      VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
+                                      VkClearValue{}});
   }
+  //======================================================================
 |}
 
 let dtor_body =
   {|  staging_buffer_.reset();
-  vertex_buffer_pool_.reset();
+  ubo_buffer_pool_.reset();
+  vb_buffer_pool_.reset();
   for (auto rt : rt_builtin_screen_ref_) {
     vkDestroyImageView(device, rt.attachment, nullptr);
   }
@@ -340,6 +383,7 @@ let dtor_body =
   vkDestroySemaphore(device, acquire_semaphore_, nullptr);
   vkDestroySemaphore(device, render_semaphore_, nullptr);
   vkDestroyCommandPool(device, gct_cmd_pool_, nullptr);
+  vkDestroyDescriptorPool(device, descriptor_pool_, nullptr);
   for (auto fence : gct_cmd_buffer_fence_) {
     vkDestroyFence(device, fence, nullptr);
   }
@@ -396,6 +440,20 @@ let begin_recording =
   return false;
 |})
 
+let clear_descriptor_set_register =
+  Function.(
+    empty "ClearDescriptorSetRegister"
+    |> set_return_type "void"
+    |> add_param ("int", "set_index")
+    |> append_code_section
+         {|
+    CHECK_PC(set_index < kDescriptorSetRegisterCount, "invalid descriptor set register");
+    auto &r = descriptor_set_registers_[set_index];
+    if (!r.in_use) { return; }
+    r.in_use = false;
+    r.uid = -1;
+|})
+
 let stop_recording_body =
   {|  if (current_render_pass_ != VK_NULL_HANDLE) {
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
@@ -425,11 +483,13 @@ let stop_recording_body =
 
   staging_buffer_->Flush();
 
-  if (vertex_buffer_copies_.size() > 0) {
-    vkCmdCopyBuffer(t_cmd_buffer_[image_index_], staging_buffer_->GetHandle(),
-                    vertex_buffer_pool_->GetHandle(), 
-                    static_cast<uint32_t>(vertex_buffer_copies_.size()),
-                    vertex_buffer_copies_.data());
+  // Schedule all pending vertex buffer copies.
+  if (vb_pending_copies_.size() > 0) {
+    vkCmdCopyBuffer(t_cmd_buffer_[image_index_], 
+                    staging_buffer_->GetHandle(),
+                    vb_buffer_pool_->GetHandle(), 
+                    static_cast<uint32_t>(vb_pending_copies_.size()),
+                    vb_pending_copies_.data());
   }
 
   // Stop recording.
@@ -502,33 +562,30 @@ let empty rname pkg =
         |> add_include "\"core/Log.h\""
         |> add_include "\"core/StagingBuffer.h\""
         |> add_include "\"core/BufferPool.h\""
+        |> add_include "\"core/LRU.h\""
         |> add_include "\"glm/glm.hpp\""
         |> add_include "\"glm/gtc/type_ptr.hpp\""
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
+        |> add_private_member ("using UID = int32_t", "")
+        |> add_private_member
+             ("using Block = std::pair<VkDeviceSize, VkDeviceSize>", "")
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")
         |> add_private_member ("uint32_t", "image_index_")
-        |> add_private_member
-             ("std::unique_ptr<zrl::StagingBuffer>", "staging_buffer_")
-        |> add_private_member
-             ("std::unique_ptr<zrl::BufferPool>", "vertex_buffer_pool_")
-        |> add_private_member
-             ( "std::unordered_map<int32_t, std::pair<VkDeviceSize, \
-                VkDeviceSize>>",
-               "vertex_buffer_cache_" )
-        |> add_private_member
-             ("std::vector<VkBufferCopy>", "vertex_buffer_copies_")
+        (* Command Pools and Command Buffers *)
         |> add_private_member ("VkCommandPool", "gct_cmd_pool_")
         |> add_private_member ("VkCommandPool", "present_cmd_pool_")
         |> add_private_member ("std::vector<VkCommandBuffer>", "gc_cmd_buffer_")
         |> add_private_member ("std::vector<VkCommandBuffer>", "t_cmd_buffer_")
         |> add_private_member
              ("std::vector<VkCommandBuffer>", "present_cmd_buffer_")
+        (* Sync Primitives *)
         |> add_private_member ("std::vector<VkFence>", "gct_cmd_buffer_fence_")
         |> add_private_member
              ("std::vector<VkFence>", "present_cmd_buffer_fence_")
         |> add_private_member ("VkSemaphore", "acquire_semaphore_")
         |> add_private_member ("VkSemaphore", "render_semaphore_")
+        (* RenderPass/Framebuffer Caches *)
         |> add_private_member
              ( "std::unordered_map<std::vector<RenderTargetReference>, \
                 VkRenderPass, RenderPassHash, RenderPassEqualTo>",
@@ -537,11 +594,52 @@ let empty rname pkg =
              ( "std::unordered_map<std::vector<RenderTargetReference>, \
                 VkFramebuffer, FramebufferHash, FramebufferEqualTo>",
                "framebuffer_cache_" )
+        (* Pipeline Layout LCP and Pipeline Cache *)
+        |> add_private_member
+             ( "std::unordered_map<std::pair<VkPipelineLayout, \
+                VkPipelineLayout>, int>",
+               "pipeline_layout_lcp_" )
         |> add_private_member
              ("std::unordered_map<size_t, VkPipeline>", "pipeline_cache_")
+        (* Descriptor Pool and Descriptor Sets *)
+        |> add_private_member ("VkDescriptorPool", "descriptor_pool_")
+        |> add_private_member
+             ( "std::array<DescriptorSetRegister, kDescriptorSetRegisterCount>",
+               "descriptor_set_registers_" )
+        |> add_private_member
+             ( "std::vector<std::unordered_map<VkDescriptorSetLayout, \
+                std::vector<VkDescriptorSet>>>",
+               "discarded_descriptor_sets_" )
+        |> add_private_member
+             ( "std::unordered_map<VkDescriptorSetLayout, \
+                std::vector<VkDescriptorSet>>",
+               "recycled_descriptor_sets_" )
+        (* Staging Buffer *)
+        |> add_private_member
+             ("std::unique_ptr<zrl::StagingBuffer>", "staging_buffer_")
+        (* Vertex Buffer State *)
+        |> add_private_member
+             ("std::unique_ptr<zrl::BufferPool>", "vb_buffer_pool_")
+        |> add_private_member ("std::unordered_map<UID, Block>", "vb_cache_")
+        |> add_private_member ("zrl::LRU<UID>", "vb_lru_")
+        |> add_private_member
+             ("std::vector<VkBufferCopy>", "vb_pending_copies_")
+        |> add_private_member
+             ("std::vector<std::vector<Block>>", "vb_discarded_blocks_")
+        (* Uniform Buffer State *)
+        |> add_private_member
+             ("std::unique_ptr<zrl::BufferPool>", "ubo_buffer_pool_")
+        |> add_private_member
+             ("std::unordered_map<UID, UniformResource>", "ubo_cache_")
+        |> add_private_member ("zrl::LRU<UID>", "ubo_lru_")
+        |> add_private_member
+             ("std::vector<std::vector<Block>>", "ubo_discarded_blocks_")
+        (* Per-Frame State *)
         |> add_private_member ("VkRenderPass", "current_render_pass_")
         |> add_private_member ("VkPipeline", "current_pipeline_")
+        |> add_private_member ("VkPipelineLayout", "current_pipeline_layout_")
         |> add_private_member ("Builtin", "builtin")
+        (* Render Target State *)
         |> add_private_member
              ("std::vector<VkImageView>", "rt_builtin_screen_img_view_")
         |> add_private_member
@@ -555,20 +653,45 @@ let empty rname pkg =
         |> add_private_function create_depth_render_target
         |> add_private_function get_or_create_render_pass
         |> add_private_function get_or_create_framebuffer
-        |> add_private_function begin_recording);
+        |> add_private_function begin_recording
+        |> add_private_function clear_descriptor_set_register);
     render =
       Function.(
         empty "Render" |> set_return_type "void"
-        |> append_code_section "if (BeginRecording()) { return; };"
-        |> append_code_section "vertex_buffer_copies_.clear();"
-        |> append_code_section "current_render_pass_ = VK_NULL_HANDLE;"
-        |> append_code_section "current_pipeline_ = VK_NULL_HANDLE;"
         |> append_code_section
-             "builtin.screen = &rt_builtin_screen_ref_[image_index_];"
-        |> append_code_section
-             "builtin.screen->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;"
-        |> append_code_section
-             "builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;");
+             {|if (BeginRecording()) { return; };
+                 // Reclaim discarded blocks.
+                 for (auto block: vb_discarded_blocks_[image_index_]) { 
+                   vb_buffer_pool_->Free(block);
+                 }
+                 vb_discarded_blocks_[image_index_].clear();
+                 for (auto block: ubo_discarded_blocks_[image_index_]) {
+                   ubo_buffer_pool_->Free(block);
+                 }
+                 ubo_discarded_blocks_[image_index_].clear();
+                 // Reclaim discarded descriptor sets.
+                 for (auto p: discarded_descriptor_sets_[image_index_]) {
+                   recycled_descriptor_sets_[p.first].insert(
+                       recycled_descriptor_sets_[p.first].end(),
+                       p.second.begin(), 
+                       p.second.end());
+                 }
+                 discarded_descriptor_sets_[image_index_].clear();
+                 // Clear descriptor set register bank.
+                 for (int i = 0; i < kDescriptorSetRegisterCount; ++i) { 
+                   ClearDescriptorSetRegister(i);
+                 }
+                 // Clear pending vertex buffer copies.
+                 vb_pending_copies_.clear();
+                 // Clear per-frame state.
+                 current_render_pass_ = VK_NULL_HANDLE;
+                 current_pipeline_ = VK_NULL_HANDLE;
+                 current_pipeline_layout_ = VK_NULL_HANDLE;
+                 // Reset render target state
+                 builtin.screen = &rt_builtin_screen_ref_[image_index_];
+                 builtin.screen->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+                 builtin.screen->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+             |});
     ctor =
       Function.(
         empty rname
@@ -579,8 +702,10 @@ let empty rname pkg =
         |> add_member_initializer ("present_cmd_pool_", "VK_NULL_HANDLE")
         |> add_member_initializer ("acquire_semaphore_", "VK_NULL_HANDLE")
         |> add_member_initializer ("render_semaphore_", "VK_NULL_HANDLE")
+        |> add_member_initializer ("descriptor_pool_", "VK_NULL_HANDLE")
         |> add_member_initializer ("current_render_pass_", "VK_NULL_HANDLE")
         |> add_member_initializer ("current_pipeline_", "VK_NULL_HANDLE")
+        |> add_member_initializer ("current_pipeline_layout_", "VK_NULL_HANDLE")
         |> append_code_section ctor_body);
     dtor = Function.(empty ("~" ^ rname));
   }
