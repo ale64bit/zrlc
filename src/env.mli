@@ -91,6 +91,8 @@ val find_val : local:bool -> string -> t -> Type.t Located.t option
 
 val find_name : local:bool -> string -> t -> Type.t Located.t option
 
+val find_name_scope : string -> t -> summary
+
 val find_lvalue : string -> t -> Type.t Located.t option
 
 val find_rvalue : string -> t -> Type.t Located.t option

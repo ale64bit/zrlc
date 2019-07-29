@@ -329,20 +329,27 @@ let ctor_body =
   // Vertex Buffer State
   DLOG << name_ << ": creating vertex buffer pool\n";
   vb_buffer_pool_ = std::make_unique<zrl::BufferPool>(
-      core, zrl::_128MB, 
+      core, "vb", zrl::_128MB, 
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-      zrl::_1KB);
+      zrl::_1KB, false);
   vb_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
   //======================================================================
   // Uniform Buffer State
   DLOG << name_ << ": creating uniform buffer pool\n";
+  VkDeviceSize minUBOBlockSize =
+      std::min(std::max(core_.GetLogicalDevice()
+                            .GetPhysicalDevice()
+                            .GetProperties()
+                            .limits.minUniformBufferOffsetAlignment,
+                        64ul),
+               256ul);
   ubo_buffer_pool_ = std::make_unique<zrl::BufferPool>(
-      core, zrl::_128MB, 
+      core, "ubo", zrl::_128MB, 
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-      256);
+      minUBOBlockSize, true);
   ubo_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
   //======================================================================
   // Render Target State
@@ -454,6 +461,31 @@ let clear_descriptor_set_register =
     r.uid = -1;
 |})
 
+let recycle_or_allocate_descriptor_set =
+  Function.(
+    empty "RecycleOrAllocateDescriptorSet"
+    |> set_return_type "VkDescriptorSet"
+    |> add_param ("VkDescriptorSetLayout", "layout")
+    |> append_code_section
+         {|
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (recycled_descriptor_sets_[layout].size() > 0) {
+    set = recycled_descriptor_sets_[layout].back();
+    recycled_descriptor_sets_[layout].pop_back();
+  } else {
+    VkDescriptorSetAllocateInfo alloc_info = {};
+    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.pNext = nullptr;
+    alloc_info.descriptorPool = descriptor_pool_;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts = &layout;
+    CHECK_VK(vkAllocateDescriptorSets(core_.
+                                      GetLogicalDevice().GetHandle(), &alloc_info,
+                                      &set));
+  }
+  return set;
+|})
+
 let stop_recording_body =
   {|  if (current_render_pass_ != VK_NULL_HANDLE) {
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
@@ -483,7 +515,7 @@ let stop_recording_body =
 
   staging_buffer_->Flush();
 
-  // Schedule all pending vertex buffer copies.
+  // Schedule pending vertex buffer copies.
   if (vb_pending_copies_.size() > 0) {
     vkCmdCopyBuffer(t_cmd_buffer_[image_index_], 
                     staging_buffer_->GetHandle(),
@@ -555,7 +587,7 @@ let empty rname pkg =
         empty rname |> add_include "<algorithm>" |> add_include "<string>"
         |> add_include "<unordered_set>"
         |> add_include "<unordered_map>"
-        |> add_include "<vector>"
+        |> add_include "<vector>" |> add_include "<deque>"
         |> add_include "\"vulkan/vulkan.h\""
         |> add_include "\"core/Core.h\""
         |> add_include "\"core/Image.h\""
@@ -567,8 +599,6 @@ let empty rname pkg =
         |> add_include "\"glm/gtc/type_ptr.hpp\""
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
         |> add_private_member ("using UID = int32_t", "")
-        |> add_private_member
-             ("using Block = std::pair<VkDeviceSize, VkDeviceSize>", "")
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")
         |> add_private_member ("uint32_t", "image_index_")
@@ -620,12 +650,13 @@ let empty rname pkg =
         (* Vertex Buffer State *)
         |> add_private_member
              ("std::unique_ptr<zrl::BufferPool>", "vb_buffer_pool_")
-        |> add_private_member ("std::unordered_map<UID, Block>", "vb_cache_")
+        |> add_private_member
+             ("std::unordered_map<UID, zrl::Block>", "vb_cache_")
         |> add_private_member ("zrl::LRU<UID>", "vb_lru_")
         |> add_private_member
              ("std::vector<VkBufferCopy>", "vb_pending_copies_")
         |> add_private_member
-             ("std::vector<std::vector<Block>>", "vb_discarded_blocks_")
+             ("std::vector<std::vector<zrl::Block>>", "vb_discarded_blocks_")
         (* Uniform Buffer State *)
         |> add_private_member
              ("std::unique_ptr<zrl::BufferPool>", "ubo_buffer_pool_")
@@ -633,7 +664,7 @@ let empty rname pkg =
              ("std::unordered_map<UID, UniformResource>", "ubo_cache_")
         |> add_private_member ("zrl::LRU<UID>", "ubo_lru_")
         |> add_private_member
-             ("std::vector<std::vector<Block>>", "ubo_discarded_blocks_")
+             ("std::vector<std::vector<zrl::Block>>", "ubo_discarded_blocks_")
         (* Per-Frame State *)
         |> add_private_member ("VkRenderPass", "current_render_pass_")
         |> add_private_member ("VkPipeline", "current_pipeline_")
@@ -654,7 +685,8 @@ let empty rname pkg =
         |> add_private_function get_or_create_render_pass
         |> add_private_function get_or_create_framebuffer
         |> add_private_function begin_recording
-        |> add_private_function clear_descriptor_set_register);
+        |> add_private_function clear_descriptor_set_register
+        |> add_private_function recycle_or_allocate_descriptor_set);
     render =
       Function.(
         empty "Render" |> set_return_type "void"

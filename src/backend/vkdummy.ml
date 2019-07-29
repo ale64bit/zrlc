@@ -19,7 +19,7 @@ end
 type graphics_pipeline = {
   gp_name : string;
   gp_declaration : TypedAst.pipeline_declaration;
-  gp_uniforms : (int * int * int * string * Type.t) list;
+  gp_uniforms : (int * int * int * string * Type.t * string) list;
   gp_uniform_set : int MapString.t;
   gp_inputs : (int * string * Type.t) list;
   gp_outputs : (int * Type.t) list;
@@ -569,11 +569,69 @@ let gen_uniform_atom_binding env pipeline id expr f =
   let set_layout =
     Printf.sprintf "%s_%d_descriptor_set_layout_" pipeline.gp_name set
   in
-  (*
   let bindings =
-    List.find_all (fun (s, _, _, _, _) -> s = set) pipeline.gp_uniforms
+    List.find_all (fun (s, _, _, _, _, _) -> s = set) pipeline.gp_uniforms
   in
-*)
+  let binding_writes =
+    String.concat "\n"
+      (List.map
+         (fun (set, binding, count, name, t, wrapped_name) ->
+           let data =
+             Printf.sprintf "data%s"
+               ( if String.length wrapped_name = 0 then ""
+               else "." ^ wrapped_name )
+           in
+           let comment =
+             Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set
+               binding count name (Type.string_of_type t)
+           in
+           (* TODO detect the type of write from t *)
+           Printf.sprintf
+             {|%s
+          { 
+            const VkDeviceSize size = sizeof(%s);
+            while (ubo_buffer_pool_->LargestBlock() < size) {
+              const UID oldest_uid = ubo_lru_.Pop();
+              const UniformResource oldest_resource = ubo_cache_.at(oldest_uid);
+              ubo_cache_.erase(oldest_uid);
+              for (const auto block : oldest_resource.blocks) {
+                ubo_buffer_pool_->Free(block);
+              }
+              // TODO: free images
+            }
+            zrl::Block block = ubo_buffer_pool_->Alloc(size);
+            CHECK_PC(block != zrl::kEmptyBlock, "out of memory for UBO");
+            ubo_buffer_pool_->Write(block.second, size, &%s);
+            blocks.push_back(block);
+
+            VkDescriptorBufferInfo buffer_info = {};
+            buffer_info.buffer = ubo_buffer_pool_->GetHandle();
+            buffer_info.offset = block.second;
+            buffer_info.range = size; 
+
+            VkWriteDescriptorSet write = {};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.pNext = nullptr;
+            write.dstSet = set;
+            write.dstBinding = %d;
+            write.dstArrayElement = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            write.pImageInfo = nullptr;
+            write.pBufferInfo = &buffer_info;
+            write.pTexelBufferView = nullptr;
+
+            vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
+                                   1, &write, 0, nullptr);
+          }|}
+             comment (zrl_to_cpp_type t) data binding)
+         bindings)
+  in
+  let can_cache =
+    List.for_all
+      (fun (_, _, _, _, _, wrapped_name) -> String.length wrapped_name = 0)
+      bindings
+  in
   let trait_id = Printf.sprintf "%s_%s" pipeline.gp_name id in
   let bind_comment =
     Printf.sprintf "// BIND UNIFORM: pipeline=%s uniform=%s expr='%s' set=%d"
@@ -589,46 +647,42 @@ let gen_uniform_atom_binding env pipeline id expr f =
     {
       const auto &atom = %s;
       int32_t uid = -1;
-      %s<std::remove_const_t<
-         std::remove_reference_t<
-         decltype(atom)>>>{}(atom, uid);
+      const bool can_cache = %s;
+      const auto data = %s<std::remove_const_t<
+                            std::remove_reference_t<
+                            decltype(atom)>>>{}(atom, uid);
+      const int set_index = %d;
+      const VkDescriptorSetLayout set_layout = %s;
+      DescriptorSetRegister &reg = descriptor_set_registers_[set_index];
 
-      // const int set_index = %d;
-      // const VkDescriptorSetLayout set_layout = %s;
-      // if (uid >= 0 && uid == descriptor_set_registers_[set_index].uid) {
-      //   // Nothing to do. Already bound.
-      // } else {
-      //   // Clear any descriptor set previously bound.
-      //   ClearDescriptorSetRegister(set_index);
-      //   // Recycle or allocate a compatible descriptor set.
-      //   VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-      //   if (recycled_descriptor_sets_[image_index_][set_layout].size() > 0) {
-      //     descriptor_set = recycled_descriptor_sets_[image_index_][set_layout].back();
-      //     recycled_descriptor_sets_[image_index_][set_layout].pop_back();
-      //   } else {
-      //     VkDescriptorSetAllocateInfo alloc_info = {};
-      //     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-      //     alloc_info.pNext = nullptr;
-      //     alloc_info.descriptorPool = descriptor_pool_;
-      //     alloc_info.descriptorSetCount = 1;
-      //     alloc_info.pSetLayouts = &set_layout;
-      //     CHECK_VK(vkAllocateDescriptorSets(core_.
-      //                                       GetLogicalDevice().GetHandle(), &alloc_info,
-      //                                       &descriptor_set));
-      //   }
-      //   // Update the corresponding register.
-      //   descriptor_set_registers_[set_index].uid = uid;
-      //   descriptor_set_registers_[set_index].in_use = true;
-      //   // Bind the descriptor set.
-      //   vkCmdBindDescriptorSets(gc_cmd_buffer_[image_index_], 
-      //                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-      //                           current_pipeline_layout_,
-      //                           set_index, 1, &descriptor_set, 0, nullptr);
-      // }
+      if (uid < 0) { // Resource is transient.
+        if (can_cache && reg.in_use && reg.cached && 
+            std::memcmp(reg.data, &data, sizeof(data)) == 0) {
+          // Already bound with correct data.
+        } else {
+          ClearDescriptorSetRegister(set_index);
+          const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
+          std::vector<zrl::Block> blocks;
+          %s
+          ubo_discarded_blocks_[image_index_].insert(
+              ubo_discarded_blocks_[image_index_].end(),
+              blocks.begin(), blocks.end());
+          discarded_descriptor_sets_[image_index_][set_layout].push_back(set);
+          reg.uid = -1;
+          reg.in_use = true;
+          reg.cached = false;
+          // Bind the descriptor set.
+          vkCmdBindDescriptorSets(gc_cmd_buffer_[image_index_], 
+                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  current_pipeline_layout_,
+                                  set_index, 1, &set, 0, nullptr);
+        }
+      }
+
     }|}
             bind_comment
             (gen_cpp_expression env expr)
-            trait_id set set_layout))
+            (string_of_bool can_cache) trait_id set set_layout binding_writes))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -648,7 +702,6 @@ let gen_input_atom_binding env pipeline id expr f =
             {|%s
     {
       using UID = int32_t;
-      using Block = std::pair<VkDeviceSize, VkDeviceSize>;
       const auto &atom = %s;
       UID uid = 0;
       size_t size = 0;
@@ -658,12 +711,12 @@ let gen_input_atom_binding env pipeline id expr f =
          decltype(atom)>>>{}(atom, uid, &src, size);
 
       // Find an appropriate block for the vertex buffer.
-      Block block = zrl::kEmptyBlock;
+      zrl::Block block = zrl::kEmptyBlock;
       if (uid < 0) { // This vertex buffer is transient.
         // Make room for new buffer.
         while (vb_buffer_pool_->LargestBlock() < size) {
           const UID oldest_uid = vb_lru_.Pop();
-          const Block oldest_block = vb_cache_.at(oldest_uid);
+          const zrl::Block oldest_block = vb_cache_.at(oldest_uid);
           vb_cache_.erase(oldest_uid);
           vb_buffer_pool_->Free(oldest_block);
         }
@@ -682,7 +735,7 @@ let gen_input_atom_binding env pipeline id expr f =
           // Make room for new buffer.
           while (vb_buffer_pool_->LargestBlock() < size) {
             const UID oldest_uid = vb_lru_.Pop();
-            const Block oldest_block = vb_cache_.at(oldest_uid);
+            const zrl::Block oldest_block = vb_cache_.at(oldest_uid);
             vb_cache_.erase(oldest_uid);
             vb_buffer_pool_->Free(oldest_block);
           }
@@ -718,9 +771,7 @@ let gen_atom_bindings env pipeline f bindings =
   let is_input id =
     List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
   in
-  let is_uniform id =
-    List.exists (fun (_, _, _, name, _) -> id = name) pipeline.gp_uniforms
-  in
+  let is_uniform id = MapString.mem id pipeline.gp_uniform_set in
   List.fold_left
     (fun f (lhs, rhs) ->
       if is_input lhs then gen_input_atom_binding env pipeline lhs rhs f
@@ -1143,7 +1194,7 @@ let gen_shader_modules cfg_bazel_package glsl_libraries r =
   Ok r
 
 let gen_descriptor_set_layouts p r =
-  let sets = List.map (fun (set, _, _, _, _) -> set) p.gp_uniforms in
+  let sets = List.map (fun (set, _, _, _, _, _) -> set) p.gp_uniforms in
   let sets = List.sort_uniq ( - ) sets in
   List.fold_left
     (fun r set ->
@@ -1152,7 +1203,7 @@ let gen_descriptor_set_layouts p r =
       in
       let bindings =
         List.map
-          (fun (_, binding, count, name, t) ->
+          (fun (_, binding, count, name, t, _) ->
             let descriptor_type =
               match t with
               | Type.TypeRef "sampler2D" | Type.Array (TypeRef "sampler2D", _)
@@ -1171,7 +1222,7 @@ let gen_descriptor_set_layouts p r =
               |}
               name binding binding binding descriptor_type binding count
               binding binding)
-          (List.find_all (fun (s, _, _, _, _) -> s = set) p.gp_uniforms)
+          (List.find_all (fun (s, _, _, _, _, _) -> s = set) p.gp_uniforms)
       in
       let rclass =
         Cpp.Class.(
@@ -1394,7 +1445,7 @@ let descriptor_set_register_struct =
   int32_t uid = -1;
   bool in_use = false;
   bool cached = false;
-  char buf[8 << 10]; 
+  char data[kDescriptorSetRegisterSize]; 
 };|}
 
 let merge_hash_function =
@@ -1404,12 +1455,10 @@ let merge_hash_function =
 
 let uniform_resource_struct =
   {|struct UniformResource {
-  using Block = std::pair<VkDeviceSize, VkDeviceSize>;
-
   const int32_t uid = -1;
   const VkDescriptorSet set = VK_NULL_HANDLE;
   const VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-  const std::vector<Block> blocks;
+  const std::vector<zrl::Block> blocks;
   // TODO: images
 };|}
 
@@ -1796,6 +1845,7 @@ let gen_types_header pipelines root_elems =
       |> add_include "<unordered_map>"
       |> add_include {|"glm/glm.hpp"|}
       |> add_section "constexpr int kDescriptorSetRegisterCount = 8;"
+      |> add_section "constexpr size_t kDescriptorSetRegisterSize = zrl::_8KB;"
       |> add_section merge_hash_function
       |> add_section descriptor_set_register_struct
       |> add_section uniform_resource_struct
@@ -1816,10 +1866,13 @@ let gen_types_header pipelines root_elems =
     List.map
       (fun (pname, pipeline) ->
         let uniforms =
-          List.map
-            (fun (_, _, _, name, _) ->
-              Printf.sprintf "template<class T> struct %s_%s;" pname name)
-            pipeline.gp_uniforms
+          match pipeline.gp_declaration.pd_type with
+          | Type.Function (params, _) ->
+              List.map
+                (fun (name, _) ->
+                  Printf.sprintf "template<class T> struct %s_%s;" pname name)
+                params
+          | _ -> failwith "pipeline types must be Function types"
         in
         let inputs =
           List.map
@@ -1858,25 +1911,43 @@ let check_stage_chaining loc from_stage to_stage =
         error loc (`Unsupported "stage outputs must match next stage inputs")
   | _ -> failwith "stages must have Function types"
 
+let rec has_opaque_members env =
+  let open Type in
+  function
+  | TypeRef "sampler2D" -> true
+  | Array (t, _) -> has_opaque_members env t
+  | Record fields ->
+      List.exists (fun (_, t) -> has_opaque_members env t) fields
+  | TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = t; _ } -> has_opaque_members env t
+      | _ -> false )
+  | _ -> false
+
 let gen_uniform_bindings env set id t =
   let open Type in
   match t with
   | Array (_, dims) ->
       let count = array_type_size dims in
-      [ (set, 0, count, id, t) ]
+      (* TODO: check nested type doesn't contain opaque members *)
+      [ (set, 0, count, id, t, "") ]
   | TypeRef name -> (
       match Env.find_type ~local:false name env with
-      | Some L.{ value = Record fields; _ } ->
-          List.map
-            (fun (i, (name, t)) ->
-              match t with
-              | Array (_, dims) ->
-                  let count = array_type_size dims in
-                  (set, i, count, name, t)
-              | _ -> (set, i, 1, name, t))
-            (List.index fields)
-      | _ -> [ (set, 0, 1, id, t) ] )
-  | _ -> [ (set, 0, 1, id, t) ]
+      | Some L.{ value = Record fields as tt; _ } ->
+          (* TODO: check nested type doesn't contain opaque members *)
+          if has_opaque_members env tt then
+            List.map
+              (fun (i, (name, t)) ->
+                let new_id = id ^ "_" ^ name ^ "_" in
+                match t with
+                | Array (_, dims) ->
+                    let count = array_type_size dims in
+                    (set, i, count, new_id, t, name)
+                | _ -> (set, i, 1, new_id, t, name))
+              (List.index fields)
+          else [ (set, 0, 1, id, t, "") ]
+      | _ -> [ (set, 0, 1, id, t, "") ] )
+  | _ -> failwith ("unexpected pipeline uniform type: " ^ Type.string_of_type t)
 
 let gen_graphics_pipeline loc pd =
   let TypedAst.{ pd_env; pd_name; pd_type; pd_functions } = pd in
@@ -2011,8 +2082,21 @@ let rec gen_glsl_expression env L.{ value; _ } =
   | Access (L.{ value = Id "builtin"; _ }, "instanceID") -> "gl_InstanceID"
   | Access (L.{ value = Id "builtin"; _ }, "fragCoord") -> "gl_FragCoord"
   | Access (L.{ value = Id "builtin"; _ }, "frontFacing") -> "gl_FrontFacing"
-  | Access (expr, member) ->
-      Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member
+  | Access (expr, member) -> (
+      (* We need to unwrap member accesses for opaque types since GLSL does 
+       * not allow mixing opaque with non-opaque members in a struct. *)
+      match expr with
+      | L.{ value = Id id; _ } -> (
+          match Env.find_name_scope id env with
+          | Env.Pipeline (_, Type.Function (fields, _)) ->
+              let _, param_type =
+                List.find (fun (name, _) -> name = id) fields
+              in
+              if has_opaque_members env param_type then
+                Printf.sprintf "%s_%s_" id member
+              else Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member
+          | _ -> Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member )
+      | _ -> Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member )
   | Index (expr, indices) ->
       Printf.sprintf "%s[%s]"
         (gen_glsl_expression env expr)
@@ -2394,7 +2478,7 @@ let gen_glsl_libraries env glsl_types pipelines =
         List.map
           (fun shader ->
             List.fold_left
-              (fun shader (set, binding, _, name, t) ->
+              (fun shader (set, binding, _, name, t, _) ->
                 Shader.add_uniform set binding
                   (wrap_uniform set binding t name)
                   shader)

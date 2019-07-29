@@ -156,6 +156,23 @@ let find_name ~local name env =
   >>? find_function ~local name env
   >>? find_pipeline ~local name env
 
+let rec find_name_scope name env =
+  let open Monad.Option in
+  let res =
+    find_constant_type ~local:true name env
+    >>? find_type ~local:true name env
+    >>? find_var ~local:true name env
+    >>? find_val ~local:true name env
+    >>? find_function ~local:true name env
+    >>? find_pipeline ~local:true name env
+  in
+  match res with
+  | Some _ -> env.summary
+  | None -> (
+      match env.parent with
+      | Some penv -> find_name_scope name penv
+      | None -> failwith ("no such name: " ^ name) )
+
 let find_lvalue name env = find_var ~local:false name env
 
 let find_rvalue name env =
