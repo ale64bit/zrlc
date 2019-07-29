@@ -647,7 +647,7 @@ let gen_uniform_atom_binding env pipeline id expr f =
     {
       const auto &atom = %s;
       int32_t uid = -1;
-      const bool can_cache = %s;
+      constexpr bool can_cache = %s;
       const auto data = %s<std::remove_const_t<
                             std::remove_reference_t<
                             decltype(atom)>>>{}(atom, uid);
@@ -668,7 +668,43 @@ let gen_uniform_atom_binding env pipeline id expr f =
               ubo_discarded_blocks_[image_index_].end(),
               blocks.begin(), blocks.end());
           discarded_descriptor_sets_[image_index_][set_layout].push_back(set);
-          reg.uid = -1;
+          reg.uid = uid;
+          reg.in_use = true;
+          if (can_cache && blocks.size() == 1 && sizeof(data) < kDescriptorSetRegisterSize) {
+            reg.cached = true;
+            std::memcpy(reg.data, &data, sizeof(data));
+          } else {
+            reg.cached = false;
+          }
+          // Bind the descriptor set.
+          vkCmdBindDescriptorSets(gc_cmd_buffer_[image_index_], 
+                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  current_pipeline_layout_,
+                                  set_index, 1, &set, 0, nullptr);
+        }
+      } else {
+        ClearDescriptorSetRegister(set_index);
+        auto it = ubo_cache_.find(uid);
+        if (it == ubo_cache_.end()) {
+          const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
+          std::vector<zrl::Block> blocks;
+          %s
+          UniformResource ures {uid, set, set_layout, blocks};
+          ubo_lru_.Push(uid);
+          ubo_cache_.insert(std::make_pair(uid, ures));
+          reg.uid = uid;
+          reg.in_use = true;
+          reg.cached = false;
+          // Bind the descriptor set.
+          vkCmdBindDescriptorSets(gc_cmd_buffer_[image_index_], 
+                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  current_pipeline_layout_,
+                                  set_index, 1, &set, 0, nullptr);
+        } else {
+          const UniformResource ures = it->second;
+          const VkDescriptorSet set = ures.set;
+          ubo_lru_.Push(uid);
+          reg.uid = uid;
           reg.in_use = true;
           reg.cached = false;
           // Bind the descriptor set.
@@ -682,7 +718,8 @@ let gen_uniform_atom_binding env pipeline id expr f =
     }|}
             bind_comment
             (gen_cpp_expression env expr)
-            (string_of_bool can_cache) trait_id set set_layout binding_writes))
+            (string_of_bool can_cache) trait_id set set_layout binding_writes
+            binding_writes))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -1437,7 +1474,7 @@ let gen_cpp_type loc td_name td_type =
   | _ ->
       error loc
         (`Unsupported
-          ( "cannot generate c++ type for non-record type: "
+          ( "cannot generate c++ type for non-Record type: "
           ^ string_of_type td_type ))
 
 let descriptor_set_register_struct =
