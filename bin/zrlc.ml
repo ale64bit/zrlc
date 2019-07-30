@@ -6,6 +6,8 @@ let input = ref ""
 
 let ast_file = ref ""
 
+let bazel_pkg = ref ""
+
 let output_dir = ref ""
 
 let die code msg =
@@ -21,6 +23,9 @@ let () =
   let spec =
     [ ("-v", Arg.Set verbose, "Enable verbose mode");
       ("-i", Arg.Set_string input, "Input file name");
+      ( "-bazel_pkg",
+        Arg.Set_string bazel_pkg,
+        "Bazel package for code generation" );
       ("-ast_file", Arg.Set_string ast_file, "Output AST in dot format");
       ("-o", Arg.Set_string output_dir, "Output directory name")
     ]
@@ -39,7 +44,7 @@ let () =
         cfg_verbose = !verbose;
         cfg_output_ast_file = (if !ast_file <> "" then Some !ast_file else None);
         cfg_output_directory = !output_dir;
-        cfg_bazel_package = [ "pbr" ];
+        cfg_bazel_package = String.split_on_char '/' !bazel_pkg;
       }
   in
   match Frontend.process cfg with
