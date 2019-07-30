@@ -789,13 +789,13 @@ let gen_uniform_atom_binding env pipeline id expr f =
       DescriptorSetRegister &reg = descriptor_set_registers_[set_index];
 
       if (uid == 0) { // Resource is transient.
+        %s<std::remove_const_t<
+           std::remove_reference_t<
+           decltype(atom)>>>{}(atom, uid, &data);
         if (can_cache && reg.in_use && reg.cached && 
             std::memcmp(reg.data, &data, sizeof(data)) == 0) {
           // Already bound with correct data.
         } else {
-          %s<std::remove_const_t<
-             std::remove_reference_t<
-             decltype(atom)>>>{}(atom, uid, &data);
           ClearDescriptorSetRegister(set_index);
           const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
           std::vector<zrl::Block> &blocks = ubo_discarded_blocks_[image_index_];
@@ -857,6 +857,89 @@ let gen_uniform_atom_binding env pipeline id expr f =
             (gen_cpp_expression env expr)
             (string_of_bool can_cache) (zrl_to_cpp_type set_type) trait_id set
             set_layout trait_id binding_writes trait_id binding_writes))
+
+let gen_indices_atom_binding env pipeline expr f =
+  let open Cpp in
+  let bind_comment =
+    Printf.sprintf "// BIND INDICES: pipeline=%s expr='%s'" pipeline.gp_name
+      (Ast.string_of_expression expr)
+  in
+  let trait_id = Printf.sprintf "%s_indices_" pipeline.gp_name in
+  Function.(
+    f
+    |> append_code_section
+         (Printf.sprintf
+            {|%s
+    {
+      if (index_count == 0) {
+        using UID = uint32_t;
+        const auto &atom = %s;
+        UID uid = 0;
+        const void *src = nullptr;
+        VkIndexType index_type = VK_INDEX_TYPE_NONE_NV;
+        %s<std::remove_const_t<
+           std::remove_reference_t<
+           decltype(atom)>>>{}(atom, uid, &src, index_type, index_count);
+
+        if (src != nullptr) {
+          CHECK_PC(index_type == VK_INDEX_TYPE_UINT16 ||
+                   index_type == VK_INDEX_TYPE_UINT32, "invalid index type");
+          const size_t size = (index_type == VK_INDEX_TYPE_UINT16 ? 2 : 4) * index_count;
+          // Find an appropriate block for the index buffer.
+          zrl::Block block = zrl::kEmptyBlock;
+          if (uid == 0) { // This index buffer is transient.
+            // Make room for new buffer.
+            while (vb_buffer_pool_->LargestBlock() < size) {
+              const UID oldest_uid = vb_lru_.Pop();
+              const zrl::Block oldest_block = vb_cache_.at(oldest_uid);
+              vb_cache_.erase(oldest_uid);
+              vb_buffer_pool_->Free(oldest_block);
+            }
+            block = vb_buffer_pool_->Alloc(size);
+            CHECK_PC(block != zrl::kEmptyBlock, "out of memory for index buffer");
+            vb_discarded_blocks_[image_index_].push_back(block);
+            // Schedule a buffer copy.
+            VkBufferCopy buffer_copy = {};
+            buffer_copy.srcOffset = staging_buffer_->PushData(size, src);
+            buffer_copy.dstOffset = block.second;
+            buffer_copy.size = size;
+            vb_pending_copies_.push_back(buffer_copy);
+          } else {
+            auto it = vb_cache_.find(uid);
+            if (it == vb_cache_.end()) { // Index buffer is not cached.
+              // Make room for new buffer.
+              while (vb_buffer_pool_->LargestBlock() < size) {
+                const UID oldest_uid = vb_lru_.Pop();
+                const zrl::Block oldest_block = vb_cache_.at(oldest_uid);
+                vb_cache_.erase(oldest_uid);
+                vb_buffer_pool_->Free(oldest_block);
+              }
+              block = vb_buffer_pool_->Alloc(size);
+              CHECK_PC(block != zrl::kEmptyBlock, "out of memory for index buffer");
+              vb_lru_.Push(uid);
+              vb_cache_[uid] = block;
+              // Schedule a buffer copy.
+              VkBufferCopy buffer_copy = {};
+              buffer_copy.srcOffset = staging_buffer_->PushData(size, src);
+              buffer_copy.dstOffset = block.second;
+              buffer_copy.size = size;
+              vb_pending_copies_.push_back(buffer_copy);
+            } else {
+              vb_lru_.Push(uid);
+              block = it->second;
+              // No need to schedule copy. Buffer is already available to device.
+            }
+          }
+
+          const VkBuffer buffer = vb_buffer_pool_->GetHandle();
+          vkCmdBindIndexBuffer(gc_cmd_buffer_[image_index_], buffer, 
+                               block.second, index_type);
+        }
+      }
+    }|}
+            bind_comment
+            (gen_cpp_expression env expr)
+            trait_id))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -946,6 +1029,20 @@ let gen_atom_bindings env pipeline f bindings =
     List.exists (fun (_, name, _) -> id = name) pipeline.gp_inputs
   in
   let is_uniform id = MapString.mem id pipeline.gp_uniform_set in
+  let _, all_inputs =
+    List.split (List.filter (fun (id, _) -> is_input id) bindings)
+  in
+  let unique_inputs =
+    List.sort_uniq
+      (fun e1 e2 ->
+        String.compare (gen_cpp_expression env e1) (gen_cpp_expression env e2))
+      all_inputs
+  in
+  let f =
+    List.fold_left
+      (flip (gen_indices_atom_binding env pipeline))
+      f unique_inputs
+  in
   List.fold_left
     (fun f (lhs, rhs) ->
       if is_input lhs then gen_input_atom_binding env pipeline lhs rhs f
@@ -967,6 +1064,7 @@ let gen_write env pipeline lhs rhs f =
            (Printf.sprintf
               {|{ // WRITE
             uint32_t vertex_count = 0;
+            uint32_t index_count = 0;
             {  
             const std::vector<RenderTargetReference*> rts = {%s};
             for (auto rt : rts) { rt->target_layout = VK_IMAGE_LAYOUT_GENERAL; }
@@ -1006,7 +1104,13 @@ let gen_write env pipeline lhs rhs f =
   Cpp.Function.(
     f
     |> append_code_section
-         "vkCmdDraw(gc_cmd_buffer_[image_index_], vertex_count, 1, 0, 0);"
+         {|
+           if (index_count > 0) {
+             vkCmdDrawIndexed(gc_cmd_buffer_[image_index_], index_count, 1, 0, 0, 0);
+           } else {
+             vkCmdDraw(gc_cmd_buffer_[image_index_], vertex_count, 1, 0, 0);
+           }
+         |}
     |> append_code_section "}}")
 
 let extract_pipeline_name_from_write = function
@@ -2098,7 +2202,10 @@ let gen_types_header pipelines root_elems =
               Printf.sprintf "template<class T> struct %s_%s;" pname name)
             pipeline.gp_inputs
         in
-        uniforms @ inputs)
+        let indices =
+          [ Printf.sprintf "template<class T> struct %s_indices_;" pname ]
+        in
+        uniforms @ inputs @ indices)
       (MapString.bindings pipelines)
   in
   let cc_header =
