@@ -461,10 +461,11 @@ let add_builtin fname env =
           let t =
             Record
               [ ("fragCoord", TypeRef "fvec4");
+                ("currentDepth", TypeRef "float");
                 ("frontFacing", TypeRef "bool")
               ]
           in
-          add_var "builtin" L.{ loc = builtin_loc; value = t } env
+          add_val "builtin" L.{ loc = builtin_loc; value = t } env
       | Renderer _, "main" ->
           let t = Record [ ("screen", TypeRef "rt_rgba") ] in
           add_var "builtin" L.{ loc = builtin_loc; value = t } env

@@ -5,14 +5,15 @@ type Camera {
 }
 
 type Material {
-  color: sampler2D
+  hasBaseColor: bool
+  baseColor: sampler2D
 }
 
 type PerObject {
   model: fmat4
 }
 
-pipeline ForwardPass(cam: Camera, mat: Material, obj: PerObject): fvec4 {
+pipeline ForwardPass(cam: Camera, mat: Material, obj: PerObject): (fvec4, float) {
 
   def vertex(pos: fvec3, uv: fvec2): fvec2 {
     builtin.position = cam.projView * obj.model * fvec4(pos.x, pos.y, pos.z, 1.0)
@@ -20,19 +21,25 @@ pipeline ForwardPass(cam: Camera, mat: Material, obj: PerObject): fvec4 {
   }
 
   def fragment(uv: fvec2): fvec4 {
-    return texture(mat.color, uv)
+    if builtin.currentDepth < builtin.fragCoord.z {
+      discard
+    }
+    if mat.hasBaseColor {
+      return texture(mat.baseColor, uv)
+    } else {
+      return fvec4(1.0, 0.0, 0.0, 1.0)
+    }
   }
 }
 
-renderer PBR() {
+renderer PBR(depthBuf: rt_ds) {
 
   def main(camera: atom, geometry: atomlist) {
+    depthBuf = 1.0
     builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0) 
     for g in geometry {
-      builtin.screen += ForwardPass(cam=camera, 
-                                    mat=g,
-                                    obj=g, 
-                                    pos=g)
+      builtin.screen, depthBuf += ForwardPass(cam=camera, 
+                                    mat=g, obj=g, pos=g, uv=g)
     }
   }
 }

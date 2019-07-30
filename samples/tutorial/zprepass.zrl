@@ -1,13 +1,13 @@
 module zprepass
 
-pipeline PrePass(depth: depthBuffer, mvp: fmat4): float {
+pipeline PrePass(mvp: fmat4): float {
 
   def vertex(pos: fvec4) {
     builtin.position = mvp * pos
   }
 
   def fragment(): float {
-    if builtin.fragCoord.z > depth.load(cast<ivec2>(builtin.fragCoord.xy)) {
+    if builtin.fragCoord.z > builtin.currentDepth {
       discard
     }
     return builtin.fragCoord.z

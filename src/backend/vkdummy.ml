@@ -27,6 +27,9 @@ type graphics_pipeline = {
   gp_geometry_stage : TypedAst.function_declaration option;
   gp_fragment_stage : TypedAst.function_declaration option;
   gp_helper_functions : TypedAst.function_declaration list;
+  gp_depth_test_enabled : bool;
+  gp_depth_write_enabled : bool;
+  gp_depth_compare_op : string;
 }
 
 let flip f x y = f y x
@@ -255,7 +258,7 @@ let is_rt_clear_or_write env op lvalues =
 let gen_clear env lhs rhs f =
   let bindings = List.combine lhs rhs in
   List.fold_left
-    (fun f ((_, lhs), (_, rhs)) ->
+    (fun f ((ts, lhs), (_, rhs)) ->
       let rt_var =
         Printf.sprintf "RenderTargetReference *_rt = (%s);"
           (gen_cpp_expression env lhs)
@@ -269,15 +272,21 @@ let gen_clear env lhs rhs f =
       let update_load_op = "_rt->load_op = VK_ATTACHMENT_LOAD_OP_CLEAR;" in
       let clear_value_expr = gen_cpp_expression env rhs in
       let update_clear_value =
-        Printf.sprintf
-          "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof (%s));"
-          clear_value_expr clear_value_expr
+        match ts with
+        | [ Type.TypeRef "rt_ds" ] ->
+            Printf.sprintf "_rt->clear_value.depthStencil.depth = %s;"
+              clear_value_expr
+        | _ ->
+            Printf.sprintf
+              "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof (%s));"
+              clear_value_expr clear_value_expr
       in
       Cpp.Function.(
-        f |> append_code_section rt_var
+        f |> append_code_section "{" |> append_code_section rt_var
         |> append_code_section end_current_pass
         |> append_code_section update_load_op
-        |> append_code_section update_clear_value))
+        |> append_code_section update_clear_value
+        |> append_code_section "}"))
     f bindings
 
 let gen_shader_stage_create_infos p =
@@ -483,9 +492,9 @@ let gen_create_and_bind_pipeline env p f lhs =
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {};
     depth_stencil_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth_stencil_state.pNext = nullptr;
-    depth_stencil_state.depthTestEnable = VK_TRUE;
-    depth_stencil_state.depthWriteEnable = VK_TRUE;
-    depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth_stencil_state.depthTestEnable = %s;
+    depth_stencil_state.depthWriteEnable = %s;
+    depth_stencil_state.depthCompareOp = %s;
     depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
     depth_stencil_state.stencilTestEnable = VK_FALSE;
     depth_stencil_state.front.compareOp = VK_COMPARE_OP_ALWAYS;
@@ -561,8 +570,11 @@ let gen_create_and_bind_pipeline env p f lhs =
       current_pipeline_layout_ = next_pipeline_layout;
     }
 }|}
-            shader_stages vertex_input_state_create_info num_color_attachments
-            color_blend_attachments p.gp_name p.gp_name))
+            shader_stages vertex_input_state_create_info
+            (if p.gp_depth_test_enabled then "VK_TRUE" else "VK_FALSE")
+            (if p.gp_depth_write_enabled then "VK_TRUE" else "VK_FALSE")
+            p.gp_depth_compare_op num_color_attachments color_blend_attachments
+            p.gp_name p.gp_name))
 
 let collect_atom_bindings = function
   | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
@@ -1358,18 +1370,18 @@ let gen_render_targets rd_type r =
               let img_ctor_args =
                 match rt_type with
                 | RendererEnv.Color ->
-                    "{core_, core_.GetSwapchain().GetExtent(), 1, \
-                     VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
+                    "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
+                     1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | \
                      VK_IMAGE_USAGE_SAMPLED_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
-                     VK_IMAGE_ASPECT_COLOR_BIT}"
+                     VK_IMAGE_ASPECT_COLOR_BIT"
                 | RendererEnv.DepthStencil ->
-                    "{core_, core_.GetSwapchain().GetExtent(), 1, \
-                     VK_FORMAT_D32_SFLOAT, VK_IMAGE_TILING_OPTIMAL, \
+                    "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
+                     1, VK_FORMAT_D32_SFLOAT, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
-                     VK_IMAGE_ASPECT_DEPTH_BIT}"
+                     VK_IMAGE_ASPECT_DEPTH_BIT"
               in
               let ref_ctor_args =
                 Printf.sprintf
@@ -1729,6 +1741,11 @@ let descriptor_set_register_struct =
 let merge_hash_function =
   {|template <class T> inline void MergeHash(size_t &h1, const T h2) {
   h1 = h1 * 31 + static_cast<size_t>(h2);
+}|}
+
+let expand_extent_function =
+  {|inline VkExtent3D ExpandExtent(VkExtent2D e) {
+  return VkExtent3D{e.width, e.height, 1};
 }|}
 
 let uniform_resource_struct =
@@ -2167,6 +2184,7 @@ let gen_types_header pipelines root_elems =
       |> add_section "constexpr int kDescriptorSetRegisterCount = 8;"
       |> add_section "constexpr size_t kDescriptorSetRegisterSize = zrl::_8KB;"
       |> add_section merge_hash_function
+      |> add_section expand_extent_function
       |> add_section descriptor_set_register_struct
       |> add_section uniform_resource_struct
       |> add_section render_target_reference_struct
@@ -2261,6 +2279,100 @@ let gen_uniform_bindings env set id t =
       | _ -> [ (set, 0, 1, id, t, "") ] )
   | _ -> failwith ("unexpected pipeline uniform type: " ^ Type.string_of_type t)
 
+let refactor_depth_test f =
+  let TypedAst.{ fd_body; _ } = f in
+  match fd_body with
+  (* TODO: RIP format *)
+  | ( _,
+      L.
+        { value =
+            If
+              { if_cond =
+                  ( _,
+                    L.
+                      { value =
+                          BinExpr
+                            ( L.
+                                { value =
+                                    Access
+                                      ( L.
+                                          { value =
+                                              Access
+                                                ( L.{ value = Id "builtin"; _ },
+                                                  "fragCoord" );
+                                            _
+                                          },
+                                        "z" );
+                                  _
+                                },
+                              ( ( Equal | NotEqual | LessThan | GreaterThan
+                                | LessOrEqual | GreaterOrEqual ) as op ),
+                              L.{ value = Access (_, "currentDepth"); _ } );
+                        _
+                      } );
+                if_true = [ (_, L.{ value = Discard; _ }) ];
+                if_false = []
+              };
+          _
+        } )
+    :: other_stmts ->
+      let compare_op =
+        match op with
+        | Equal -> "VK_COMPARE_OP_NOT_EQUAL"
+        | NotEqual -> "VK_COMPARE_OP_EQUAL"
+        | LessThan -> "VK_COMPARE_OP_GREATER_OR_EQUAL"
+        | GreaterThan -> "VK_COMPARE_OP_LESS_OR_EQUAL"
+        | LessOrEqual -> "VK_COMPARE_OP_GREATER"
+        | GreaterOrEqual -> "VK_COMPARE_OP_LESS"
+        | _ -> failwith "cannot happen"
+      in
+      (true, compare_op, { f with fd_body = other_stmts })
+  | ( _,
+      L.
+        { value =
+            If
+              { if_cond =
+                  ( _,
+                    L.
+                      { value =
+                          BinExpr
+                            ( L.{ value = Access (_, "currentDepth"); _ },
+                              ( ( Equal | NotEqual | LessThan | GreaterThan
+                                | LessOrEqual | GreaterOrEqual ) as op ),
+                              L.
+                                { value =
+                                    Access
+                                      ( L.
+                                          { value =
+                                              Access
+                                                ( L.{ value = Id "builtin"; _ },
+                                                  "fragCoord" );
+                                            _
+                                          },
+                                        "z" );
+                                  _
+                                } );
+                        _
+                      } );
+                if_true = [ (_, L.{ value = Discard; _ }) ];
+                if_false = []
+              };
+          _
+        } )
+    :: other_stmts ->
+      let compare_op =
+        match op with
+        | Equal -> "VK_COMPARE_OP_EQUAL"
+        | NotEqual -> "VK_COMPARE_OP_NOT_EQUAL"
+        | LessThan -> "VK_COMPARE_OP_LESS"
+        | GreaterThan -> "VK_COMPARE_OP_GREATER"
+        | LessOrEqual -> "VK_COMPARE_OP_LESS_OR_EQUAL"
+        | GreaterOrEqual -> "VK_COMPARE_OP_GREATER_OR_EQUAL"
+        | _ -> failwith "cannot happen"
+      in
+      (true, compare_op, { f with fd_body = other_stmts })
+  | _ -> (false, "VK_COMPARE_OP_NEVER", f)
+
 let gen_graphics_pipeline loc pd =
   let TypedAst.{ pd_env; pd_name; pd_type; pd_functions } = pd in
   let find_func name =
@@ -2277,6 +2389,9 @@ let gen_graphics_pipeline loc pd =
   in
   let vertex = find_func "vertex" in
   let fragment = find_func "fragment" in
+  let gp_depth_test_enabled, gp_depth_compare_op, fragment =
+    refactor_depth_test fragment
+  in
   let TypedAst.{ fd_type = vertex_type; _ } = vertex in
   let TypedAst.{ fd_type = fragment_type; _ } = fragment in
   check_stage_chaining loc vertex_type fragment_type >>= fun () ->
@@ -2311,9 +2426,12 @@ let gen_graphics_pipeline loc pd =
           gp_outputs = outputs;
           gp_vertex_stage = find_func "vertex";
           gp_geometry_stage = find_func_opt "geometry";
-          gp_fragment_stage = find_func_opt "fragment";
+          gp_fragment_stage = Some fragment;
           gp_helper_functions =
             exclude_funcs [ "vertex"; "geometry"; "fragment" ];
+          gp_depth_test_enabled;
+          gp_depth_write_enabled = true;
+          gp_depth_compare_op;
         }
   | _ -> failwith "pipeline must have Function type"
 
