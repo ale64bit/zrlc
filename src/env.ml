@@ -364,8 +364,13 @@ let global =
       ("fvec4", generate_constructor_type "float" "xyzw" "fvec4");
       ("dvec2", generate_constructor_type "double" "xy" "dvec2");
       ("dvec3", generate_constructor_type "double" "xyz" "dvec3");
-      ("dvec4", generate_constructor_type "double" "xyzw" "dvec4")
+      ("dvec4", generate_constructor_type "double" "xyzw" "dvec4");
       (* TODO: Built-in matrix types *)
+      (* Texture lookup functions *)
+      ( "texture",
+        Function
+          ( [ ("sampler", TypeRef "sampler2D"); ("coord", TypeRef "fvec2") ],
+            [ TypeRef "fvec4" ] ) )
     ]
   in
   let env =

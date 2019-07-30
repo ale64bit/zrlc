@@ -246,11 +246,11 @@ let create_color_render_target =
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
   constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_COLOR_BIT;
+  const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
   return std::make_unique<zrl::Image>(
-      core_, core_.GetSwapchain().GetExtent(), 1, format,
-      VK_IMAGE_TILING_OPTIMAL, usage,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-      aspects);|})
+      core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
+      1, format, VK_IMAGE_TILING_OPTIMAL, usage,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
 let create_depth_render_target =
   Function.(
@@ -260,10 +260,11 @@ let create_depth_render_target =
          {|  constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
+  const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
   return std::make_unique<zrl::Image>(
-      core_, core_.GetSwapchain().GetExtent(), 1, format, 
-      VK_IMAGE_TILING_OPTIMAL, 
-      usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
+      core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
+      1, format, VK_IMAGE_TILING_OPTIMAL, usage, 
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
 let ctor_body =
   {|  const auto &device = core_.GetLogicalDevice();
@@ -324,7 +325,7 @@ let ctor_body =
   //======================================================================
   // Staging Buffer
   DLOG << name_ << ": creating staging buffer\n";
-  staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_128MB);
+  staging_buffer_ = std::make_unique<zrl::StagingBuffer>(core_, zrl::_512MB);
   //======================================================================
   // Vertex Buffer State
   DLOG << name_ << ": creating vertex buffer pool\n";
@@ -352,6 +353,9 @@ let ctor_body =
       minUBOBlockSize, true);
   ubo_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
   //======================================================================
+  // Sampled Images State
+  discarded_images_.resize(core_.GetSwapchain().GetImageCount());
+  //======================================================================
   // Render Target State
   DLOG << name_ << ": initializing render targets\n";
   rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
@@ -374,6 +378,10 @@ let dtor_body =
   vb_buffer_pool_.reset();
   for (auto rt : rt_builtin_screen_ref_) {
     vkDestroyImageView(device, rt.attachment, nullptr);
+  }
+  DLOG << name_ << ": total samplers: " << sampler_cache_.size() << '\n';
+  for (auto p : sampler_cache_) {
+    vkDestroySampler(device, p.second, nullptr);
   }
   DLOG << name_ << ": total graphics pipelines: " << pipeline_cache_.size() << '\n';
   for (auto p : pipeline_cache_) {
@@ -458,7 +466,7 @@ let clear_descriptor_set_register =
     auto &r = descriptor_set_registers_[set_index];
     if (!r.in_use) { return; }
     r.in_use = false;
-    r.uid = -1;
+    r.uid = 0;
 |})
 
 let recycle_or_allocate_descriptor_set =
@@ -522,6 +530,30 @@ let stop_recording_body =
                     vb_buffer_pool_->GetHandle(), 
                     static_cast<uint32_t>(vb_pending_copies_.size()),
                     vb_pending_copies_.data());
+  }
+
+  // Schedule image barriers and copies.
+  if (pending_image_copies_.size() > 0) {
+    vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_DEPENDENCY_BY_REGION_BIT,
+                         0, nullptr, 0, nullptr,
+                         static_cast<uint32_t>(pending_pre_copy_image_barriers_.size()),
+                         pending_pre_copy_image_barriers_.data());
+    for (const auto p : pending_image_copies_) {
+      vkCmdCopyBufferToImage(t_cmd_buffer_[image_index_],
+                             staging_buffer_->GetHandle(),
+                             p.first, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             1, &p.second);
+    }
+    vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_DEPENDENCY_BY_REGION_BIT,
+                         0, nullptr, 0, nullptr,
+                         static_cast<uint32_t>(pending_post_copy_image_barriers_.size()),
+                         pending_post_copy_image_barriers_.data());
   }
 
   // Stop recording.
@@ -598,7 +630,7 @@ let empty rname pkg =
         |> add_include "\"glm/glm.hpp\""
         |> add_include "\"glm/gtc/type_ptr.hpp\""
         |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
-        |> add_private_member ("using UID = int32_t", "")
+        |> add_private_member ("using UID = uint32_t", "")
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")
         |> add_private_member ("uint32_t", "image_index_")
@@ -665,6 +697,22 @@ let empty rname pkg =
         |> add_private_member ("zrl::LRU<UID>", "ubo_lru_")
         |> add_private_member
              ("std::vector<std::vector<zrl::Block>>", "ubo_discarded_blocks_")
+        (* Sampled Images State *)
+        |> add_private_member
+             ( "std::unordered_map<VkSamplerCreateInfo, VkSampler>",
+               "sampler_cache_" )
+        |> add_private_member
+             ( "std::vector<std::vector<std::unique_ptr<zrl::Image>>>",
+               "discarded_images_" )
+        |> add_private_member
+             ( "std::vector<VkImageMemoryBarrier>",
+               "pending_pre_copy_image_barriers_" )
+        |> add_private_member
+             ( "std::vector<std::pair<VkImage, VkBufferImageCopy>>",
+               "pending_image_copies_" )
+        |> add_private_member
+             ( "std::vector<VkImageMemoryBarrier>",
+               "pending_post_copy_image_barriers_" )
         (* Per-Frame State *)
         |> add_private_member ("VkRenderPass", "current_render_pass_")
         |> add_private_member ("VkPipeline", "current_pipeline_")
@@ -709,12 +757,18 @@ let empty rname pkg =
                        p.second.end());
                  }
                  discarded_descriptor_sets_[image_index_].clear();
+                 // Reclaim discarded images.
+                 discarded_images_[image_index_].clear();
                  // Clear descriptor set register bank.
                  for (int i = 0; i < kDescriptorSetRegisterCount; ++i) { 
                    ClearDescriptorSetRegister(i);
                  }
                  // Clear pending vertex buffer copies.
                  vb_pending_copies_.clear();
+                 // Clear pending image barriers.
+                 pending_pre_copy_image_barriers_.clear();
+                 pending_image_copies_.clear();
+                 pending_post_copy_image_barriers_.clear();
                  // Clear per-frame state.
                  current_render_pass_ = VK_NULL_HANDLE;
                  current_pipeline_ = VK_NULL_HANDLE;

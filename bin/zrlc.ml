@@ -39,7 +39,7 @@ let () =
         cfg_verbose = !verbose;
         cfg_output_ast_file = (if !ast_file <> "" then Some !ast_file else None);
         cfg_output_directory = !output_dir;
-        cfg_bazel_package = [ "gen" ];
+        cfg_bazel_package = [ "pbr" ];
       }
   in
   match Frontend.process cfg with

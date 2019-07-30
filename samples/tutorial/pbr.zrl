@@ -1,0 +1,39 @@
+module pbr
+
+type Camera {
+  projView: fmat4
+}
+
+type Material {
+  color: sampler2D
+}
+
+type PerObject {
+  model: fmat4
+}
+
+pipeline ForwardPass(cam: Camera, mat: Material, obj: PerObject): fvec4 {
+
+  def vertex(pos: fvec3, uv: fvec2): fvec2 {
+    builtin.position = cam.projView * obj.model * fvec4(pos.x, pos.y, pos.z, 1.0)
+    return uv
+  }
+
+  def fragment(uv: fvec2): fvec4 {
+    return texture(mat.color, uv)
+  }
+}
+
+renderer PBR() {
+
+  def main(camera: atom, geometry: atomlist) {
+    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0) 
+    for g in geometry {
+      builtin.screen += ForwardPass(cam=camera, 
+                                    mat=g,
+                                    obj=g, 
+                                    pos=g)
+    }
+  }
+}
+

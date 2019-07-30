@@ -39,6 +39,19 @@ let array_type_size dims =
       | _ -> failwith "array dimensions must be known at compile time")
     1 dims
 
+let rec has_opaque_members env =
+  let open Type in
+  function
+  | TypeRef "sampler2D" -> true
+  | Array (t, _) -> has_opaque_members env t
+  | Record fields ->
+      List.exists (fun (_, t) -> has_opaque_members env t) fields
+  | TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = t; _ } -> has_opaque_members env t
+      | _ -> false )
+  | _ -> false
+
 let rec glsl_type_locations env = function
   | Type.TypeRef "int" -> 1
   | Type.TypeRef "bool" -> 1
@@ -128,7 +141,7 @@ let rec zrl_to_cpp_type =
   | TypeRef "rt_rgb" -> "RenderTargetReference*"
   | TypeRef "rt_rgba" -> "RenderTargetReference*"
   | TypeRef "rt_ds" -> "RenderTargetReference*"
-  | TypeRef "sampler2D" -> "SampledImageReference*"
+  | TypeRef "sampler2D" -> "SampledImageReference"
   | TypeRef s -> s
   | t -> failwith "unsupported type: " ^ string_of_type t
 
@@ -563,8 +576,170 @@ let collect_atom_bindings = function
         args
   | _ -> failwith "unsupported right hand side of pipeline write statement"
 
+let gen_sampler_binding_write set binding count name t wrapped_name =
+  let data =
+    Printf.sprintf "data%s"
+      (if String.length wrapped_name = 0 then "" else "." ^ wrapped_name)
+  in
+  let comment =
+    Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set binding
+      count name (Type.string_of_type t)
+  in
+  Printf.sprintf
+    {|%s
+    {
+      // Create sampler if needed.
+      VkSampler sampler = VK_NULL_HANDLE;
+      auto it = sampler_cache_.find(%s.sampler_create_info);
+      if (it == sampler_cache_.end()) {
+        DLOG << name_ << ": creating new sampler\n";
+        CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
+                                 &%s.sampler_create_info, nullptr, &sampler));
+        sampler_cache_[%s.sampler_create_info] = sampler;
+      } else {
+        sampler = it->second;
+      }
+
+      // Create image resource.
+      const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+                                      VK_IMAGE_USAGE_SAMPLED_BIT;
+      const VkExtent3D extent = {%s.width, %s.height, 1};
+      std::unique_ptr<zrl::Image> img = std::make_unique<zrl::Image>(core_,
+          extent, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
+          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+      // Schedule copy and barriers.
+      const VkDeviceSize src_offset = staging_buffer_->PushData(%s.size,
+                                                                %s.image_data);
+      delete %s.image_data;
+
+      VkImageMemoryBarrier pre_copy_barrier = {};
+      pre_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      pre_copy_barrier.pNext = nullptr;
+      pre_copy_barrier.srcAccessMask = 0;
+      pre_copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      pre_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      pre_copy_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      pre_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      pre_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      pre_copy_barrier.image = img->GetHandle();
+      pre_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      pre_copy_barrier.subresourceRange.baseMipLevel = 0;
+      pre_copy_barrier.subresourceRange.levelCount = 1;
+      pre_copy_barrier.subresourceRange.baseArrayLayer = 0;
+      pre_copy_barrier.subresourceRange.layerCount = 1;
+      pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
+
+      VkBufferImageCopy buffer_image_copy = {};
+      buffer_image_copy.bufferOffset = src_offset;
+      buffer_image_copy.bufferRowLength = 0;
+      buffer_image_copy.bufferImageHeight = 0;
+      buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      buffer_image_copy.imageSubresource.mipLevel = 0; // TODO get this from img
+      buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
+      buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
+      buffer_image_copy.imageOffset = {0, 0, 0};
+      buffer_image_copy.imageExtent = img->GetExtent();
+      pending_image_copies_.push_back(std::make_pair(img->GetHandle(), buffer_image_copy));
+
+      VkImageMemoryBarrier post_copy_barrier = {};
+      post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      post_copy_barrier.pNext = nullptr;
+      post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      post_copy_barrier.image = img->GetHandle();
+      post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      post_copy_barrier.subresourceRange.baseMipLevel = 0;
+      post_copy_barrier.subresourceRange.levelCount = 1;
+      post_copy_barrier.subresourceRange.baseArrayLayer = 0;
+      post_copy_barrier.subresourceRange.layerCount = 1;
+      pending_post_copy_image_barriers_.push_back(post_copy_barrier);
+
+      // Update descriptor set.
+      VkDescriptorImageInfo image_info = {};
+      image_info.sampler = sampler;
+      image_info.imageView = img->GetViewHandle();
+      image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.pNext = nullptr;
+      write.dstSet = set;
+      write.dstBinding = %d;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      write.pImageInfo = &image_info;
+      write.pBufferInfo = nullptr;
+      write.pTexelBufferView = nullptr;
+
+      vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
+                             1, &write, 0, nullptr);
+      images.push_back(std::move(img));
+    }|}
+    comment data data data data data data data data data binding
+
+let gen_ubo_binding_write set binding count name t wrapped_name =
+  let data =
+    Printf.sprintf "data%s"
+      (if String.length wrapped_name = 0 then "" else "." ^ wrapped_name)
+  in
+  let comment =
+    Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set binding
+      count name (Type.string_of_type t)
+  in
+  Printf.sprintf
+    {|%s
+    { 
+      const VkDeviceSize size = sizeof(%s);
+      while (ubo_buffer_pool_->LargestBlock() < size) {
+        const UID oldest_uid = ubo_lru_.Pop();
+        UniformResource oldest_resource = std::move(ubo_cache_.at(oldest_uid));
+        ubo_cache_.erase(oldest_uid);
+        for (const auto block : oldest_resource.blocks) {
+          ubo_buffer_pool_->Free(block);
+        }
+      }
+      zrl::Block block = ubo_buffer_pool_->Alloc(size);
+      CHECK_PC(block != zrl::kEmptyBlock, "out of memory for UBO");
+      ubo_buffer_pool_->Write(block.second, size, &%s);
+      blocks.push_back(block);
+
+      VkDescriptorBufferInfo buffer_info = {};
+      buffer_info.buffer = ubo_buffer_pool_->GetHandle();
+      buffer_info.offset = block.second;
+      buffer_info.range = size; 
+
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.pNext = nullptr;
+      write.dstSet = set;
+      write.dstBinding = %d;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      write.pImageInfo = nullptr;
+      write.pBufferInfo = &buffer_info;
+      write.pTexelBufferView = nullptr;
+
+      vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
+                             1, &write, 0, nullptr);
+    }|}
+    comment (zrl_to_cpp_type t) data binding
+
 let gen_uniform_atom_binding env pipeline id expr f =
   let open Cpp in
+  let set_type =
+    match pipeline.gp_declaration.pd_type with
+    | Type.Function (params, _) ->
+        let _, t = List.find (fun (name, _) -> name = id) params in
+        t
+    | _ -> failwith "pipelines must be of Function type"
+  in
   let set = MapString.find id pipeline.gp_uniform_set in
   let set_layout =
     Printf.sprintf "%s_%d_descriptor_set_layout_" pipeline.gp_name set
@@ -576,60 +751,17 @@ let gen_uniform_atom_binding env pipeline id expr f =
     String.concat "\n"
       (List.map
          (fun (set, binding, count, name, t, wrapped_name) ->
-           let data =
-             Printf.sprintf "data%s"
-               ( if String.length wrapped_name = 0 then ""
-               else "." ^ wrapped_name )
-           in
-           let comment =
-             Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set
-               binding count name (Type.string_of_type t)
-           in
-           (* TODO detect the type of write from t *)
-           Printf.sprintf
-             {|%s
-          { 
-            const VkDeviceSize size = sizeof(%s);
-            while (ubo_buffer_pool_->LargestBlock() < size) {
-              const UID oldest_uid = ubo_lru_.Pop();
-              const UniformResource oldest_resource = ubo_cache_.at(oldest_uid);
-              ubo_cache_.erase(oldest_uid);
-              for (const auto block : oldest_resource.blocks) {
-                ubo_buffer_pool_->Free(block);
-              }
-              // TODO: free images
-            }
-            zrl::Block block = ubo_buffer_pool_->Alloc(size);
-            CHECK_PC(block != zrl::kEmptyBlock, "out of memory for UBO");
-            ubo_buffer_pool_->Write(block.second, size, &%s);
-            blocks.push_back(block);
-
-            VkDescriptorBufferInfo buffer_info = {};
-            buffer_info.buffer = ubo_buffer_pool_->GetHandle();
-            buffer_info.offset = block.second;
-            buffer_info.range = size; 
-
-            VkWriteDescriptorSet write = {};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.pNext = nullptr;
-            write.dstSet = set;
-            write.dstBinding = %d;
-            write.dstArrayElement = 0;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            write.pImageInfo = nullptr;
-            write.pBufferInfo = &buffer_info;
-            write.pTexelBufferView = nullptr;
-
-            vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
-                                   1, &write, 0, nullptr);
-          }|}
-             comment (zrl_to_cpp_type t) data binding)
+           match t with
+           | Type.TypeRef "sampler2D" ->
+               gen_sampler_binding_write set binding count name t wrapped_name
+           | Type.Array (TypeRef "sampler2D", _) ->
+               failwith "TODO: binding array of samplers not supported yet"
+           | _ -> gen_ubo_binding_write set binding count name t wrapped_name)
          bindings)
   in
   let can_cache =
     List.for_all
-      (fun (_, _, _, _, _, wrapped_name) -> String.length wrapped_name = 0)
+      (fun (_, _, _, _, t, _) -> not (has_opaque_members env t))
       bindings
   in
   let trait_id = Printf.sprintf "%s_%s" pipeline.gp_name id in
@@ -646,27 +778,29 @@ let gen_uniform_atom_binding env pipeline id expr f =
             {|%s
     {
       const auto &atom = %s;
-      int32_t uid = -1;
+      uint32_t uid = 0;
       constexpr bool can_cache = %s;
-      const auto data = %s<std::remove_const_t<
-                            std::remove_reference_t<
-                            decltype(atom)>>>{}(atom, uid);
+      %s data;
+      %s<std::remove_const_t<
+         std::remove_reference_t<
+         decltype(atom)>>>{}(atom, uid, nullptr);
       const int set_index = %d;
       const VkDescriptorSetLayout set_layout = %s;
       DescriptorSetRegister &reg = descriptor_set_registers_[set_index];
 
-      if (uid < 0) { // Resource is transient.
+      if (uid == 0) { // Resource is transient.
         if (can_cache && reg.in_use && reg.cached && 
             std::memcmp(reg.data, &data, sizeof(data)) == 0) {
           // Already bound with correct data.
         } else {
+          %s<std::remove_const_t<
+             std::remove_reference_t<
+             decltype(atom)>>>{}(atom, uid, &data);
           ClearDescriptorSetRegister(set_index);
           const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
-          std::vector<zrl::Block> blocks;
+          std::vector<zrl::Block> &blocks = ubo_discarded_blocks_[image_index_];
+          std::vector<std::unique_ptr<zrl::Image>> &images = discarded_images_[image_index_];
           %s
-          ubo_discarded_blocks_[image_index_].insert(
-              ubo_discarded_blocks_[image_index_].end(),
-              blocks.begin(), blocks.end());
           discarded_descriptor_sets_[image_index_][set_layout].push_back(set);
           reg.uid = uid;
           reg.in_use = true;
@@ -686,12 +820,16 @@ let gen_uniform_atom_binding env pipeline id expr f =
         ClearDescriptorSetRegister(set_index);
         auto it = ubo_cache_.find(uid);
         if (it == ubo_cache_.end()) {
+          %s<std::remove_const_t<
+             std::remove_reference_t<
+             decltype(atom)>>>{}(atom, uid, &data);
           const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
           std::vector<zrl::Block> blocks;
+          std::vector<std::unique_ptr<zrl::Image>> images;
           %s
-          UniformResource ures {uid, set, set_layout, blocks};
           ubo_lru_.Push(uid);
-          ubo_cache_.insert(std::make_pair(uid, ures));
+          ubo_cache_.emplace(uid, 
+              UniformResource{uid, set, set_layout, blocks, std::move(images)});
           reg.uid = uid;
           reg.in_use = true;
           reg.cached = false;
@@ -701,8 +839,7 @@ let gen_uniform_atom_binding env pipeline id expr f =
                                   current_pipeline_layout_,
                                   set_index, 1, &set, 0, nullptr);
         } else {
-          const UniformResource ures = it->second;
-          const VkDescriptorSet set = ures.set;
+          const VkDescriptorSet set = it->second.set;
           ubo_lru_.Push(uid);
           reg.uid = uid;
           reg.in_use = true;
@@ -718,8 +855,8 @@ let gen_uniform_atom_binding env pipeline id expr f =
     }|}
             bind_comment
             (gen_cpp_expression env expr)
-            (string_of_bool can_cache) trait_id set set_layout binding_writes
-            binding_writes))
+            (string_of_bool can_cache) (zrl_to_cpp_type set_type) trait_id set
+            set_layout trait_id binding_writes trait_id binding_writes))
 
 let gen_input_atom_binding env pipeline id expr f =
   let open Cpp in
@@ -738,7 +875,7 @@ let gen_input_atom_binding env pipeline id expr f =
          (Printf.sprintf
             {|%s
     {
-      using UID = int32_t;
+      using UID = uint32_t;
       const auto &atom = %s;
       UID uid = 0;
       size_t size = 0;
@@ -749,7 +886,7 @@ let gen_input_atom_binding env pipeline id expr f =
 
       // Find an appropriate block for the vertex buffer.
       zrl::Block block = zrl::kEmptyBlock;
-      if (uid < 0) { // This vertex buffer is transient.
+      if (uid == 0) { // This vertex buffer is transient.
         // Make room for new buffer.
         while (vb_buffer_pool_->LargestBlock() < size) {
           const UID oldest_uid = vb_lru_.Pop();
@@ -814,7 +951,7 @@ let gen_atom_bindings env pipeline f bindings =
       if is_input lhs then gen_input_atom_binding env pipeline lhs rhs f
       else if is_uniform lhs then
         gen_uniform_atom_binding env pipeline lhs rhs f
-      else f)
+      else failwith "each atom binding must be an input or uniform")
     f bindings
 
 let gen_write env pipeline lhs rhs f =
@@ -1479,7 +1616,7 @@ let gen_cpp_type loc td_name td_type =
 
 let descriptor_set_register_struct =
   {|struct DescriptorSetRegister {
-  int32_t uid = -1;
+  uint32_t uid = 0;
   bool in_use = false;
   bool cached = false;
   char data[kDescriptorSetRegisterSize]; 
@@ -1492,11 +1629,11 @@ let merge_hash_function =
 
 let uniform_resource_struct =
   {|struct UniformResource {
-  const int32_t uid = -1;
+  const uint32_t uid = 0;
   const VkDescriptorSet set = VK_NULL_HANDLE;
   const VkDescriptorSetLayout layout = VK_NULL_HANDLE;
   const std::vector<zrl::Block> blocks;
-  // TODO: images
+  std::vector<std::unique_ptr<zrl::Image>> images;
 };|}
 
 let render_target_reference_struct =
@@ -1511,7 +1648,13 @@ let render_target_reference_struct =
 
 let sampled_image_reference_struct =
   {|struct SampledImageReference {
-  // TODO implement
+  VkSamplerCreateInfo sampler_create_info;
+  VkFormat format = VK_FORMAT_UNDEFINED;
+  VkDeviceSize size = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t channels = 0;
+  unsigned char* image_data = nullptr;
 };|}
 
 let render_pass_hash =
@@ -1858,6 +2001,42 @@ template <> struct hash<VkGraphicsPipelineCreateInfo> {
 };
 }|}
 
+let vk_sampler_create_info_hash =
+  {|namespace std {
+template <> struct hash<VkSamplerCreateInfo> {
+  size_t operator()(const VkSamplerCreateInfo &info) const noexcept {
+    size_t h = 1;
+    MergeHash(h, info.flags);
+    MergeHash(h, info.magFilter);
+    MergeHash(h, info.minFilter);
+    MergeHash(h, info.mipmapMode);
+    MergeHash(h, info.addressModeU);
+    MergeHash(h, info.addressModeV);
+    MergeHash(h, info.addressModeW);
+    MergeHash(h, info.mipLodBias);
+    MergeHash(h, info.anisotropyEnable);
+    MergeHash(h, info.maxAnisotropy);
+    MergeHash(h, info.compareEnable);
+    MergeHash(h, info.compareOp);
+    MergeHash(h, info.minLod);
+    MergeHash(h, info.maxLod);
+    MergeHash(h, info.borderColor);
+    MergeHash(h, info.unnormalizedCoordinates);
+    return h;
+  }
+};
+}|}
+
+let vk_sampler_create_info_equal_to =
+  {|namespace std {
+template <> struct equal_to<VkSamplerCreateInfo> {
+  bool operator()(const VkSamplerCreateInfo &x, const VkSamplerCreateInfo &y) 
+      const noexcept {
+    return std::memcmp(&x, &y, sizeof(VkSamplerCreateInfo)) == 0;
+  }
+};
+}|}
+
 let pipeline_layout_transition_hash =
   {|namespace std {
 template <> struct hash<std::pair<VkPipelineLayout, VkPipelineLayout>> {
@@ -1897,6 +2076,8 @@ let gen_types_header pipelines root_elems =
       |> add_section vk_descriptor_set_layout_create_info_hash
       |> add_section vk_pipeline_layout_create_info_hash
       |> add_section vk_graphics_pipeline_create_info_hash
+      |> add_section vk_sampler_create_info_hash
+      |> add_section vk_sampler_create_info_equal_to
       |> add_section pipeline_layout_transition_hash)
   in
   let bind_traits =
@@ -1947,19 +2128,6 @@ let check_stage_chaining loc from_stage to_stage =
       else
         error loc (`Unsupported "stage outputs must match next stage inputs")
   | _ -> failwith "stages must have Function types"
-
-let rec has_opaque_members env =
-  let open Type in
-  function
-  | TypeRef "sampler2D" -> true
-  | Array (t, _) -> has_opaque_members env t
-  | Record fields ->
-      List.exists (fun (_, t) -> has_opaque_members env t) fields
-  | TypeRef name -> (
-      match Env.find_type ~local:false name env with
-      | Some L.{ value = t; _ } -> has_opaque_members env t
-      | _ -> false )
-  | _ -> false
 
 let gen_uniform_bindings env set id t =
   let open Type in
@@ -2111,6 +2279,16 @@ let gen_glsl_builtin_call_id = function
   | "fmat4" -> "mat4"
   | other -> other
 
+let is_record_type t env =
+  let open Type in
+  match t with
+  | TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = Type.Record _; _ } -> true
+      | _ -> false )
+  | Record _ -> true
+  | _ -> false
+
 let rec gen_glsl_expression env L.{ value; _ } =
   let open Ast in
   match value with
@@ -2129,8 +2307,10 @@ let rec gen_glsl_expression env L.{ value; _ } =
               let _, param_type =
                 List.find (fun (name, _) -> name = id) fields
               in
-              if has_opaque_members env param_type then
-                Printf.sprintf "%s_%s_" id member
+              if
+                is_record_type param_type env
+                && has_opaque_members env param_type
+              then Printf.sprintf "%s_%s_" id member
               else Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member
           | _ -> Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member )
       | _ -> Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member )
