@@ -46,6 +46,7 @@ module Shader = struct
   type t = {
     name : string;
     stage : stage;
+    constants : string list;
     structs : string list;
     uniforms : (int * int * (string * string)) list;
     inputs : (int * (string * string)) list;
@@ -57,6 +58,7 @@ module Shader = struct
     {
       name;
       stage;
+      constants = [];
       structs = [];
       uniforms = [];
       inputs = [];
@@ -67,6 +69,8 @@ module Shader = struct
   let name t = t.name
 
   let stage t = t.stage
+
+  let add_constant c t = { t with constants = c :: t.constants }
 
   let add_struct s t = { t with structs = s :: t.structs }
 
@@ -80,6 +84,7 @@ module Shader = struct
   let add_function f t = { t with functions = f :: t.functions }
 
   let string_of_source t =
+    let constants = String.concat "\n" (List.rev t.constants) in
     let structs =
       String.concat "\n" (List.map (fun s -> s ^ ";") (List.rev t.structs))
     in
@@ -113,6 +118,9 @@ module Shader = struct
       {|#version 450
 #extension GL_ARB_separate_shader_objects : enable
 // ======================================================================
+// Constant
+%s
+// ======================================================================
 // Structs
 %s
 // ======================================================================
@@ -128,7 +136,7 @@ module Shader = struct
 // Functions
 %s
 |}
-      structs uniforms inputs outputs functions
+      constants structs uniforms inputs outputs functions
 end
 
 module Library = struct

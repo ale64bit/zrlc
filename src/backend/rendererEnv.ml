@@ -336,6 +336,7 @@ let ctor_body =
       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
       zrl::_1KB, false);
   vb_discarded_blocks_.resize(core_.GetSwapchain().GetImageCount());
+  dummy_block_ = vb_buffer_pool_->Alloc(16);
   //======================================================================
   // Uniform Buffer State
   DLOG << name_ << ": creating uniform buffer pool\n";
@@ -355,6 +356,13 @@ let ctor_body =
   //======================================================================
   // Sampled Images State
   discarded_images_.resize(core_.GetSwapchain().GetImageCount());
+  {
+    VkSamplerCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    create_info.pNext = nullptr;
+    create_info.flags = 0;
+    CHECK_VK(vkCreateSampler(device.GetHandle(), &create_info, nullptr, &dummy_sampler_));
+  }
   //======================================================================
   // Render Target State
   DLOG << name_ << ": initializing render targets\n";
@@ -380,6 +388,7 @@ let dtor_body =
     vkDestroyImageView(device, rt.attachment, nullptr);
   }
   DLOG << name_ << ": total samplers: " << sampler_cache_.size() << '\n';
+  vkDestroySampler(device, dummy_sampler_, nullptr);
   for (auto p : sampler_cache_) {
     vkDestroySampler(device, p.second, nullptr);
   }
@@ -689,6 +698,7 @@ let empty rname pkg =
              ("std::vector<VkBufferCopy>", "vb_pending_copies_")
         |> add_private_member
              ("std::vector<std::vector<zrl::Block>>", "vb_discarded_blocks_")
+        |> add_private_member ("zrl::Block", "dummy_block_")
         (* Uniform Buffer State *)
         |> add_private_member
              ("std::unique_ptr<zrl::BufferPool>", "ubo_buffer_pool_")
@@ -698,6 +708,7 @@ let empty rname pkg =
         |> add_private_member
              ("std::vector<std::vector<zrl::Block>>", "ubo_discarded_blocks_")
         (* Sampled Images State *)
+        |> add_private_member ("VkSampler", "dummy_sampler_")
         |> add_private_member
              ( "std::unordered_map<VkSamplerCreateInfo, VkSampler>",
                "sampler_cache_" )
@@ -789,6 +800,7 @@ let empty rname pkg =
         |> add_member_initializer ("acquire_semaphore_", "VK_NULL_HANDLE")
         |> add_member_initializer ("render_semaphore_", "VK_NULL_HANDLE")
         |> add_member_initializer ("descriptor_pool_", "VK_NULL_HANDLE")
+        |> add_member_initializer ("dummy_sampler_", "VK_NULL_HANDLE")
         |> add_member_initializer ("current_render_pass_", "VK_NULL_HANDLE")
         |> add_member_initializer ("current_pipeline_", "VK_NULL_HANDLE")
         |> add_member_initializer ("current_pipeline_layout_", "VK_NULL_HANDLE")

@@ -264,18 +264,55 @@ let check_binop expr ltyp op rtyp =
       Ok (TypeRef "float")
   | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "double" ->
       Ok (TypeRef "double")
-  | TypeRef "ivec2", (Plus | Minus), TypeRef "ivec2" -> Ok (TypeRef "ivec2")
-  | TypeRef "ivec3", (Plus | Minus), TypeRef "ivec3" -> Ok (TypeRef "ivec3")
-  | TypeRef "ivec4", (Plus | Minus), TypeRef "ivec4" -> Ok (TypeRef "ivec4")
-  | TypeRef "uvec2", (Plus | Minus), TypeRef "uvec2" -> Ok (TypeRef "uvec2")
-  | TypeRef "uvec3", (Plus | Minus), TypeRef "uvec3" -> Ok (TypeRef "uvec3")
-  | TypeRef "uvec4", (Plus | Minus), TypeRef "uvec4" -> Ok (TypeRef "uvec4")
-  | TypeRef "fvec2", (Plus | Minus), TypeRef "fvec2" -> Ok (TypeRef "fvec2")
-  | TypeRef "fvec3", (Plus | Minus), TypeRef "fvec3" -> Ok (TypeRef "fvec3")
-  | TypeRef "fvec4", (Plus | Minus), TypeRef "fvec4" -> Ok (TypeRef "fvec4")
-  | TypeRef "dvec2", (Plus | Minus), TypeRef "dvec2" -> Ok (TypeRef "dvec2")
-  | TypeRef "dvec3", (Plus | Minus), TypeRef "dvec3" -> Ok (TypeRef "dvec3")
-  | TypeRef "dvec4", (Plus | Minus), TypeRef "dvec4" -> Ok (TypeRef "dvec4")
+  | TypeRef "ivec2", (Plus | Minus | Mult | Div), TypeRef "ivec2" ->
+      Ok (TypeRef "ivec2")
+  | TypeRef "ivec3", (Plus | Minus | Mult | Div), TypeRef "ivec3" ->
+      Ok (TypeRef "ivec3")
+  | TypeRef "ivec4", (Plus | Minus | Mult | Div), TypeRef "ivec4" ->
+      Ok (TypeRef "ivec4")
+  | TypeRef "uvec2", (Plus | Minus | Mult | Div), TypeRef "uvec2" ->
+      Ok (TypeRef "uvec2")
+  | TypeRef "uvec3", (Plus | Minus | Mult | Div), TypeRef "uvec3" ->
+      Ok (TypeRef "uvec3")
+  | TypeRef "uvec4", (Plus | Minus | Mult | Div), TypeRef "uvec4" ->
+      Ok (TypeRef "uvec4")
+  | TypeRef "fvec2", (Plus | Minus | Mult | Div), TypeRef "fvec2" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fvec3", (Plus | Minus | Mult | Div), TypeRef "fvec3" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fvec4", (Plus | Minus | Mult | Div), TypeRef "fvec4" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "dvec2", (Plus | Minus | Mult | Div), TypeRef "dvec2" ->
+      Ok (TypeRef "dvec2")
+  | TypeRef "dvec3", (Plus | Minus | Mult | Div), TypeRef "dvec3" ->
+      Ok (TypeRef "dvec3")
+  | TypeRef "dvec4", (Plus | Minus | Mult | Div), TypeRef "dvec4" ->
+      Ok (TypeRef "dvec4")
+  (* Multiplication/Division by scalar *)
+  | TypeRef "fvec2", (Plus | Minus | Mult | Div), TypeRef "float" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "fvec3", (Plus | Minus | Mult | Div), TypeRef "float" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "fvec4", (Plus | Minus | Mult | Div), TypeRef "float" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "dvec2", (Plus | Minus | Mult | Div), TypeRef "double" ->
+      Ok (TypeRef "dvec2")
+  | TypeRef "dvec3", (Plus | Minus | Mult | Div), TypeRef "double" ->
+      Ok (TypeRef "dvec3")
+  | TypeRef "dvec4", (Plus | Minus | Mult | Div), TypeRef "double" ->
+      Ok (TypeRef "dvec4")
+  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec2" ->
+      Ok (TypeRef "fvec2")
+  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec3" ->
+      Ok (TypeRef "fvec3")
+  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec4" ->
+      Ok (TypeRef "fvec4")
+  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec2" ->
+      Ok (TypeRef "dvec2")
+  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec3" ->
+      Ok (TypeRef "dvec3")
+  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec4" ->
+      Ok (TypeRef "dvec4")
   (* Matrix Multiplication *)
   | TypeRef "fmat2x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
   | TypeRef "fmat2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
@@ -356,29 +393,53 @@ let check_assignop ltyp op rtyp err =
       (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
       TypeRef "double" ) ->
       Ok ()
-  | TypeRef "ivec2", (Assign | AssignPlus | AssignMinus), TypeRef "ivec2" ->
+  | ( TypeRef "ivec2",
+      (Assign | AssignPlus | AssignMinus),
+      (TypeRef "ivec2" | TypeRef "int") ) ->
       Ok ()
-  | TypeRef "ivec3", (Assign | AssignPlus | AssignMinus), TypeRef "ivec3" ->
+  | ( TypeRef "ivec3",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "ivec3" | TypeRef "int") ) ->
       Ok ()
-  | TypeRef "ivec4", (Assign | AssignPlus | AssignMinus), TypeRef "ivec4" ->
+  | ( TypeRef "ivec4",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "ivec4" | TypeRef "int") ) ->
       Ok ()
-  | TypeRef "uvec2", (Assign | AssignPlus | AssignMinus), TypeRef "uvec2" ->
+  | ( TypeRef "uvec2",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "uvec2" | TypeRef "uint") ) ->
       Ok ()
-  | TypeRef "uvec3", (Assign | AssignPlus | AssignMinus), TypeRef "uvec3" ->
+  | ( TypeRef "uvec3",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "uvec3" | TypeRef "uint") ) ->
       Ok ()
-  | TypeRef "uvec4", (Assign | AssignPlus | AssignMinus), TypeRef "uvec4" ->
+  | ( TypeRef "uvec4",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "uvec4" | TypeRef "uint") ) ->
       Ok ()
-  | TypeRef "fvec2", (Assign | AssignPlus | AssignMinus), TypeRef "fvec2" ->
+  | ( TypeRef "fvec2",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "fvec2" | TypeRef "float") ) ->
       Ok ()
-  | TypeRef "fvec3", (Assign | AssignPlus | AssignMinus), TypeRef "fvec3" ->
+  | ( TypeRef "fvec3",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "fvec3" | TypeRef "float") ) ->
       Ok ()
-  | TypeRef "fvec4", (Assign | AssignPlus | AssignMinus), TypeRef "fvec4" ->
+  | ( TypeRef "fvec4",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "fvec4" | TypeRef "float") ) ->
       Ok ()
-  | TypeRef "dvec2", (Assign | AssignPlus | AssignMinus), TypeRef "dvec2" ->
+  | ( TypeRef "dvec2",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "dvec2" | TypeRef "double") ) ->
       Ok ()
-  | TypeRef "dvec3", (Assign | AssignPlus | AssignMinus), TypeRef "dvec3" ->
+  | ( TypeRef "dvec3",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "dvec3" | TypeRef "double") ) ->
       Ok ()
-  | TypeRef "dvec4", (Assign | AssignPlus | AssignMinus), TypeRef "dvec4" ->
+  | ( TypeRef "dvec4",
+      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
+      (TypeRef "dvec4" | TypeRef "double") ) ->
       Ok ()
   | ( TypeRef "fmat2",
       (Assign | AssignPlus | AssignMinus | AssignMult),
@@ -485,8 +546,18 @@ let rec check_access env loc expr id =
       match Env.find_type ~local:false name env with
       | Some L.{ value = Type.Record fields; _ } ->
           check_field_exists id fields err
-      | _ -> failwith "name cannot exist in environment without a known type" )
+      | _ ->
+          failwith
+            ("name cannot exist in environment without a known type: " ^ name)
+      )
   | _ -> err
+
+and unwrap_typeref env = function
+  | Type.TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = t; _ } -> t
+      | _ -> Type.TypeRef name )
+  | t -> t
 
 and check_index env loc expr index_exprs =
   let open Type in
@@ -498,7 +569,7 @@ and check_index env loc expr index_exprs =
       Ok (index_type :: index_types))
     (Ok []) index_exprs
   >>= fun index_types ->
-  match expr_type with
+  match unwrap_typeref env expr_type with
   | Array (t, dims) ->
       let have = List.length index_types in
       let want = List.length dims in

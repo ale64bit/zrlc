@@ -338,11 +338,7 @@ let global =
       ("dmat4x4", Array (TypeRef "double", [ OfInt 4; OfInt 4 ]));
       (* Built-in opaque types *)
       ("sampler2D", generate_sampler_type 2);
-      ("texture2D", generate_texture_type 2);
-      ( "depthBuffer",
-        Record
-          [ ("load", Function ([ ("p", TypeRef "ivec2") ], [ TypeRef "float" ]))
-          ] )
+      ("texture2D", generate_texture_type 2)
     ]
   in
   let builtin_functions =
@@ -365,12 +361,66 @@ let global =
       ("dvec2", generate_constructor_type "double" "xy" "dvec2");
       ("dvec3", generate_constructor_type "double" "xyz" "dvec3");
       ("dvec4", generate_constructor_type "double" "xyzw" "dvec4");
+      ("fmat2", generate_constructor_type "fvec2" "xy" "fmat2");
+      ("fmat3", generate_constructor_type "fvec3" "xyz" "fmat3");
+      ("fmat4", generate_constructor_type "fvec4" "xyzw" "fmat4");
       (* TODO: Built-in matrix types *)
       (* Texture lookup functions *)
       ( "texture",
         Function
           ( [ ("sampler", TypeRef "sampler2D"); ("coord", TypeRef "fvec2") ],
-            [ TypeRef "fvec4" ] ) )
+            [ TypeRef "fvec4" ] ) );
+      (* Math functions *)
+      ("normalize", Function ([ ("v", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
+      ( "pow",
+        Function
+          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
+            [ TypeRef "float" ] ) );
+      ( "pow2",
+        Function
+          ( [ ("x", TypeRef "fvec2"); ("y", TypeRef "fvec2") ],
+            [ TypeRef "fvec2" ] ) );
+      ( "pow3",
+        Function
+          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
+            [ TypeRef "fvec3" ] ) );
+      ( "pow4",
+        Function
+          ( [ ("x", TypeRef "fvec4"); ("y", TypeRef "fvec4") ],
+            [ TypeRef "fvec4" ] ) );
+      ( "mix",
+        Function
+          ( [ ("x", TypeRef "fvec3");
+              ("y", TypeRef "fvec3");
+              ("k", TypeRef "float")
+            ],
+            [ TypeRef "fvec3" ] ) );
+      ( "clamp",
+        Function
+          ( [ ("x", TypeRef "float");
+              ("minVal", TypeRef "float");
+              ("maxVal", TypeRef "float")
+            ],
+            [ TypeRef "float" ] ) );
+      ("sqrt", Function ([ ("x", TypeRef "float") ], [ TypeRef "float" ]));
+      ("dFdx", Function ([ ("p", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
+      ("dFdy", Function ([ ("p", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
+      ( "max",
+        Function
+          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
+            [ TypeRef "float" ] ) );
+      ( "min",
+        Function
+          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
+            [ TypeRef "float" ] ) );
+      ( "dot",
+        Function
+          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
+            [ TypeRef "float" ] ) );
+      ( "cross",
+        Function
+          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
+            [ TypeRef "fvec3" ] ) )
     ]
   in
   let env =

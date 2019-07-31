@@ -33,6 +33,8 @@ module Shader : sig
 
   val stage : t -> stage
 
+  val add_constant : string -> t -> t
+
   val add_struct : string -> t -> t
 
   val add_uniform : int -> int -> string * string -> t -> t

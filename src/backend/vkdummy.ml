@@ -3,6 +3,7 @@ open Extensions
 open Monad.Result
 module L = Located
 module MapString = Map.Make (String)
+module SetString = Set.Make (String)
 
 module Error = struct
   type t = [ `Unsupported of string | `MissingRendererEntryPoint of string ]
@@ -42,17 +43,20 @@ let array_type_size dims =
       | _ -> failwith "array dimensions must be known at compile time")
     1 dims
 
-let rec has_opaque_members env =
+let rec has_opaque_members env seen =
   let open Type in
   function
   | TypeRef "sampler2D" -> true
-  | Array (t, _) -> has_opaque_members env t
+  | Array (t, _) -> has_opaque_members env seen t
   | Record fields ->
-      List.exists (fun (_, t) -> has_opaque_members env t) fields
+      List.exists (fun (_, t) -> has_opaque_members env seen t) fields
   | TypeRef name -> (
-      match Env.find_type ~local:false name env with
-      | Some L.{ value = t; _ } -> has_opaque_members env t
-      | _ -> false )
+      if SetString.mem name seen then false
+      else
+        match Env.find_type ~local:false name env with
+        | Some L.{ value = t; _ } ->
+            has_opaque_members env (SetString.add name seen) t
+        | _ -> false )
   | _ -> false
 
 let rec glsl_type_locations env = function
@@ -228,7 +232,7 @@ let rec gen_cpp_expression env L.{ value; _ } =
         (gen_cpp_expression env expr)
   | NamedArg (_, expr) -> gen_cpp_expression env expr
   | BinExpr (lhs, op, rhs) ->
-      Printf.sprintf "%s %s %s"
+      Printf.sprintf "(%s %s %s)"
         (gen_cpp_expression env lhs)
         (Ast.string_of_binop op)
         (gen_cpp_expression env rhs)
@@ -471,7 +475,7 @@ let gen_create_and_bind_pipeline env p f lhs =
     rasterization_state.rasterizerDiscardEnable = VK_FALSE;
     rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
     rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterization_state.depthBiasEnable = VK_FALSE;
     rasterization_state.depthBiasConstantFactor = 0.0f;
     rasterization_state.depthBiasClamp = 0.0f;
@@ -600,31 +604,45 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
   Printf.sprintf
     {|%s
     {
+      const VkExtent3D extent = {%s.width, %s.height, 1};
+      const bool is_empty  = extent.width * extent.height * extent.depth == 0;
+
       // Create sampler if needed.
       VkSampler sampler = VK_NULL_HANDLE;
-      auto it = sampler_cache_.find(%s.sampler_create_info);
-      if (it == sampler_cache_.end()) {
-        DLOG << name_ << ": creating new sampler\n";
-        CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
-                                 &%s.sampler_create_info, nullptr, &sampler));
-        sampler_cache_[%s.sampler_create_info] = sampler;
+      if (is_empty) {
+        sampler = dummy_sampler_;
       } else {
-        sampler = it->second;
+        auto it = sampler_cache_.find(%s.sampler_create_info);
+        if (it == sampler_cache_.end()) {
+          DLOG << name_ << ": creating new sampler\n";
+          CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
+                                   &%s.sampler_create_info, nullptr, &sampler));
+          sampler_cache_[%s.sampler_create_info] = sampler;
+        } else {
+          sampler = it->second;
+        }
       }
 
       // Create image resource.
       const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
-      const VkExtent3D extent = {%s.width, %s.height, 1};
-      std::unique_ptr<zrl::Image> img = std::make_unique<zrl::Image>(core_,
-          extent, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
-          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+      std::unique_ptr<zrl::Image> img;
+      VkDeviceSize src_offset = 0;
+      if (is_empty) {
+        LOG(WARNING) << name_ << ": missing texture, will use dummy!\n";
+        img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 
+            VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, 
+            usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+      } else {
+        img = std::make_unique<zrl::Image>(core_,
+            extent, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        src_offset = staging_buffer_->PushData(%s.size, %s.image_data);
+        delete %s.image_data;
+      }
 
       // Schedule copy and barriers.
-      const VkDeviceSize src_offset = staging_buffer_->PushData(%s.size,
-                                                                %s.image_data);
-      delete %s.image_data;
-
       VkImageMemoryBarrier pre_copy_barrier = {};
       pre_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
       pre_copy_barrier.pNext = nullptr;
@@ -642,17 +660,19 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
       pre_copy_barrier.subresourceRange.layerCount = 1;
       pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
 
-      VkBufferImageCopy buffer_image_copy = {};
-      buffer_image_copy.bufferOffset = src_offset;
-      buffer_image_copy.bufferRowLength = 0;
-      buffer_image_copy.bufferImageHeight = 0;
-      buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      buffer_image_copy.imageSubresource.mipLevel = 0; // TODO get this from img
-      buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
-      buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
-      buffer_image_copy.imageOffset = {0, 0, 0};
-      buffer_image_copy.imageExtent = img->GetExtent();
-      pending_image_copies_.push_back(std::make_pair(img->GetHandle(), buffer_image_copy));
+      if (!is_empty) {
+        VkBufferImageCopy buffer_image_copy = {};
+        buffer_image_copy.bufferOffset = src_offset;
+        buffer_image_copy.bufferRowLength = 0;
+        buffer_image_copy.bufferImageHeight = 0;
+        buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        buffer_image_copy.imageSubresource.mipLevel = 0; // TODO get this from img
+        buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
+        buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
+        buffer_image_copy.imageOffset = {0, 0, 0};
+        buffer_image_copy.imageExtent = img->GetExtent();
+        pending_image_copies_.push_back(std::make_pair(img->GetHandle(), buffer_image_copy));
+      }
 
       VkImageMemoryBarrier post_copy_barrier = {};
       post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -773,7 +793,8 @@ let gen_uniform_atom_binding env pipeline id expr f =
   in
   let can_cache =
     List.for_all
-      (fun (_, _, _, _, t, _) -> not (has_opaque_members env t))
+      (fun (_, _, _, _, t, _) ->
+        not (has_opaque_members env SetString.empty t))
       bindings
   in
   let trait_id = Printf.sprintf "%s_%s" pipeline.gp_name id in
@@ -981,7 +1002,9 @@ let gen_input_atom_binding env pipeline id expr f =
 
       // Find an appropriate block for the vertex buffer.
       zrl::Block block = zrl::kEmptyBlock;
-      if (uid == 0) { // This vertex buffer is transient.
+      if (size == 0) {
+        block = dummy_block_;
+      } else if (uid == 0) { // This vertex buffer is transient.
         // Make room for new buffer.
         while (vb_buffer_pool_->LargestBlock() < size) {
           const UID oldest_uid = vb_lru_.Pop();
@@ -2175,12 +2198,19 @@ let builtin_struct =
   RenderTargetReference *screen = nullptr;
 };|}
 
-let gen_types_header pipelines root_elems =
+let gen_types_header pipelines root_elems cpp_constants =
   let cc_header =
     Cpp.Header.(
       empty "Types" |> add_include "<array>"
       |> add_include "<unordered_map>"
-      |> add_include {|"glm/glm.hpp"|}
+      |> add_include {|"glm/glm.hpp"|})
+  in
+  let cc_header =
+    List.fold_left (flip Cpp.Header.add_section) cc_header cpp_constants
+  in
+  let cc_header =
+    Cpp.Header.(
+      cc_header
       |> add_section "constexpr int kDescriptorSetRegisterCount = 8;"
       |> add_section "constexpr size_t kDescriptorSetRegisterSize = zrl::_8KB;"
       |> add_section merge_hash_function
@@ -2265,7 +2295,7 @@ let gen_uniform_bindings env set id t =
       match Env.find_type ~local:false name env with
       | Some L.{ value = Record fields as tt; _ } ->
           (* TODO: check nested type doesn't contain opaque members *)
-          if has_opaque_members env tt then
+          if has_opaque_members env SetString.empty tt then
             List.map
               (fun (i, (name, t)) ->
                 let new_id = id ^ "_" ^ name ^ "_" in
@@ -2316,17 +2346,17 @@ let refactor_depth_test f =
           _
         } )
     :: other_stmts ->
-      let compare_op =
+      let write_enabled, compare_op =
         match op with
-        | Equal -> "VK_COMPARE_OP_NOT_EQUAL"
-        | NotEqual -> "VK_COMPARE_OP_EQUAL"
-        | LessThan -> "VK_COMPARE_OP_GREATER_OR_EQUAL"
-        | GreaterThan -> "VK_COMPARE_OP_LESS_OR_EQUAL"
-        | LessOrEqual -> "VK_COMPARE_OP_GREATER"
-        | GreaterOrEqual -> "VK_COMPARE_OP_LESS"
+        | Equal -> (false, "VK_COMPARE_OP_NOT_EQUAL")
+        | NotEqual -> (false, "VK_COMPARE_OP_EQUAL")
+        | LessThan -> (true, "VK_COMPARE_OP_GREATER_OR_EQUAL")
+        | GreaterThan -> (true, "VK_COMPARE_OP_LESS_OR_EQUAL")
+        | LessOrEqual -> (true, "VK_COMPARE_OP_GREATER")
+        | GreaterOrEqual -> (true, "VK_COMPARE_OP_LESS")
         | _ -> failwith "cannot happen"
       in
-      (true, compare_op, { f with fd_body = other_stmts })
+      (true, write_enabled, compare_op, { f with fd_body = other_stmts })
   | ( _,
       L.
         { value =
@@ -2360,18 +2390,18 @@ let refactor_depth_test f =
           _
         } )
     :: other_stmts ->
-      let compare_op =
+      let write_enabled, compare_op =
         match op with
-        | Equal -> "VK_COMPARE_OP_EQUAL"
-        | NotEqual -> "VK_COMPARE_OP_NOT_EQUAL"
-        | LessThan -> "VK_COMPARE_OP_LESS"
-        | GreaterThan -> "VK_COMPARE_OP_GREATER"
-        | LessOrEqual -> "VK_COMPARE_OP_LESS_OR_EQUAL"
-        | GreaterOrEqual -> "VK_COMPARE_OP_GREATER_OR_EQUAL"
+        | Equal -> (false, "VK_COMPARE_OP_EQUAL")
+        | NotEqual -> (false, "VK_COMPARE_OP_NOT_EQUAL")
+        | LessThan -> (true, "VK_COMPARE_OP_LESS")
+        | GreaterThan -> (true, "VK_COMPARE_OP_GREATER")
+        | LessOrEqual -> (true, "VK_COMPARE_OP_LESS_OR_EQUAL")
+        | GreaterOrEqual -> (true, "VK_COMPARE_OP_GREATER_OR_EQUAL")
         | _ -> failwith "cannot happen"
       in
-      (true, compare_op, { f with fd_body = other_stmts })
-  | _ -> (false, "VK_COMPARE_OP_NEVER", f)
+      (true, write_enabled, compare_op, { f with fd_body = other_stmts })
+  | _ -> (false, false, "VK_COMPARE_OP_NEVER", f)
 
 let gen_graphics_pipeline loc pd =
   let TypedAst.{ pd_env; pd_name; pd_type; pd_functions } = pd in
@@ -2389,7 +2419,10 @@ let gen_graphics_pipeline loc pd =
   in
   let vertex = find_func "vertex" in
   let fragment = find_func "fragment" in
-  let gp_depth_test_enabled, gp_depth_compare_op, fragment =
+  let ( gp_depth_test_enabled,
+        gp_depth_write_enabled,
+        gp_depth_compare_op,
+        fragment ) =
     refactor_depth_test fragment
   in
   let TypedAst.{ fd_type = vertex_type; _ } = vertex in
@@ -2430,7 +2463,7 @@ let gen_graphics_pipeline loc pd =
           gp_helper_functions =
             exclude_funcs [ "vertex"; "geometry"; "fragment" ];
           gp_depth_test_enabled;
-          gp_depth_write_enabled = true;
+          gp_depth_write_enabled;
           gp_depth_compare_op;
         }
   | _ -> failwith "pipeline must have Function type"
@@ -2502,6 +2535,9 @@ let gen_glsl_builtin_call_id = function
   | "fmat2" -> "mat2"
   | "fmat3" -> "mat3"
   | "fmat4" -> "mat4"
+  | "pow2" -> "pow"
+  | "pow3" -> "pow"
+  | "pow4" -> "pow"
   | other -> other
 
 let is_record_type t env =
@@ -2534,7 +2570,7 @@ let rec gen_glsl_expression env L.{ value; _ } =
               in
               if
                 is_record_type param_type env
-                && has_opaque_members env param_type
+                && has_opaque_members env SetString.empty param_type
               then Printf.sprintf "%s_%s_" id member
               else Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member
           | _ -> Printf.sprintf "%s.%s" (gen_glsl_expression env expr) member )
@@ -2556,7 +2592,7 @@ let rec gen_glsl_expression env L.{ value; _ } =
         (gen_glsl_expression env expr)
   | NamedArg (_, expr) -> gen_glsl_expression env expr
   | BinExpr (lhs, op, rhs) ->
-      Printf.sprintf "%s %s %s"
+      Printf.sprintf "(%s %s %s)"
         (gen_glsl_expression env lhs)
         (Ast.string_of_binop op)
         (gen_glsl_expression env rhs)
@@ -2717,8 +2753,8 @@ let rec gen_glsl_stmt stmt f =
       Function.(f |> append_code_section return)
   | Return exprs ->
       let fname =
-        match Env.scope_summary env with
-        | Env.Function (s, _) -> s
+        match Env.match_function_scope env with
+        | Some (Env.Function (s, _)) -> s
         | _ -> failwith "return can only be used from function scopes"
       in
       let ret_type_name = Printf.sprintf "%sRetType" fname in
@@ -2910,7 +2946,7 @@ let wrap_uniform set binding t name =
       in
       (Printf.sprintf "%s { %s %s; }" block_name (zrl_to_glsl_type t) name, "")
 
-let gen_glsl_libraries env glsl_types pipelines =
+let gen_glsl_libraries env glsl_types glsl_constants pipelines =
   let open Glsl in
   List.fold_left
     (fun acc (name, pipeline) ->
@@ -2919,6 +2955,9 @@ let gen_glsl_libraries env glsl_types pipelines =
       let shaders =
         List.map
           (fun shader ->
+            let shader =
+              List.fold_left (flip Shader.add_constant) shader glsl_constants
+            in
             List.fold_left
               (fun shader (set, binding, _, name, t, _) ->
                 Shader.add_uniform set binding
@@ -2934,6 +2973,26 @@ let gen_glsl_libraries env glsl_types pipelines =
     (Ok [])
     (MapString.bindings pipelines)
 
+let gen_constants env root_elems =
+  List.fold_left
+    (fun acc tl ->
+      acc >>= fun (glsl_constants, cpp_constants) ->
+      let L.{ value; _ } = tl in
+      match value with
+      | TypedAst.ConstDecl { cd_name; cd_value = [ t ], expr } ->
+          let glsl_constant =
+            Printf.sprintf "const %s %s = %s;" (zrl_to_glsl_type t) cd_name
+              (gen_glsl_expression env expr)
+          in
+          let cpp_constant =
+            Printf.sprintf "constexpr %s %s = %s;" (zrl_to_cpp_type t) cd_name
+              (gen_cpp_expression env expr)
+          in
+          Ok (glsl_constant :: glsl_constants, cpp_constant :: cpp_constants)
+      | _ -> acc)
+    (Ok ([], []))
+    root_elems
+
 let gen cfg TypedAst.{ root_elems; root_env; _ } =
   let build =
     Build.(
@@ -2942,8 +3001,9 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
       |> load "//core:builddefs.bzl" "DEFINES"
       |> load "//core:glsl_library.bzl" "glsl_library")
   in
+  gen_constants root_env root_elems >>= fun (glsl_constants, cpp_constants) ->
   gen_pipelines root_elems >>= fun pipelines ->
-  gen_types_header pipelines root_elems
+  gen_types_header pipelines root_elems cpp_constants
   >>= fun (glsl_types, cc_types_header) ->
   let cc_types =
     Cpp.Library.(
@@ -2951,7 +3011,8 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
       |> set_copts "COPTS" |> set_defines "DEFINES"
       |> add_header cc_types_header)
   in
-  gen_glsl_libraries root_env glsl_types pipelines >>= fun glsl_libraries ->
+  gen_glsl_libraries root_env glsl_types glsl_constants pipelines
+  >>= fun glsl_libraries ->
   gen_renderer_libraries cfg pipelines glsl_libraries root_elems
   >>= fun renderer_libraries ->
   let build =
