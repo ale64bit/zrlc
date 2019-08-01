@@ -403,8 +403,7 @@ let global =
             ],
             [ TypeRef "float" ] ) );
       ("sqrt", Function ([ ("x", TypeRef "float") ], [ TypeRef "float" ]));
-      ("dFdx", Function ([ ("p", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
-      ("dFdy", Function ([ ("p", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
+      ("length", Function ([ ("x", TypeRef "fvec3") ], [ TypeRef "float" ]));
       ( "max",
         Function
           ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],

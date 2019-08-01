@@ -1387,7 +1387,7 @@ let gen_render_targets rd_type r =
                 if rt_type_name = "rt_rgba" then
                   (RendererEnv.Color, "VK_FORMAT_B8G8R8A8_UNORM")
                 else if rt_type_name = "rt_ds" then
-                  (RendererEnv.DepthStencil, "VK_FORMAT_D32_SFLOAT")
+                  (RendererEnv.DepthStencil, "VK_FORMAT_D16_UNORM")
                 else failwith "unsupported render target type"
               in
               let img_ctor_args =
@@ -1401,7 +1401,7 @@ let gen_render_targets rd_type r =
                      VK_IMAGE_ASPECT_COLOR_BIT"
                 | RendererEnv.DepthStencil ->
                     "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
-                     1, VK_FORMAT_D32_SFLOAT, VK_IMAGE_TILING_OPTIMAL, \
+                     1, VK_FORMAT_D16_UNORM, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_DEPTH_BIT"
@@ -1723,13 +1723,13 @@ let gen_glsl_type td_name td_type =
   match td_type with
   | Record fields ->
       let fields =
-        String.concat "\n"
+        String.concat "\n  "
           (List.map
              (fun (name, t) ->
                Printf.sprintf "%s %s;" (zrl_to_glsl_type t) name)
              fields)
       in
-      Printf.sprintf "struct %s { %s }" td_name fields
+      Printf.sprintf "struct %s {\n%s\n}" td_name fields
   | _ ->
       failwith
         ( "cannot generate glsl type for non-record type: "
@@ -1740,13 +1740,13 @@ let gen_cpp_type loc td_name td_type =
   match td_type with
   | Record fields ->
       let fields =
-        String.concat "\n"
+        String.concat "\n  "
           (List.map
              (fun (name, t) ->
-               Printf.sprintf "alignas(16) %s %s;" (zrl_to_cpp_type t) name)
+               Printf.sprintf "%s %s;" (zrl_to_cpp_type t) name)
              fields)
       in
-      Ok (Printf.sprintf "struct alignas(16) %s { %s };" td_name fields)
+      Ok (Printf.sprintf "struct alignas(16) %s {\n%s\n};" td_name fields)
   | _ ->
       error loc
         (`Unsupported
@@ -2392,8 +2392,8 @@ let refactor_depth_test f =
     :: other_stmts ->
       let write_enabled, compare_op =
         match op with
-        | Equal -> (false, "VK_COMPARE_OP_EQUAL")
-        | NotEqual -> (false, "VK_COMPARE_OP_NOT_EQUAL")
+        | Equal -> (false, "VK_COMPARE_OP_NOT_EQUAL")
+        | NotEqual -> (false, "VK_COMPARE_OP_EQUAL")
         | LessThan -> (true, "VK_COMPARE_OP_LESS")
         | GreaterThan -> (true, "VK_COMPARE_OP_GREATER")
         | LessOrEqual -> (true, "VK_COMPARE_OP_LESS_OR_EQUAL")

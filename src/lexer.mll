@@ -26,8 +26,8 @@ let id = ['a'-'z' 'A'-'Z' '_'] ['a'-'z' 'A'-'Z' '0'-'9' '_']*
 rule read =
   parse
   | white      { read lexbuf }
+  | "//" [^ '\r' '\n']* newline
   | newline    { next_line lexbuf; read lexbuf }
-  | "#"        { comment lexbuf }
   | "cast"     { CAST }
   | "const"    { CONST }
   | "def"      { DEF }

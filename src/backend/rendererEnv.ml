@@ -257,7 +257,7 @@ let create_depth_render_target =
     empty "CreateDepthRenderTarget"
     |> set_return_type "std::unique_ptr<zrl::Image>"
     |> append_code_section
-         {|  constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
+         {|  constexpr VkFormat format = VK_FORMAT_D16_UNORM;
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
   const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
