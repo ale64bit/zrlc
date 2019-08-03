@@ -53,6 +53,14 @@ let check_unique idfn errfn elems =
       if SS.mem id seen then Error (errfn elem) else Ok (SS.add id seen))
     (Ok SS.empty) elems
 
+let check_valid_identifier loc id =
+  if id = "builtin" then
+    error loc (`Unimplemented "'builtin' is not a valid identifier")
+  else if id <> "_" && (id.[0] = '_' || id.[String.length id - 1] = '_') then
+    error loc
+      (`Unimplemented "identifiers beginning or ending with _ are reserved")
+  else Ok ()
+
 (* Checks whether an array dimension is valid and returns the 
  * unfolded value in case it is a reference to a constant. *)
 let check_array_dim env loc dim =
@@ -81,6 +89,7 @@ let rec check_type env ctx_loc t =
       List.fold_results
         (fun acc (name, t) ->
           acc >>= fun new_fields ->
+          check_valid_identifier ctx_loc name >>= fun () ->
           check_type env ctx_loc t >>= fun nt ->
           Ok ((name, nt) :: new_fields))
         (Ok []) fields
@@ -134,6 +143,7 @@ let build_function_environment ~mutable_args env loc name typ =
 
 let check_const_declaration env loc cd =
   let Ast.{ cd_name; cd_value } = cd in
+  check_valid_identifier loc cd_name >>= fun () ->
   match Env.find_name ~local:true cd_name env with
   | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (cd_name, prev_loc))
@@ -177,6 +187,7 @@ let check_type_declaration env loc td =
   | None -> (
       match td_type with
       | Record fields ->
+          check_valid_identifier loc td_name >>= fun () ->
           check_type env loc td_type >>= fun clean_type ->
           let ctor = Type.Function (fields, [ Type.TypeRef td_name ]) in
           let env = Env.add_type td_name { loc; value = clean_type } env in
@@ -905,6 +916,7 @@ let rec check_binding env loc ids exprs env_add_fn typed_ctor =
         | Some L.{ loc = prev_loc; _ } ->
             error loc (`Redefinition (id, prev_loc))
         | None ->
+            check_valid_identifier loc id >>= fun () ->
             (* Ignore variables named _ *)
             if id = "_" then Ok env
             else Ok (env_add_fn id L.{ loc; value = t } env))
@@ -1073,6 +1085,7 @@ and check_iterable_type env expr =
   | _ as t -> error loc (`CannotRangeOver (expr, t))
 
 and check_foriter env loc it_var it_expr body =
+  check_valid_identifier loc it_var >>= fun () ->
   check_iterable_type env it_expr >>= fun (expr_typ, it_typ) ->
   let stmt_env =
     Env.(
@@ -1218,6 +1231,7 @@ let check_missing_return loc fd =
 
 let check_function_declaration env loc fd =
   let Ast.{ fd_name; fd_type; fd_body } = fd in
+  check_valid_identifier loc fd_name >>= fun () ->
   check_type env loc fd_type >>= fun clean_type ->
   let env = Env.enter_function_scope fd_name clean_type env in
   let env =
@@ -1258,6 +1272,7 @@ let check_pipeline_declaration_sig env loc pd =
   | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (pd_name, prev_loc))
   | None ->
+      check_valid_identifier loc pd_name >>= fun () ->
       check_type env loc pd_type >>= fun clean_type ->
       Ok (Env.add_pipeline pd_name { loc; value = clean_type } env)
 
@@ -1289,6 +1304,7 @@ let check_renderer_declaration_sig env loc rd =
   | Some L.{ loc = prev_loc; _ } ->
       error loc (`Redefinition (rd_name, prev_loc))
   | None ->
+      check_valid_identifier loc rd_name >>= fun () ->
       check_type env loc rd_type >>= fun clean_type ->
       Ok (Env.add_renderer rd_name { loc; value = clean_type } env)
 

@@ -1,23 +1,23 @@
 module simple
 
-pipeline Pipeline(mvp: fmat4, tex: sampler2D): fvec4 {
+pipeline Forward(): fvec4 {
 
-  def vertex(pos: fvec3, uv: fvec2): fvec2 {
-    builtin.position = mvp * fvec4(pos.x, pos.y, pos.z, 1.0)
-    return uv
+  def vertex(pos, col: fvec3): fvec3 {
+    builtin.position = fvec4(pos.x, pos.y, pos.z, 1.0)
+    return col
   }
 
-  def fragment(uv: fvec2): fvec4 {
-    return texture(tex, uv)
+  def fragment(col: fvec3): fvec4 {
+    return fvec4(col.x, col.y, col.z, 1.0)
   }
 }
 
 renderer Simple() {
 
   def main(geometry: atomlist) {
-    builtin.screen = fvec4(0.2, 0.2, 0.2, 1.0) 
+    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0) 
     for g in geometry {
-      builtin.screen += Pipeline(mvp = g, tex = g, pos = g, uv = g)
+      builtin.screen += Forward(pos = g)
     }
   }
 }

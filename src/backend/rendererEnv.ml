@@ -1,4 +1,5 @@
 open Cpp
+open Zrl.Extensions
 module MapString = Map.Make (String)
 
 type render_target_type = Color | DepthStencil
@@ -249,7 +250,7 @@ let create_color_render_target =
   const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
   return std::make_unique<zrl::Image>(
       core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
-      1, format, VK_IMAGE_TILING_OPTIMAL, usage,
+      1, 1, format, VK_IMAGE_TILING_OPTIMAL, usage,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
 let create_depth_render_target =
@@ -263,7 +264,7 @@ let create_depth_render_target =
   const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
   return std::make_unique<zrl::Image>(
       core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
-      1, format, VK_IMAGE_TILING_OPTIMAL, usage, 
+      1, 1, format, VK_IMAGE_TILING_OPTIMAL, usage, 
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
 let ctor_body =
@@ -550,11 +551,102 @@ let stop_recording_body =
                          0, nullptr, 0, nullptr,
                          static_cast<uint32_t>(pending_pre_copy_image_barriers_.size()),
                          pending_pre_copy_image_barriers_.data());
-    for (const auto p : pending_image_copies_) {
+    for (const auto t : pending_image_copies_) {
       vkCmdCopyBufferToImage(t_cmd_buffer_[image_index_],
                              staging_buffer_->GetHandle(),
-                             p.first, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                             1, &p.second);
+                             std::get<0>(t), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             1, &std::get<1>(t));
+      if (std::get<2>(t)) { // needs mipmaps
+        const VkExtent3D extent = std::get<1>(t).imageExtent;
+        const uint32_t mip_levels = std::floor(
+                                    std::log2(
+                                    std::max(extent.width, extent.height))) + 1;
+
+        // Setup the common fields of a barrier struct.
+        VkImageMemoryBarrier barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = std::get<0>(t);
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.subresourceRange.levelCount = 1;
+
+        // Transition level 0 to TRANSFER_SRC_OPTIMAL.
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.subresourceRange.baseMipLevel = 0;
+        vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_HOST_BIT,
+                             VK_DEPENDENCY_BY_REGION_BIT,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+
+        // Generate levels.
+        for (uint32_t i = 1; i < mip_levels; ++i) {
+          // Prepare current level by transition to transfer dst.
+          barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+          barrier.dstAccessMask = 0;
+          barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+          barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+          barrier.subresourceRange.baseMipLevel = i;
+          vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_HOST_BIT,
+                               VK_DEPENDENCY_BY_REGION_BIT,
+                               0, nullptr, 0, nullptr, 1, &barrier);
+          
+          // Blit previous level.
+          VkImageBlit blit = {};
+          blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          blit.srcSubresource.baseArrayLayer = 0;
+          blit.srcSubresource.layerCount = 1;
+          blit.srcSubresource.mipLevel = i-1;
+          blit.srcOffsets[1].x = static_cast<int32_t>(extent.width >> (i-1));
+          blit.srcOffsets[1].y = static_cast<int32_t>(extent.height >> (i-1));
+          blit.srcOffsets[1].z = 1;
+          blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          blit.dstSubresource.baseArrayLayer = 0;
+          blit.dstSubresource.layerCount = 1;
+          blit.dstSubresource.mipLevel = i;
+          blit.dstOffsets[1].x = static_cast<int32_t>(extent.width >> i);
+          blit.dstOffsets[1].y = static_cast<int32_t>(extent.height >> i);
+          blit.dstOffsets[1].z = 1;
+          vkCmdBlitImage(t_cmd_buffer_[image_index_], 
+                         barrier.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1, &blit, VK_FILTER_LINEAR);
+
+          // Setup current level as source for the next level.
+          barrier.srcAccessMask = 0;
+          barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+          barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+          barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+          barrier.subresourceRange.baseMipLevel = i;
+          vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                               VK_PIPELINE_STAGE_HOST_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_DEPENDENCY_BY_REGION_BIT,
+                               0, nullptr, 0, nullptr, 1, &barrier);
+        }
+
+        // Transition all levels to SHADER_READ_ONLY_OPTIMAL.
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.subresourceRange.levelCount = mip_levels;
+        barrier.subresourceRange.baseMipLevel = 0;
+        vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_DEPENDENCY_BY_REGION_BIT,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+      }
     }
     vkCmdPipelineBarrier(t_cmd_buffer_[image_index_],
                          VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -719,7 +811,7 @@ let empty rname pkg =
              ( "std::vector<VkImageMemoryBarrier>",
                "pending_pre_copy_image_barriers_" )
         |> add_private_member
-             ( "std::vector<std::pair<VkImage, VkBufferImageCopy>>",
+             ( "std::vector<std::tuple<VkImage, VkBufferImageCopy, bool>>",
                "pending_image_copies_" )
         |> add_private_member
              ( "std::vector<VkImageMemoryBarrier>",
@@ -807,8 +899,6 @@ let empty rname pkg =
         |> append_code_section ctor_body);
     dtor = Function.(empty ("~" ^ rname));
   }
-
-let flip f x y = f y x
 
 let export t =
   let open Cpp in

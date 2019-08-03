@@ -33,8 +33,6 @@ type graphics_pipeline = {
   gp_depth_compare_op : string;
 }
 
-let flip f x y = f y x
-
 let error loc e = Error L.{ loc; value = e }
 
 let array_type_size dims =
@@ -624,19 +622,31 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
       }
 
       // Create image resource.
-      const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+      const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  
+                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
 
       std::unique_ptr<zrl::Image> img;
       VkDeviceSize src_offset = 0;
       if (is_empty) {
         LOG(WARNING) << name_ << ": missing texture, will use dummy!\n";
-        img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 
+        img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 1,
             VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, 
             usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
       } else {
+        uint32_t mip_levels = 1;
+        if (%s.build_mipmaps) {
+          VkFormatProperties props = core_.GetLogicalDevice()
+                                          .GetPhysicalDevice()
+                                          .GetFormatProperties(%s.format);
+          CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT,
+                   "BLIT_SRC is required for building mipmaps");
+          CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT,
+                   "BLIT_DST is required for building mipmaps");
+          mip_levels = std::floor(std::log2(std::max(%s.width, %s.height))) + 1;
+        }
         img = std::make_unique<zrl::Image>(core_,
-            extent, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
+            extent, mip_levels, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         src_offset = staging_buffer_->PushData(%s.size, %s.image_data);
         delete %s.image_data;
@@ -666,30 +676,33 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
         buffer_image_copy.bufferRowLength = 0;
         buffer_image_copy.bufferImageHeight = 0;
         buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        buffer_image_copy.imageSubresource.mipLevel = 0; // TODO get this from img
+        buffer_image_copy.imageSubresource.mipLevel = 0;
         buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
         buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
         buffer_image_copy.imageOffset = {0, 0, 0};
         buffer_image_copy.imageExtent = img->GetExtent();
-        pending_image_copies_.push_back(std::make_pair(img->GetHandle(), buffer_image_copy));
+        pending_image_copies_.push_back(
+            std::make_tuple(img->GetHandle(), buffer_image_copy, %s.build_mipmaps));
       }
 
-      VkImageMemoryBarrier post_copy_barrier = {};
-      post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-      post_copy_barrier.pNext = nullptr;
-      post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-      post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-      post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-      post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      post_copy_barrier.image = img->GetHandle();
-      post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      post_copy_barrier.subresourceRange.baseMipLevel = 0;
-      post_copy_barrier.subresourceRange.levelCount = 1;
-      post_copy_barrier.subresourceRange.baseArrayLayer = 0;
-      post_copy_barrier.subresourceRange.layerCount = 1;
-      pending_post_copy_image_barriers_.push_back(post_copy_barrier);
+      if (!%s.build_mipmaps) {
+        VkImageMemoryBarrier post_copy_barrier = {};
+        post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        post_copy_barrier.pNext = nullptr;
+        post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        post_copy_barrier.image = img->GetHandle();
+        post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        post_copy_barrier.subresourceRange.baseMipLevel = 0;
+        post_copy_barrier.subresourceRange.levelCount = 1;
+        post_copy_barrier.subresourceRange.baseArrayLayer = 0;
+        post_copy_barrier.subresourceRange.layerCount = 1;
+        pending_post_copy_image_barriers_.push_back(post_copy_barrier);
+      }
 
       // Update descriptor set.
       VkDescriptorImageInfo image_info = {};
@@ -713,7 +726,8 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
                              1, &write, 0, nullptr);
       images.push_back(std::move(img));
     }|}
-    comment data data data data data data data data data binding
+    comment data data data data data data data data data data data data data
+    data data binding
 
 let gen_ubo_binding_write set binding count name t wrapped_name =
   let data =
@@ -1394,14 +1408,14 @@ let gen_render_targets rd_type r =
                 match rt_type with
                 | RendererEnv.Color ->
                     "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
-                     1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
+                     1, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | \
                      VK_IMAGE_USAGE_SAMPLED_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_COLOR_BIT"
                 | RendererEnv.DepthStencil ->
                     "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
-                     1, VK_FORMAT_D16_UNORM, VK_IMAGE_TILING_OPTIMAL, \
+                     1, 1, VK_FORMAT_D16_UNORM, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_DEPTH_BIT"
@@ -1799,6 +1813,7 @@ let sampled_image_reference_struct =
   uint32_t height = 0;
   uint32_t channels = 0;
   unsigned char* image_data = nullptr;
+  bool build_mipmaps = false;
 };|}
 
 let render_pass_hash =

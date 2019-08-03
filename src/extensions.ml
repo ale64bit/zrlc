@@ -8,3 +8,5 @@ module List = struct
 
   let index l = combine (init (length l) (fun i -> i)) l
 end
+
+let flip f x y = f y x

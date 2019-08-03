@@ -2,7 +2,7 @@
 // https://github.com/KhronosGroup/glTF-Sample-Viewer
 module pbr
 
-const kNumLights = 8
+const kNumLights = 4
 const kGamma = 2.2
 const kPI = 3.141592653589793
 const kExposure = 4.5
@@ -16,7 +16,7 @@ type Light {
   innerConeCos: float
   outerConeCos: float
   lightType: int
-  _: fvec2
+  _: fvec2 // padding
 }
 
 type Global {
