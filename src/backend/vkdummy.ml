@@ -118,7 +118,7 @@ let rec zrl_to_cpp_type =
   function
   | TypeRef "int" -> "int32_t"
   | TypeRef "uint" -> "uint32_t"
-  | TypeRef "bool" -> "bool"
+  | TypeRef "bool" -> "VkBool32"
   | TypeRef "float" -> "float"
   | TypeRef "fvec2" -> "glm::fvec2"
   | TypeRef "fvec3" -> "glm::fvec3"

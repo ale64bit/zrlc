@@ -2,7 +2,7 @@
 // https://github.com/KhronosGroup/glTF-Sample-Viewer
 module pbr
 
-const kNumLights = 4
+const kLightCount = 2
 const kGamma = 2.2
 const kPI = 3.141592653589793
 const kExposure = 4.5
@@ -22,7 +22,7 @@ type Light {
 type Global {
   projView: fmat4
   cameraPosition: fvec4
-  lights: [kNumLights]Light
+  lights: [kLightCount]Light
 }
 
 type Material {
@@ -40,6 +40,7 @@ type Material {
 type PerObject {
   model: fmat4
   normalMat: fmat4
+  hasColor: bool
   hasTangent: bool
 }
 
@@ -79,7 +80,8 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
     normal = normalize(normal)
     val augNor = fvec4(normal.x, normal.y, normal.z, 0.0)
     if obj.hasTangent {
-      val augTan = fvec4(tangent.x, tangent.y, tangent.z, 0.0)
+      val norTan = normalize(fvec3(tangent.x, tangent.y, tangent.z))
+      val augTan = fvec4(norTan.x, norTan.y, norTan.z, 0.0)
       val normalW = normalize((obj.normalMat * augNor).xyz)
       val tangentW = normalize((obj.model * augTan).xyz)
       val bitangentW = cross(normalW, tangentW) * tangent.w
@@ -91,22 +93,27 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
   }
 
   // See https://github.com/KhronosGroup/glTF-Sample-Viewer/blob/master/src/shaders/primitive.vert
-  def vertex(position, normal: fvec3, tangent: fvec4, uv: fvec2): (fvec3, fvec3, fmat3, fvec2) {
-    builtin.position = g.projView * obj.model * fvec4(position.x, position.y, position.z, 1.0)
+  def vertex(position, normal, color: fvec3, tangent: fvec4, uv: fvec2): (fvec3, fvec3, fvec4, fmat3, fvec2) {
     val augPos = fvec4(position.x, position.y, position.z, 1.0)
-    val pos = obj.model * augPos
+    var locPos = obj.model * augPos
+    // locPos.y = -locPos.y
+    val outWorldPos = locPos.xyz / locPos.w
     val nor, tbn = computeTransforms(normal, tangent)
-    return pos.xyz/pos.w, nor, tbn, uv
+    var vertexColor = fvec4(1.0, 1.0, 1.0, 1.0)
+    if obj.hasColor {
+      vertexColor = fvec4(color.x, color.y, color.z, 1.0)
+    }
+    builtin.position = g.projView * fvec4(outWorldPos.x, outWorldPos.y, outWorldPos.z, 1.0)
+    return outWorldPos, nor, vertexColor, tbn, uv
   }
 
   def getNormal(pos: fvec3, uv: fvec2, tbn: fmat3, nor: fvec3): fvec3 {
-    val ng = normalize(nor)
     if mat.hasNormal {
       val n = texture(mat.normal, uv).rgb
       return normalize(tbn * ((2.0 * n - 1.0) * fvec3(mat.normalScale, mat.normalScale, 1.0)))
     } else {
-      val t = fvec3(tbn[2,0], tbn[2,1], tbn[2,2])
-      return normalize(t)
+      val n = fvec3(tbn[2,0], tbn[2,1], tbn[2,2])
+      return normalize(n)
     }
   }
 
@@ -212,7 +219,7 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
   }
 
   // See https://github.com/KhronosGroup/glTF-Sample-Viewer/blob/master/src/shaders/metallic-roughness.frag
-  def fragment(pos, nor: fvec3, tbn: fmat3, uv: fvec2): fvec4 {
+  def fragment(pos, nor: fvec3, vertexColor: fvec4, tbn: fmat3, uv: fvec2): fvec4 {
     if builtin.currentDepth < builtin.fragCoord.z {
       discard
     }
@@ -237,6 +244,7 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
       baseColor = mat.baseColorFactor
     }
 
+    baseColor *= vertexColor
     diffuseColor = baseColor.rgb * (1.0-f0) * (1.0-metallic)
     specularColor = mix(f0, baseColor.rgb, metallic)
 
@@ -273,7 +281,7 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
     val view = normalize(g.cameraPosition.xyz - pos)
     var color = fvec3(0.0, 0.0, 0.0)
 
-    for i = 0 to (kNumLights-1) {
+    for i = 0 to (kLightCount-1) {
       if g.lights[i].lightType == 0 {
         color += applyDirectionalLight(g.lights[i], materialInfo, normal, view)
       }
@@ -303,7 +311,7 @@ renderer PBR(depthBuf: rt_ds) {
     for g in geometry {
       builtin.screen, depthBuf += ForwardPass(g=global, 
                                               mat=g, obj=g, 
-                                              position=g, normal=g, tangent=g, uv=g)
+                                              position=g, normal=g, color=g, tangent=g, uv=g)
     }
   }
 }
