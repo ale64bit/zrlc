@@ -1,25 +1,24 @@
 type t =
+  | Unit
   | TypeRef of string
   | Record of (string * t) list
   | Array of t * const list
   | Function of (string * t) list * t list
-  | RenderTarget of render_target_type
   | Primitive of primitive_type
+  | Vector of primitive_type * int
+  | Matrix of primitive_type * int * int
+  | Sampler of int
+  | Texture of int
+  | RenderTarget of render_target_type
+  | Atom of atom_type
+[@@deriving to_yojson]
+
+and primitive_type = Bool | Int | UInt | Float | Double
 [@@deriving to_yojson]
 
 and render_target_type = RGB | RGBA | DS [@@deriving to_yojson]
 
-and primitive_type =
-  | Bool
-  | Int
-  | UInt
-  | Float
-  | Double
-  | Unit
-  | Atom
-  | AtomList
-  | AtomSet
-[@@deriving to_yojson]
+and atom_type = Singleton | List | Set [@@deriving to_yojson]
 
 and const =
   | OfBool of bool
@@ -29,7 +28,8 @@ and const =
 [@@deriving to_yojson]
 
 let rec string_of_type = function
-  | TypeRef name -> name
+  | Unit -> "()"
+  | TypeRef name -> Printf.sprintf "%s" name
   | Record fields ->
       let field_strs =
         List.map
@@ -58,17 +58,28 @@ let rec string_of_type = function
       Printf.sprintf "fun (%s) -> (%s)"
         (String.concat ", " arg_strs)
         (String.concat ", " ret_strs)
-  | RenderTarget RGB -> "rt_rgb"
-  | RenderTarget RGBA -> "rt_rgba"
-  | RenderTarget DS -> "rt_ds"
   | Primitive Bool -> "bool"
   | Primitive Int -> "int"
   | Primitive UInt -> "uint"
   | Primitive Float -> "float"
   | Primitive Double -> "double"
-  | Primitive Unit -> "unit"
-  | Primitive Atom -> "atom"
-  | Primitive AtomList -> "atomlist"
-  | Primitive AtomSet -> "atomset"
+  | Vector (Bool, n) -> Printf.sprintf "bvec%d" n
+  | Vector (Int, n) -> Printf.sprintf "ivec%d" n
+  | Vector (UInt, n) -> Printf.sprintf "uvec%d" n
+  | Vector (Float, n) -> Printf.sprintf "fvec%d" n
+  | Vector (Double, n) -> Printf.sprintf "dvec%d" n
+  | Matrix (Bool, m, n) -> Printf.sprintf "bmat%dx%d" m n
+  | Matrix (Int, m, n) -> Printf.sprintf "imat%dx%d" m n
+  | Matrix (UInt, m, n) -> Printf.sprintf "umat%dx%d" m n
+  | Matrix (Float, m, n) -> Printf.sprintf "fmat%dx%d" m n
+  | Matrix (Double, m, n) -> Printf.sprintf "dmat%dx%d" m n
+  | Sampler n -> Printf.sprintf "sampler%dD" n
+  | Texture n -> Printf.sprintf "texture%dD" n
+  | RenderTarget RGB -> "rt_rgb"
+  | RenderTarget RGBA -> "rt_rgba"
+  | RenderTarget DS -> "rt_ds"
+  | Atom Singleton -> "atom"
+  | Atom List -> "atomlist"
+  | Atom Set -> "atomset"
 
 let is_ref = function TypeRef _ -> true | _ -> false

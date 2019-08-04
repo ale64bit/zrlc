@@ -68,7 +68,7 @@ let test_const_bool_true =
           TypedAst.ConstDecl
             {
               cd_name = "b";
-              cd_value = ([ Type.TypeRef "bool" ], const_expr_true);
+              cd_value = ([ Type.Primitive Bool ], const_expr_true);
             };
       }
   in
@@ -96,7 +96,7 @@ let test_const_bool_false =
           TypedAst.ConstDecl
             {
               cd_name = "b";
-              cd_value = ([ Type.TypeRef "bool" ], const_expr_false);
+              cd_value = ([ Type.Primitive Bool ], const_expr_false);
             };
       }
   in
@@ -124,7 +124,7 @@ let test_const_int =
           TypedAst.ConstDecl
             {
               cd_name = "i";
-              cd_value = ([ Type.TypeRef "int" ], const_expr_42);
+              cd_value = ([ Type.Primitive Int ], const_expr_42);
             };
       }
   in
@@ -152,7 +152,7 @@ let test_const_float =
           TypedAst.ConstDecl
             {
               cd_name = "pi";
-              cd_value = ([ Type.TypeRef "float" ], const_expr_pi);
+              cd_value = ([ Type.Primitive Float ], const_expr_pi);
             };
       }
   in
@@ -170,8 +170,8 @@ let test_empty_pipeline =
     pipeline P(x: int): float {}
     |} in
   let stmt_loc = loc_of src (Pcre.quote "pipeline P(x: int): float {}") in
-  let args = [ ("x", Type.TypeRef "int") ] in
-  let rets = [ Type.TypeRef "float" ] in
+  let args = [ ("x", Type.Primitive Int) ] in
+  let rets = [ Type.Primitive Float ] in
   let pipeline_type = Type.Function (args, rets) in
   let want_env =
     Env.(
@@ -182,7 +182,7 @@ let test_empty_pipeline =
     Env.(
       want_env
       |> enter_pipeline_scope "P" pipeline_type
-      |> add_val "x" { loc = stmt_loc; value = Type.TypeRef "int" })
+      |> add_val "x" { loc = stmt_loc; value = Type.Primitive Int })
   in
   let pd =
     L.
@@ -214,8 +214,8 @@ let test_type_declaration =
   let typ =
     Type.(
       Record
-        [ ("x", TypeRef "int");
-          ("a", Array (TypeRef "fvec4", [ OfInt 64; OfInt 132 ]))
+        [ ("x", Primitive Int);
+          ("a", Array (Vector (Float, 4), [ OfInt 64; OfInt 132 ]))
         ])
   in
   let typ_loc = loc_of src "type T {.*}" in
@@ -228,10 +228,10 @@ let test_type_declaration =
   in
   let ctor =
     Type.Function
-      ( [ ("x", Type.TypeRef "int");
+      ( [ ("x", Type.Primitive Int);
           ( "a",
-            Type.Array (Type.TypeRef "fvec4", [ Type.OfInt 64; Type.OfInt 132 ])
-          )
+            Type.Array
+              (Type.Vector (Float, 4), [ Type.OfInt 64; Type.OfInt 132 ]) )
         ],
         [ Type.TypeRef "T" ] )
   in
@@ -377,7 +377,7 @@ let test_invalid_unary_operation =
     L.
       {
         loc = want_loc;
-        value = `InvalidUnaryOperation (Ast.UMinus, Type.TypeRef "bool");
+        value = `InvalidUnaryOperation (Ast.UMinus, Type.Primitive Bool);
       }
   in
   "test_invalid_unary_operation" >:: analysis_error_test src want_err
@@ -415,7 +415,7 @@ let test_invalid_binary_operation =
         loc = want_loc;
         value =
           `InvalidBinaryOperation
-            (expr, Type.TypeRef "int", Type.TypeRef "float");
+            (expr, Type.Primitive Int, Type.Primitive Float);
       }
   in
   "test_invalid_binary_operation" >:: analysis_error_test src want_err
@@ -470,7 +470,7 @@ let test_invalid_call_operation =
     L.
       {
         loc = want_loc;
-        value = `InvalidCallOperation (expr, Type.TypeRef "int");
+        value = `InvalidCallOperation (expr, Type.Primitive Int);
       }
   in
   "test_invalid_call_operation" >:: analysis_error_test src want_err
@@ -509,8 +509,8 @@ let test_not_enough_arguments =
   in
   let want_loc = loc_of src (Pcre.quote "f1(1)") in
   let expr = L.{ loc = loc_of ~n:1 src "f1"; value = Ast.Id "f1" } in
-  let have_types = List.init 1 (fun _ -> Type.TypeRef "int") in
-  let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
+  let have_types = List.init 1 (fun _ -> Type.Primitive Int) in
+  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
   let want_err =
     L.
       {
@@ -534,8 +534,8 @@ let test_too_many_arguments =
   in
   let want_loc = loc_of src (Pcre.quote "f1(1, 2, 3)") in
   let expr = L.{ loc = loc_of ~n:1 src "f1"; value = Ast.Id "f1" } in
-  let have_types = List.init 3 (fun _ -> Type.TypeRef "int") in
-  let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
+  let have_types = List.init 3 (fun _ -> Type.Primitive Int) in
+  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
   let want_err =
     L.
       {
@@ -557,8 +557,8 @@ let test_not_enough_return_arguments =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "return 1") in
-  let have_types = List.init 1 (fun _ -> Type.TypeRef "int") in
-  let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
+  let have_types = List.init 1 (fun _ -> Type.Primitive Int) in
+  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
   let want_err =
     L.
       {
@@ -580,8 +580,8 @@ let test_too_many_return_arguments =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "return 1, 2, 3") in
-  let have_types = List.init 3 (fun _ -> Type.TypeRef "int") in
-  let want_types = List.init 2 (fun _ -> Type.TypeRef "int") in
+  let have_types = List.init 3 (fun _ -> Type.Primitive Int) in
+  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
   let want_err =
     L.
       {
@@ -708,8 +708,8 @@ let test_invalid_argument =
     |}
   in
   let want_loc = loc_of src "false" in
-  let have_type = Type.TypeRef "bool" in
-  let want_type = Type.TypeRef "int" in
+  let have_type = Type.Primitive Bool in
+  let want_type = Type.Primitive Int in
   let expr = L.{ loc = loc_of src "false"; value = Ast.BoolLiteral false } in
   let want_err =
     L.
@@ -732,8 +732,8 @@ let test_invalid_return_argument =
     |}
   in
   let want_loc = loc_of src "false" in
-  let have_type = Type.TypeRef "bool" in
-  let want_type = Type.TypeRef "int" in
+  let have_type = Type.Primitive Bool in
+  let want_type = Type.Primitive Int in
   let expr = L.{ loc = want_loc; value = Ast.BoolLiteral false } in
   let want_err =
     L.
@@ -834,8 +834,8 @@ let test_invalid_single_assignment =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "x, y = 3, true") in
-  let have_type = Type.TypeRef "bool" in
-  let want_type = Type.TypeRef "int" in
+  let have_type = Type.Primitive Bool in
+  let want_type = Type.Primitive Int in
   let expr = L.{ loc = loc_of src "true"; value = Ast.BoolLiteral true } in
   let want_err =
     L.
@@ -860,9 +860,9 @@ let test_invalid_multiple_assignment =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "x, y = f1()") in
-  let have_type = Type.TypeRef "bool" in
+  let have_type = Type.Primitive Bool in
   let expr = L.{ loc = loc_of ~n:1 src "y"; value = Ast.Id "y" } in
-  let want_type = Type.TypeRef "int" in
+  let want_type = Type.Primitive Int in
   let want_err =
     L.
       {
@@ -889,7 +889,7 @@ let test_non_bool_if_condition =
     L.
       {
         loc = want_loc;
-        value = `NonBoolIfCondition (expr, Type.TypeRef "int");
+        value = `NonBoolIfCondition (expr, Type.Primitive Int);
       }
   in
   "test_non_bool_if_condition" >:: analysis_error_test src want_err

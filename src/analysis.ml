@@ -45,12 +45,33 @@ type error =
 
 let error loc e = Error L.{ loc; value = e }
 
+let valid_swizzle_masks =
+  let gen_swizzles s src =
+    let n = String.length src in
+    let rec aux k mask =
+      if k = 0 then SS.empty
+      else
+        List.fold_left
+          (fun s i ->
+            let new_mask = Printf.sprintf "%s%c" mask src.[i] in
+            let more = aux (k - 1) new_mask in
+            SS.(s |> add new_mask |> add_seq (to_seq more)))
+          SS.empty
+          (List.init n (fun i -> i))
+    in
+    SS.add_seq (SS.to_seq (aux n "")) s
+  in
+  let s2 = List.fold_left gen_swizzles SS.empty [ "rg"; "xy"; "st" ] in
+  let s3 = List.fold_left gen_swizzles SS.empty [ "rgb"; "xyz"; "stp" ] in
+  let s4 = List.fold_left gen_swizzles SS.empty [ "rgba"; "xyzw"; "stpq" ] in
+  (s2, s3, s4)
+
 let check_unique idfn errfn elems =
   List.fold_left
     (fun acc elem ->
       acc >>= fun seen ->
       let id = idfn elem in
-      if SS.mem id seen then Error (errfn elem) else Ok (SS.add id seen))
+      if SS.mem id seen then errfn elem else Ok (SS.add id seen))
     (Ok SS.empty) elems
 
 let check_valid_identifier loc id =
@@ -74,17 +95,20 @@ let check_array_dim env loc dim =
   | Type.OfFloat _ | Type.OfBool _ ->
       Error L.{ loc; value = `NonIntegerArraySize }
 
-(* Checks the given type against the environment *)
+(* Checks the given type against the environment and returns the normalized
+ * version. *)
 let rec check_type env ctx_loc t =
+  let open Type in
   match t with
-  | Type.TypeRef name ->
-      if Env.type_exists name env then Ok t
-      else Error L.{ loc = ctx_loc; value = `UnknownTypeName name }
-  | Type.Record fields ->
+  | Unit -> Ok Unit
+  | TypeRef name -> (
+      match Env.find_type ~local:false name env with
+      | Some L.{ value = Record _; _ } -> Ok (TypeRef name)
+      | Some L.{ value = _ as t; _ } -> Ok t
+      | None -> error ctx_loc (`UnknownTypeName name) )
+  | Record fields ->
       let idfn (name, _) = name in
-      let errfn field =
-        L.{ loc = ctx_loc; value = `DuplicateMember (idfn field) }
-      in
+      let errfn field = error ctx_loc (`DuplicateMember (idfn field)) in
       check_unique idfn errfn fields >>= fun _ ->
       List.fold_results
         (fun acc (name, t) ->
@@ -94,8 +118,8 @@ let rec check_type env ctx_loc t =
           Ok ((name, nt) :: new_fields))
         (Ok []) fields
       >>= fun new_fields ->
-      Ok (Type.Record new_fields)
-  | Type.Array (t, dims) ->
+      Ok (Record new_fields)
+  | Array (t, dims) ->
       check_type env ctx_loc t >>= fun nt ->
       List.fold_results
         (fun acc dim ->
@@ -104,12 +128,10 @@ let rec check_type env ctx_loc t =
           Ok (ndim :: new_dims))
         (Ok []) dims
       >>= fun new_dims ->
-      Ok (Type.Array (nt, new_dims))
-  | Type.Function (args, rets) ->
+      Ok (Array (nt, new_dims))
+  | Function (args, rets) ->
       let idfn (name, _) = name in
-      let errfn arg =
-        L.{ loc = ctx_loc; value = `DuplicateParameter (idfn arg) }
-      in
+      let errfn arg = error ctx_loc (`DuplicateParameter (idfn arg)) in
       check_unique idfn errfn args >>= fun _ ->
       List.fold_results
         (fun acc (name, t) ->
@@ -125,9 +147,14 @@ let rec check_type env ctx_loc t =
           Ok (nt :: new_rets))
         (Ok []) rets
       >>= fun new_rets ->
-      Ok (Type.Function (new_args, new_rets))
-  | Type.RenderTarget _ -> Ok t
-  | Type.Primitive _ -> Ok t
+      Ok (Function (new_args, new_rets))
+  | Primitive _ -> Ok t
+  | Vector _ -> Ok t
+  | Matrix _ -> Ok t
+  | Sampler _ -> Ok t
+  | Texture _ -> Ok t
+  | RenderTarget _ -> Ok t
+  | Atom _ -> Ok t
 
 let build_function_environment ~mutable_args env loc name typ =
   match typ with
@@ -152,7 +179,7 @@ let check_const_declaration env loc cd =
       | Ast.BoolLiteral b ->
           let value = L.{ loc; value = Env.Bool b } in
           let env = Env.add_constant cd_name value env in
-          let t = Type.TypeRef "bool" in
+          let t = Type.Primitive Bool in
           let cd =
             TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
           in
@@ -160,7 +187,7 @@ let check_const_declaration env loc cd =
       | Ast.IntLiteral i ->
           let value = L.{ loc; value = Env.Int i } in
           let env = Env.add_constant cd_name value env in
-          let t = Type.TypeRef "int" in
+          let t = Type.Primitive Int in
           let cd =
             TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
           in
@@ -168,7 +195,7 @@ let check_const_declaration env loc cd =
       | Ast.FloatLiteral f ->
           let value = L.{ loc; value = Env.Float f } in
           let env = Env.add_constant cd_name value env in
-          let t = Type.TypeRef "float" in
+          let t = Type.Primitive Float in
           let cd =
             TypedAst.ConstDecl { cd_name; cd_value = ([ t ], cd_value) }
           in
@@ -187,6 +214,13 @@ let check_type_declaration env loc td =
   | None -> (
       match td_type with
       | Record fields ->
+          List.fold_results
+            (fun acc (name, t) ->
+              acc >>= fun fields ->
+              check_type env loc t >>= fun clean_type ->
+              Ok ((name, clean_type) :: fields))
+            (Ok []) fields
+          >>= fun fields ->
           check_valid_identifier loc td_name >>= fun () ->
           check_type env loc td_type >>= fun clean_type ->
           let ctor = Type.Function (fields, [ Type.TypeRef td_name ]) in
@@ -205,343 +239,190 @@ let check_type_declaration env loc td =
 let check_unop loc op typ =
   let open Ast in
   let open Type in
-  let () = assert (is_ref typ) in
   match (op, typ) with
   (* Unary Plus and Minus *)
-  | (UPlus | UMinus), TypeRef "int"
-  | (UPlus | UMinus), TypeRef "uint"
-  | (UPlus | UMinus), TypeRef "float"
-  | (UPlus | UMinus), TypeRef "double"
-  | (UPlus | UMinus), TypeRef "ivec2"
-  | (UPlus | UMinus), TypeRef "ivec3"
-  | (UPlus | UMinus), TypeRef "ivec4"
-  | (UPlus | UMinus), TypeRef "uvec2"
-  | (UPlus | UMinus), TypeRef "uvec3"
-  | (UPlus | UMinus), TypeRef "uvec4"
-  | (UPlus | UMinus), TypeRef "fvec2"
-  | (UPlus | UMinus), TypeRef "fvec3"
-  | (UPlus | UMinus), TypeRef "fvec4"
-  | (UPlus | UMinus), TypeRef "dvec2"
-  | (UPlus | UMinus), TypeRef "dvec3"
-  | (UPlus | UMinus), TypeRef "dvec4"
+  | (UPlus | UMinus), Primitive (Int | UInt | Float | Double) -> Ok typ
+  | (UPlus | UMinus), Vector ((Int | UInt | Float | Double), _) -> Ok typ
+  | (UPlus | UMinus), Matrix ((Int | UInt | Float | Double), _, _) -> Ok typ
   (* Logical NOT *)
-  | LogicalNot, TypeRef "bool"
+  | LogicalNot, Primitive Bool -> Ok typ
   (* Bitwise Complement *)
-  | BitwiseComplement, TypeRef "int"
-  | BitwiseComplement, TypeRef "uint" ->
-      Ok typ
+  | BitwiseComplement, Primitive (Int | UInt) -> Ok typ
   | _, _ -> error loc (`InvalidUnaryOperation (op, typ))
 
 let check_binop expr ltyp op rtyp =
   let open Ast in
   let open Type in
-  (*
-  let () = assert (is_ref ltyp) in
-  let () = assert (is_ref rtyp) in
-*)
   let L.{ loc; _ } = expr in
   match (ltyp, op, rtyp) with
   (* Logical *)
-  | TypeRef "bool", (LogicalOr | LogicalXor | LogicalAnd), TypeRef "bool" ->
-      Ok (TypeRef "bool")
+  | Primitive Bool, (LogicalOr | LogicalXor | LogicalAnd), Primitive Bool ->
+      Ok (Primitive Bool)
   (* Bitwise *)
-  | ( TypeRef "int",
+  | ( Primitive Int,
       (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight),
-      TypeRef "int" ) ->
-      Ok (TypeRef "int")
-  (* Comparison *)
-  | ( TypeRef "bool",
+      Primitive Int ) ->
+      Ok (Primitive Int)
+  | ( Primitive UInt,
+      (BitwiseOr | BitwiseXor | BitwiseAnd | ShiftLeft | ShiftRight),
+      Primitive UInt ) ->
+      Ok (Primitive UInt)
+  (* Primitive Comparison *)
+  | Primitive Bool, (Equal | NotEqual), Primitive Bool
+  | ( Primitive Int,
       (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
-      TypeRef "bool" )
-  | ( TypeRef "int",
+      Primitive Int )
+  | ( Primitive UInt,
       (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
-      TypeRef "int" )
-  | ( TypeRef "uint",
+      Primitive UInt )
+  | ( Primitive Float,
       (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
-      TypeRef "uint" )
-  | ( TypeRef "float",
+      Primitive Float )
+  | ( Primitive Double,
       (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
-      TypeRef "float" )
-  | ( TypeRef "double",
-      (Equal | NotEqual | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual),
-      TypeRef "double" ) ->
-      Ok (TypeRef "bool")
-  (* Arithmetic *)
-  | TypeRef "int", (Plus | Minus | Mult | Div | Mod), TypeRef "int" ->
-      Ok (TypeRef "int")
-  | TypeRef "uint", (Plus | Minus | Mult | Div | Mod), TypeRef "uint" ->
-      Ok (TypeRef "uint")
-  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "float" ->
-      Ok (TypeRef "float")
-  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "double" ->
-      Ok (TypeRef "double")
-  | TypeRef "ivec2", (Plus | Minus | Mult | Div), TypeRef "ivec2" ->
-      Ok (TypeRef "ivec2")
-  | TypeRef "ivec3", (Plus | Minus | Mult | Div), TypeRef "ivec3" ->
-      Ok (TypeRef "ivec3")
-  | TypeRef "ivec4", (Plus | Minus | Mult | Div), TypeRef "ivec4" ->
-      Ok (TypeRef "ivec4")
-  | TypeRef "uvec2", (Plus | Minus | Mult | Div), TypeRef "uvec2" ->
-      Ok (TypeRef "uvec2")
-  | TypeRef "uvec3", (Plus | Minus | Mult | Div), TypeRef "uvec3" ->
-      Ok (TypeRef "uvec3")
-  | TypeRef "uvec4", (Plus | Minus | Mult | Div), TypeRef "uvec4" ->
-      Ok (TypeRef "uvec4")
-  | TypeRef "fvec2", (Plus | Minus | Mult | Div), TypeRef "fvec2" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fvec3", (Plus | Minus | Mult | Div), TypeRef "fvec3" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fvec4", (Plus | Minus | Mult | Div), TypeRef "fvec4" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "dvec2", (Plus | Minus | Mult | Div), TypeRef "dvec2" ->
-      Ok (TypeRef "dvec2")
-  | TypeRef "dvec3", (Plus | Minus | Mult | Div), TypeRef "dvec3" ->
-      Ok (TypeRef "dvec3")
-  | TypeRef "dvec4", (Plus | Minus | Mult | Div), TypeRef "dvec4" ->
-      Ok (TypeRef "dvec4")
-  (* Multiplication/Division by scalar *)
-  | TypeRef "fvec2", (Plus | Minus | Mult | Div), TypeRef "float" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "fvec3", (Plus | Minus | Mult | Div), TypeRef "float" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "fvec4", (Plus | Minus | Mult | Div), TypeRef "float" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "dvec2", (Plus | Minus | Mult | Div), TypeRef "double" ->
-      Ok (TypeRef "dvec2")
-  | TypeRef "dvec3", (Plus | Minus | Mult | Div), TypeRef "double" ->
-      Ok (TypeRef "dvec3")
-  | TypeRef "dvec4", (Plus | Minus | Mult | Div), TypeRef "double" ->
-      Ok (TypeRef "dvec4")
-  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec2" ->
-      Ok (TypeRef "fvec2")
-  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec3" ->
-      Ok (TypeRef "fvec3")
-  | TypeRef "float", (Plus | Minus | Mult | Div), TypeRef "fvec4" ->
-      Ok (TypeRef "fvec4")
-  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec2" ->
-      Ok (TypeRef "dvec2")
-  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec3" ->
-      Ok (TypeRef "dvec3")
-  | TypeRef "double", (Plus | Minus | Mult | Div), TypeRef "dvec4" ->
-      Ok (TypeRef "dvec4")
-  (* Matrix Multiplication *)
-  | TypeRef "fmat2x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
-  | TypeRef "fmat2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec2")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat2x2")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat2x3")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat2x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat2x4")
-  | TypeRef "fmat3x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec3")
-  | TypeRef "fmat3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec3")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat3x2")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat3x3")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat3x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat3x4")
-  | TypeRef "fmat4x2", Mult, TypeRef "fvec2" -> Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x2" -> Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2" -> Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x3" -> Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x2", Mult, TypeRef "fmat2x4" -> Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x3", Mult, TypeRef "fvec3" -> Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x2" -> Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x3" -> Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3" -> Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x3", Mult, TypeRef "fmat3x4" -> Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec4")
-  | TypeRef "fmat4", Mult, TypeRef "fvec4" -> Ok (TypeRef "fvec4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x2" -> Ok (TypeRef "fmat4x2")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x3" -> Ok (TypeRef "fmat4x3")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4x4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4x4" -> Ok (TypeRef "fmat4x4")
-  | TypeRef "fmat4", Mult, TypeRef "fmat4" -> Ok (TypeRef "fmat4x4")
+      Primitive Double ) ->
+      Ok (Primitive Bool)
+  (* Vector Comparison *)
+  | Vector (Bool, m), (Equal | NotEqual), Vector (Bool, n)
+  | Vector (Int, m), (Equal | NotEqual), Vector (Int, n)
+  | Vector (UInt, m), (Equal | NotEqual), Vector (UInt, n)
+  | Vector (Float, m), (Equal | NotEqual), Vector (Float, n)
+  | Vector (Double, m), (Equal | NotEqual), Vector (Double, n)
+    when m = n ->
+      Ok (Primitive Bool)
+  (* Primitive Arithmetic *)
+  | Primitive Int, (Plus | Minus | Mult | Div | Mod), Primitive Int ->
+      Ok (Primitive Int)
+  | Primitive UInt, (Plus | Minus | Mult | Div | Mod), Primitive UInt ->
+      Ok (Primitive UInt)
+  | Primitive Float, (Plus | Minus | Mult | Div), Primitive Float ->
+      Ok (Primitive Float)
+  | Primitive Double, (Plus | Minus | Mult | Div), Primitive Double ->
+      Ok (Primitive Double)
+  (* Vector-Scalar Arithmetic *)
+  | Vector (Int, m), (Plus | Minus | Mult | Div), Primitive Int ->
+      Ok (Vector (Int, m))
+  | Vector (UInt, m), (Plus | Minus | Mult | Div), Primitive UInt ->
+      Ok (Vector (UInt, m))
+  | Vector (Float, m), (Plus | Minus | Mult | Div), Primitive Float ->
+      Ok (Vector (Float, m))
+  | Vector (Double, m), (Plus | Minus | Mult | Div), Primitive Double ->
+      Ok (Vector (Double, m))
+  | Primitive Int, (Plus | Minus | Mult), Vector (Int, m) ->
+      Ok (Vector (Int, m))
+  | Primitive UInt, (Plus | Minus | Mult), Vector (UInt, m) ->
+      Ok (Vector (UInt, m))
+  | Primitive Float, (Plus | Minus | Mult), Vector (Float, m) ->
+      Ok (Vector (Float, m))
+  | Primitive Double, (Plus | Minus | Mult), Vector (Double, m) ->
+      Ok (Vector (Double, m))
+  (* Vector-Vector Arithmetic - Element-wise *)
+  | Vector (Int, m), (Plus | Minus | Mult | Div | Mod), Vector (Int, n)
+    when m = n ->
+      Ok (Vector (Int, m))
+  | Vector (UInt, m), (Plus | Minus | Mult | Div | Mod), Vector (UInt, n)
+    when m = n ->
+      Ok (Vector (UInt, m))
+  | Vector (Float, m), (Plus | Minus | Mult | Div), Vector (Float, n)
+    when m = n ->
+      Ok (Vector (Float, m))
+  | Vector (Double, m), (Plus | Minus | Mult | Div), Vector (Double, n)
+    when m = n ->
+      Ok (Vector (Double, m))
+  (* Matrix-Scalar Arithmetic *)
+  | Matrix (Int, n, m), (Plus | Minus | Mult | Div | Mod), Primitive Int ->
+      Ok (Matrix (Int, n, m))
+  | Matrix (UInt, n, m), (Plus | Minus | Mult | Div | Mod), Primitive UInt ->
+      Ok (Matrix (UInt, n, m))
+  | Matrix (Float, n, m), (Plus | Minus | Mult | Div), Primitive Float ->
+      Ok (Matrix (Float, n, m))
+  | Matrix (Double, n, m), (Plus | Minus | Mult | Div), Primitive Double ->
+      Ok (Matrix (Double, n, m))
+  | Primitive Int, (Plus | Minus | Mult), Matrix (Int, n, m) ->
+      Ok (Matrix (Int, n, m))
+  | Primitive UInt, (Plus | Minus | Mult), Matrix (UInt, n, m) ->
+      Ok (Matrix (UInt, n, m))
+  | Primitive Float, (Plus | Minus | Mult), Matrix (Float, n, m) ->
+      Ok (Matrix (Float, n, m))
+  | Primitive Double, (Plus | Minus | Mult), Matrix (Double, n, m) ->
+      Ok (Matrix (Double, n, m))
+  (* Matrix-Vector Arithmetic *)
+  | Matrix (Int, n, m), Mult, Vector (Int, p) when n = p ->
+      Ok (Vector (Int, m))
+  | Matrix (UInt, n, m), Mult, Vector (UInt, p) when n = p ->
+      Ok (Vector (UInt, m))
+  | Matrix (Float, n, m), Mult, Vector (Float, p) when n = p ->
+      Ok (Vector (Float, m))
+  | Matrix (Double, n, m), Mult, Vector (Double, p) when n = p ->
+      Ok (Vector (Double, m))
+  (* Matrix-Matrix Arithmetic *)
+  | Matrix (Int, n, m), Mult, Matrix (Int, q, p) when n = p ->
+      Ok (Matrix (Int, m, q))
+  | Matrix (UInt, n, m), Mult, Matrix (UInt, q, p) when n = p ->
+      Ok (Matrix (UInt, m, q))
+  | Matrix (Float, n, m), Mult, Matrix (Float, q, p) when n = p ->
+      Ok (Matrix (Float, m, q))
+  | Matrix (Double, n, m), Mult, Matrix (Double, q, p) when n = p ->
+      Ok (Matrix (Double, m, q))
   | _ -> error loc (`InvalidBinaryOperation (expr, ltyp, rtyp))
 
 let check_assignop ltyp op rtyp err =
   let open Ast in
   let open Type in
-  let () = assert (is_ref ltyp) in
-  let () = assert (is_ref rtyp) in
   match (ltyp, op, rtyp) with
-  | TypeRef "bool", Assign, TypeRef "bool" -> Ok ()
-  | TypeRef "int", _, TypeRef "int" -> Ok ()
-  | TypeRef "uint", _, TypeRef "uint" -> Ok ()
-  | ( TypeRef "float",
+  (* Primitive *)
+  | Primitive Bool, Assign, Primitive Bool -> Ok ()
+  | Primitive Int, Assign, Primitive Int -> Ok ()
+  | Primitive UInt, Assign, Primitive UInt -> Ok ()
+  | ( Primitive Float,
       (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      TypeRef "float" ) ->
+      Primitive Float ) ->
       Ok ()
-  | ( TypeRef "double",
+  | ( Primitive Double,
       (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      TypeRef "double" ) ->
+      Primitive Double ) ->
       Ok ()
-  | ( TypeRef "ivec2",
+  | Vector (Bool, m), Assign, Vector (Bool, n) when m = n -> Ok ()
+  (* Vector *)
+  | Vector (Int, m), (Assign | AssignPlus | AssignMinus), Vector (Int, n)
+  | Vector (UInt, m), (Assign | AssignPlus | AssignMinus), Vector (UInt, n)
+  | Vector (Float, m), (Assign | AssignPlus | AssignMinus), Vector (Float, n)
+  | Vector (Double, m), (Assign | AssignPlus | AssignMinus), Vector (Double, n)
+    when m = n ->
+      Ok ()
+  (* Matrix *)
+  | Matrix (Int, n, m), (Assign | AssignPlus | AssignMinus), Matrix (Int, q, p)
+  | ( Matrix (UInt, n, m),
       (Assign | AssignPlus | AssignMinus),
-      (TypeRef "ivec2" | TypeRef "int") ) ->
+      Matrix (UInt, q, p) )
+  | ( Matrix (Float, n, m),
+      (Assign | AssignPlus | AssignMinus),
+      Matrix (Float, q, p) )
+  | ( Matrix (Double, n, m),
+      (Assign | AssignPlus | AssignMinus),
+      Matrix (Double, q, p) )
+    when m = p && n = q ->
       Ok ()
-  | ( TypeRef "ivec3",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "ivec3" | TypeRef "int") ) ->
-      Ok ()
-  | ( TypeRef "ivec4",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "ivec4" | TypeRef "int") ) ->
-      Ok ()
-  | ( TypeRef "uvec2",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "uvec2" | TypeRef "uint") ) ->
-      Ok ()
-  | ( TypeRef "uvec3",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "uvec3" | TypeRef "uint") ) ->
-      Ok ()
-  | ( TypeRef "uvec4",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "uvec4" | TypeRef "uint") ) ->
-      Ok ()
-  | ( TypeRef "fvec2",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "fvec2" | TypeRef "float") ) ->
-      Ok ()
-  | ( TypeRef "fvec3",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "fvec3" | TypeRef "float") ) ->
-      Ok ()
-  | ( TypeRef "fvec4",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "fvec4" | TypeRef "float") ) ->
-      Ok ()
-  | ( TypeRef "dvec2",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "dvec2" | TypeRef "double") ) ->
-      Ok ()
-  | ( TypeRef "dvec3",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "dvec3" | TypeRef "double") ) ->
-      Ok ()
-  | ( TypeRef "dvec4",
-      (Assign | AssignPlus | AssignMinus | AssignMult | AssignDiv),
-      (TypeRef "dvec4" | TypeRef "double") ) ->
-      Ok ()
-  | ( TypeRef "fmat2",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "fmat2" ) ->
-      Ok ()
-  | ( TypeRef "fmat3",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "fmat3" ) ->
-      Ok ()
-  | ( TypeRef "fmat4",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "fmat4" ) ->
-      Ok ()
-  | TypeRef "fmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x2"
-    ->
-      Ok ()
-  | TypeRef "fmat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x3"
-    ->
-      Ok ()
-  | TypeRef "fmat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat2x4"
-    ->
-      Ok ()
-  | TypeRef "fmat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x2"
-    ->
-      Ok ()
-  | TypeRef "fmat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x3"
-    ->
-      Ok ()
-  | TypeRef "fmat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat3x4"
-    ->
-      Ok ()
-  | TypeRef "fmat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x2"
-    ->
-      Ok ()
-  | TypeRef "fmat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x3"
-    ->
-      Ok ()
-  | TypeRef "fmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "fmat4x4"
-    ->
-      Ok ()
-  | ( TypeRef "dmat2",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "dmat2" ) ->
-      Ok ()
-  | ( TypeRef "dmat3",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "dmat3" ) ->
-      Ok ()
-  | ( TypeRef "dmat4",
-      (Assign | AssignPlus | AssignMinus | AssignMult),
-      TypeRef "dmat4" ) ->
-      Ok ()
-  | TypeRef "dmat2x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x2"
-    ->
-      Ok ()
-  | TypeRef "dmat2x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x3"
-    ->
-      Ok ()
-  | TypeRef "dmat2x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat2x4"
-    ->
-      Ok ()
-  | TypeRef "dmat3x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x2"
-    ->
-      Ok ()
-  | TypeRef "dmat3x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x3"
-    ->
-      Ok ()
-  | TypeRef "dmat3x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat3x4"
-    ->
-      Ok ()
-  | TypeRef "dmat4x2", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x2"
-    ->
-      Ok ()
-  | TypeRef "dmat4x3", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x3"
-    ->
-      Ok ()
-  | TypeRef "dmat4x4", (Assign | AssignPlus | AssignMinus), TypeRef "dmat4x4"
-    ->
-      Ok ()
-  | ( (TypeRef "rt_rgb" | RenderTarget RGB),
-      (Assign | AssignPlus),
-      TypeRef "fvec3" ) ->
-      Ok ()
-  | ( (TypeRef "rt_rgba" | RenderTarget RGBA),
-      (Assign | AssignPlus),
-      TypeRef "fvec4" ) ->
-      Ok ()
-  | (TypeRef "rt_ds" | RenderTarget DS), (Assign | AssignPlus), TypeRef "float"
-    ->
-      Ok ()
+  (* Render Targets *)
+  | RenderTarget RGB, (Assign | AssignPlus), Vector (Float, 3) -> Ok ()
+  | RenderTarget RGBA, (Assign | AssignPlus), Vector (Float, 4) -> Ok ()
+  | RenderTarget DS, (Assign | AssignPlus), Primitive Float -> Ok ()
   | _ -> err
+
+let check_vector_access loc ptype dim id =
+  let open Type in
+  let m2, m3, m4 = valid_swizzle_masks in
+  match (dim, String.length id) with
+  | 2, 1 when SS.mem id m2 -> Ok (Primitive ptype)
+  | 2, 2 when SS.mem id m2 -> Ok (Vector (ptype, 2))
+  | 3, 1 when SS.mem id m3 -> Ok (Primitive ptype)
+  | 3, 2 when SS.mem id m3 -> Ok (Vector (ptype, 2))
+  | 3, 3 when SS.mem id m3 -> Ok (Vector (ptype, 3))
+  | 4, 1 when SS.mem id m4 -> Ok (Primitive ptype)
+  | 4, 2 when SS.mem id m4 -> Ok (Vector (ptype, 2))
+  | 4, 3 when SS.mem id m4 -> Ok (Vector (ptype, 3))
+  | 4, 4 when SS.mem id m4 -> Ok (Vector (ptype, 4))
+  | _ -> error loc (`NoSuchMember (Vector (ptype, dim), id))
 
 let rec check_access env loc expr id =
   let check_field_exists id fields err =
@@ -552,23 +433,17 @@ let rec check_access env loc expr id =
   check_single_value_expr env expr >>= fun typ ->
   let err = error loc (`NoSuchMember (typ, id)) in
   match typ with
-  | Type.Record fields -> check_field_exists id fields err
+  | Type.Vector (ptype, dim) -> check_vector_access loc ptype dim id
   | Type.TypeRef name -> (
       match Env.find_type ~local:false name env with
       | Some L.{ value = Type.Record fields; _ } ->
           check_field_exists id fields err
       | _ ->
           failwith
-            ("name cannot exist in environment without a known type: " ^ name)
+            ("name cannot exist in environment without a Record type: " ^ name)
       )
+  | Type.Record fields -> check_field_exists id fields err
   | _ -> err
-
-and unwrap_typeref env = function
-  | Type.TypeRef name -> (
-      match Env.find_type ~local:false name env with
-      | Some L.{ value = t; _ } -> t
-      | _ -> Type.TypeRef name )
-  | t -> t
 
 and check_index env loc expr index_exprs =
   let open Type in
@@ -580,7 +455,19 @@ and check_index env loc expr index_exprs =
       Ok (index_type :: index_types))
     (Ok []) index_exprs
   >>= fun index_types ->
-  match unwrap_typeref env expr_type with
+  let check_index_exprs =
+    List.fold_left
+      (fun acc (index_expr, index_type) ->
+        acc >>= fun _ ->
+        match index_type with
+        | Primitive (Int | UInt) -> acc
+        | _ ->
+            let L.{ loc; _ } = index_expr in
+            error loc (`NonIntegerArrayIndex index_expr))
+      (Ok ())
+      (List.combine index_exprs index_types)
+  in
+  match expr_type with
   | Array (t, dims) ->
       let have = List.length index_types in
       let want = List.length dims in
@@ -591,7 +478,7 @@ and check_index env loc expr index_exprs =
           (fun acc (index_expr, index_type) ->
             acc >>= fun _ ->
             match index_type with
-            | TypeRef "int" | TypeRef "uint" -> acc
+            | Primitive (Int | UInt) -> acc
             | _ ->
                 let L.{ loc; _ } = index_expr in
                 error loc (`NonIntegerArrayIndex index_expr))
@@ -599,6 +486,16 @@ and check_index env loc expr index_exprs =
           (List.combine index_exprs index_types)
         >>= fun () ->
         Ok t
+  | Matrix (pt, _, n) -> (
+      let have = List.length index_types in
+      match have with
+      | 1 ->
+          check_index_exprs >>= fun () ->
+          Ok (Vector (pt, n))
+      | 2 ->
+          check_index_exprs >>= fun () ->
+          Ok (Primitive pt)
+      | _ -> error loc (`TooManyIndices (expr, have, 2)) )
   | _ ->
       let expr = L.{ loc; value = Ast.Index (expr, index_exprs) } in
       error loc (`InvalidIndexOperation (expr, expr_type))
@@ -672,9 +569,7 @@ and check_call env loc f_expr arg_exprs =
 and valid_arg arg_type want_type =
   let open Type in
   match (arg_type, want_type) with
-  | TypeRef "atom", _ -> true
-  | TypeRef "rt_ds", TypeRef "depthBuffer" -> true
-  | TypeRef "rt_rgba", TypeRef "sampler2D" -> true
+  | Atom Singleton, _ -> true
   | _ -> arg_type = want_type
 
 and check_call_args f_name arg_exprs arg_types want_types =
@@ -745,88 +640,17 @@ and check_cast env loc t expr =
   check_type env loc t >>= fun to_type ->
   check_single_value_expr env expr >>= fun from_type ->
   match (from_type, to_type) with
-  (* Primitive Types *)
-  | TypeRef "int", TypeRef "uint"
-  | TypeRef "int", TypeRef "float"
-  | TypeRef "int", TypeRef "double"
-  | TypeRef "int", TypeRef "bool"
-  | TypeRef "uint", TypeRef "int"
-  | TypeRef "uint", TypeRef "float"
-  | TypeRef "uint", TypeRef "double"
-  | TypeRef "uint", TypeRef "bool"
-  | TypeRef "float", TypeRef "int"
-  | TypeRef "float", TypeRef "uint"
-  | TypeRef "float", TypeRef "double"
-  | TypeRef "float", TypeRef "bool"
-  | TypeRef "double", TypeRef "int"
-  | TypeRef "double", TypeRef "uint"
-  | TypeRef "double", TypeRef "float"
-  | TypeRef "double", TypeRef "bool"
-  | TypeRef "bool", TypeRef "int"
-  | TypeRef "bool", TypeRef "uint"
-  | TypeRef "bool", TypeRef "float"
-  | TypeRef "bool", TypeRef "double"
-  (* Vector Types *)
-  | TypeRef "ivec2", TypeRef "uvec2"
-  | TypeRef "ivec2", TypeRef "fvec2"
-  | TypeRef "ivec2", TypeRef "dvec2"
-  | TypeRef "ivec2", TypeRef "bvec2"
-  | TypeRef "ivec3", TypeRef "uvec3"
-  | TypeRef "ivec3", TypeRef "fvec3"
-  | TypeRef "ivec3", TypeRef "dvec3"
-  | TypeRef "ivec3", TypeRef "bvec3"
-  | TypeRef "ivec4", TypeRef "uvec4"
-  | TypeRef "ivec4", TypeRef "fvec4"
-  | TypeRef "ivec4", TypeRef "dvec4"
-  | TypeRef "ivec4", TypeRef "bvec4"
-  | TypeRef "uvec2", TypeRef "ivec2"
-  | TypeRef "uvec2", TypeRef "fvec2"
-  | TypeRef "uvec2", TypeRef "dvec2"
-  | TypeRef "uvec2", TypeRef "bvec2"
-  | TypeRef "uvec3", TypeRef "ivec3"
-  | TypeRef "uvec3", TypeRef "fvec3"
-  | TypeRef "uvec3", TypeRef "dvec3"
-  | TypeRef "uvec3", TypeRef "bvec3"
-  | TypeRef "uvec4", TypeRef "ivec4"
-  | TypeRef "uvec4", TypeRef "fvec4"
-  | TypeRef "uvec4", TypeRef "dvec4"
-  | TypeRef "uvec4", TypeRef "bvec4"
-  | TypeRef "fvec2", TypeRef "ivec2"
-  | TypeRef "fvec2", TypeRef "uvec2"
-  | TypeRef "fvec2", TypeRef "dvec2"
-  | TypeRef "fvec2", TypeRef "bvec2"
-  | TypeRef "fvec3", TypeRef "ivec3"
-  | TypeRef "fvec3", TypeRef "uvec3"
-  | TypeRef "fvec3", TypeRef "dvec3"
-  | TypeRef "fvec3", TypeRef "bvec3"
-  | TypeRef "fvec4", TypeRef "ivec4"
-  | TypeRef "fvec4", TypeRef "uvec4"
-  | TypeRef "fvec4", TypeRef "dvec4"
-  | TypeRef "fvec4", TypeRef "bvec4"
-  | TypeRef "dvec2", TypeRef "ivec2"
-  | TypeRef "dvec2", TypeRef "uvec2"
-  | TypeRef "dvec2", TypeRef "fvec2"
-  | TypeRef "dvec2", TypeRef "bvec2"
-  | TypeRef "dvec3", TypeRef "ivec3"
-  | TypeRef "dvec3", TypeRef "uvec3"
-  | TypeRef "dvec3", TypeRef "fvec3"
-  | TypeRef "dvec3", TypeRef "bvec3"
-  | TypeRef "dvec4", TypeRef "ivec4"
-  | TypeRef "dvec4", TypeRef "uvec4"
-  | TypeRef "dvec4", TypeRef "fvec4"
-  | TypeRef "dvec4", TypeRef "bvec4"
-  | TypeRef "bvec2", TypeRef "ivec2"
-  | TypeRef "bvec2", TypeRef "uvec2"
-  | TypeRef "bvec2", TypeRef "fvec2"
-  | TypeRef "bvec2", TypeRef "dvec2"
-  | TypeRef "bvec3", TypeRef "ivec3"
-  | TypeRef "bvec3", TypeRef "uvec3"
-  | TypeRef "bvec3", TypeRef "fvec3"
-  | TypeRef "bvec3", TypeRef "dvec3"
-  | TypeRef "bvec4", TypeRef "ivec4"
-  | TypeRef "bvec4", TypeRef "uvec4"
-  | TypeRef "bvec4", TypeRef "fvec4"
-  | TypeRef "bvec4", TypeRef "dvec4" ->
+  | Primitive Int, Primitive Bool
+  | Primitive Int, Primitive UInt
+  | Primitive Int, Primitive Float
+  | Primitive Int, Primitive Double
+  | Primitive UInt, Primitive Bool
+  | Primitive UInt, Primitive Int
+  | Primitive UInt, Primitive Float
+  | Primitive UInt, Primitive Double
+  | Primitive Float, Primitive Int
+  | Primitive Float, Primitive UInt
+  | Primitive Float, Primitive Double ->
       Ok to_type
   | _ -> error loc (`InvalidCast (from_type, to_type))
 
@@ -834,7 +658,7 @@ and check_single_value_expr env expr =
   let L.{ loc; _ } = expr in
   check_expr env expr >>= function
   | [] -> error loc (`UnitUsedAsValue expr)
-  | [ typ ] -> Ok typ
+  | [ typ ] -> check_type env loc typ
   | _ -> error loc (`MultipleValueInSingleValueContext expr)
 
 and check_expr env expr =
@@ -863,9 +687,9 @@ and check_expr env expr =
       check_single_value_expr env rhs >>= fun typ ->
       check_unop loc op typ >>= fun typ ->
       Ok [ typ ]
-  | BoolLiteral _ -> Ok [ Type.TypeRef "bool" ]
-  | IntLiteral _ -> Ok [ Type.TypeRef "int" ]
-  | FloatLiteral _ -> Ok [ Type.TypeRef "float" ]
+  | BoolLiteral _ -> Ok [ Primitive Bool ]
+  | IntLiteral _ -> Ok [ Primitive Int ]
+  | FloatLiteral _ -> Ok [ Primitive Float ]
   | Id id -> check_id env loc id
 
 and check_expr_list env have_exprs want_types less_errfn more_errfn errfn =
@@ -1056,7 +880,7 @@ and check_assignment env loc op lhs rhs =
 
 and check_if env loc if_cond if_true if_false =
   check_single_value_expr env if_cond >>= function
-  | Type.TypeRef "bool" ->
+  | Type.Primitive Bool ->
       let true_env = Env.enter_block_scope "if_true" loc env in
       let false_env = Env.enter_block_scope "if_false" loc env in
       check_stmt_list true_env if_true >>= fun (_, typed_if_true) ->
@@ -1064,7 +888,7 @@ and check_if env loc if_cond if_true if_false =
       let typed_stmt =
         TypedAst.If
           {
-            if_cond = ([ Type.TypeRef "bool" ], if_cond);
+            if_cond = ([ Type.Primitive Bool ], if_cond);
             if_true = typed_if_true;
             if_false = typed_if_false;
           }
@@ -1080,8 +904,7 @@ and check_iterable_type env expr =
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
   | Array (t, [ _ ]) -> Ok (expr_typ, t)
-  | TypeRef "atomset" -> Ok (expr_typ, TypeRef "atom")
-  | TypeRef "atomlist" -> Ok (expr_typ, TypeRef "atom")
+  | Atom (List | Set) -> Ok (expr_typ, Atom Singleton)
   | _ as t -> error loc (`CannotRangeOver (expr, t))
 
 and check_foriter env loc it_var it_expr body =
@@ -1109,13 +932,13 @@ and check_range_expr env expr =
   let L.{ loc; _ } = expr in
   check_single_value_expr env expr >>= fun expr_typ ->
   match expr_typ with
-  | TypeRef "int" -> Ok ()
+  | Primitive Int -> Ok ()
   | _ -> error loc (`NonIntegerRangeExpression (expr, expr_typ))
 
 and check_forrange env loc it_var from_expr to_expr body =
   check_range_expr env from_expr >>= fun () ->
   check_range_expr env to_expr >>= fun () ->
-  let int_typ = Type.TypeRef "int" in
+  let int_typ = Type.Primitive Int in
   let stmt_env =
     Env.(
       env

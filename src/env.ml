@@ -48,59 +48,6 @@ type t = {
 }
 [@@deriving to_yojson]
 
-let permutations l =
-  let rec aux left right = function
-    | [] -> [ left ]
-    | hd :: tl ->
-        let r = aux (hd :: left) [] (right @ tl) in
-        if tl <> [] then r @ aux left (hd :: right) tl else r
-  in
-  aux [] [] l
-
-let rec combinations k l =
-  if k <= 0 then [ [] ]
-  else
-    match l with
-    | [] -> []
-    | hd :: tl ->
-        let with_h = List.map (fun l -> hd :: l) (combinations (k - 1) tl) in
-        let without_h = combinations k tl in
-        with_h @ without_h
-
-let generate_fields_for_swizzle len swizzle =
-  let sizes = List.init len (( + ) 1) in
-  List.concat
-    (List.map
-       (fun k ->
-         let all_k_swizzles = List.map permutations (combinations k swizzle) in
-         List.concat all_k_swizzles)
-       sizes)
-
-let generate_fields size ptname tprefix =
-  let coord_base = Stream.of_string "xyzw" in
-  let color_base = Stream.of_string "rgba" in
-  let textr_base = Stream.of_string "stpq" in
-  let coord = List.init size (fun _ -> Stream.next coord_base) in
-  let color = List.init size (fun _ -> Stream.next color_base) in
-  let textr = List.init size (fun _ -> Stream.next textr_base) in
-  let all = [ coord; color; textr ] in
-  let swizzles =
-    List.concat (List.map (generate_fields_for_swizzle size) all)
-  in
-  let swizzles =
-    List.map (fun sw -> String.concat "" (List.map Char.escaped sw)) swizzles
-  in
-  let swizzles = List.sort Pervasives.compare swizzles in
-  List.map
-    (fun name ->
-      let sz = String.length name in
-      let t =
-        if sz = 1 then Type.TypeRef ptname
-        else Type.TypeRef (Printf.sprintf "%s%d" tprefix sz)
-      in
-      (name, t))
-    swizzles
-
 (* Find *)
 
 let rec find ~local name env f =
@@ -258,87 +205,108 @@ let generate_constructor_type base params ret =
           (Char.escaped params.[i], Type.TypeRef base)),
       [ Type.TypeRef ret ] )
 
-let generate_texture_type dim =
-  let open Type in
-  let lptype = Printf.sprintf "ivec%d" dim in
-  let ret = [ TypeRef "fvec4" ] in
-  Record [ ("load", Function ([ ("p", TypeRef lptype) ], ret)) ]
-
-let generate_sampler_type dim =
-  let open Type in
-  let lptype = Printf.sprintf "ivec%d" dim in
-  let sptype = Printf.sprintf "fvec%d" dim in
-  let ret = [ TypeRef "fvec4" ] in
-  Record
-    [ ("load", Function ([ ("p", TypeRef lptype) ], ret));
-      ("sample", Function ([ ("p", TypeRef sptype) ], ret))
-    ]
-
-let generate_vector_type dim base name =
-  let open Type in
-  let fields = generate_fields dim base name in
-  Record fields
-
 let global =
   let open Type in
   let builtin_types =
-    [ (* Primitive types *)
+    [ (* Primitive Types *)
       ("bool", Primitive Bool);
       ("int", Primitive Int);
       ("uint", Primitive UInt);
       ("float", Primitive Float);
       ("double", Primitive Double);
-      ("atom", Primitive Atom);
-      ("atomlist", Primitive AtomList);
-      ("atomset", Primitive AtomSet);
-      (* Built-in render target types *)
-      (* ("rt_rgb", RenderTarget RGB) TODO: doesn't seem widely supported *)
+      (* Vector Types *)
+      ("bvec2", Vector (Bool, 2));
+      ("bvec3", Vector (Bool, 3));
+      ("bvec4", Vector (Bool, 4));
+      ("ivec2", Vector (Int, 2));
+      ("ivec3", Vector (Int, 3));
+      ("ivec4", Vector (Int, 4));
+      ("uvec2", Vector (UInt, 2));
+      ("uvec3", Vector (UInt, 3));
+      ("uvec4", Vector (UInt, 4));
+      ("fvec2", Vector (Float, 2));
+      ("fvec3", Vector (Float, 3));
+      ("fvec4", Vector (Float, 4));
+      ("dvec2", Vector (Double, 2));
+      ("dvec3", Vector (Double, 3));
+      ("dvec4", Vector (Double, 4));
+      (* Matrix Types *)
+      ("bmat2", Matrix (Bool, 2, 2));
+      ("bmat3", Matrix (Bool, 3, 3));
+      ("bmat4", Matrix (Bool, 4, 4));
+      ("bmat2x2", Matrix (Bool, 2, 2));
+      ("bmat2x3", Matrix (Bool, 2, 3));
+      ("bmat2x4", Matrix (Bool, 2, 4));
+      ("bmat3x2", Matrix (Bool, 3, 2));
+      ("bmat3x3", Matrix (Bool, 3, 3));
+      ("bmat3x4", Matrix (Bool, 3, 4));
+      ("bmat4x2", Matrix (Bool, 4, 2));
+      ("bmat4x3", Matrix (Bool, 4, 3));
+      ("bmat4x4", Matrix (Bool, 4, 4));
+      ("imat2", Matrix (Int, 2, 2));
+      ("imat3", Matrix (Int, 3, 3));
+      ("imat4", Matrix (Int, 4, 4));
+      ("imat2x2", Matrix (Int, 2, 2));
+      ("imat2x3", Matrix (Int, 2, 3));
+      ("imat2x4", Matrix (Int, 2, 4));
+      ("imat3x2", Matrix (Int, 3, 2));
+      ("imat3x3", Matrix (Int, 3, 3));
+      ("imat3x4", Matrix (Int, 3, 4));
+      ("imat4x2", Matrix (Int, 4, 2));
+      ("imat4x3", Matrix (Int, 4, 3));
+      ("imat4x4", Matrix (Int, 4, 4));
+      ("umat2", Matrix (UInt, 2, 2));
+      ("umat3", Matrix (UInt, 3, 3));
+      ("umat4", Matrix (UInt, 4, 4));
+      ("umat2x2", Matrix (UInt, 2, 2));
+      ("umat2x3", Matrix (UInt, 2, 3));
+      ("umat2x4", Matrix (UInt, 2, 4));
+      ("umat3x2", Matrix (UInt, 3, 2));
+      ("umat3x3", Matrix (UInt, 3, 3));
+      ("umat3x4", Matrix (UInt, 3, 4));
+      ("umat4x2", Matrix (UInt, 4, 2));
+      ("umat4x3", Matrix (UInt, 4, 3));
+      ("umat4x4", Matrix (UInt, 4, 4));
+      ("fmat2", Matrix (Float, 2, 2));
+      ("fmat3", Matrix (Float, 3, 3));
+      ("fmat4", Matrix (Float, 4, 4));
+      ("fmat2x2", Matrix (Float, 2, 2));
+      ("fmat2x3", Matrix (Float, 2, 3));
+      ("fmat2x4", Matrix (Float, 2, 4));
+      ("fmat3x2", Matrix (Float, 3, 2));
+      ("fmat3x3", Matrix (Float, 3, 3));
+      ("fmat3x4", Matrix (Float, 3, 4));
+      ("fmat4x2", Matrix (Float, 4, 2));
+      ("fmat4x3", Matrix (Float, 4, 3));
+      ("fmat4x4", Matrix (Float, 4, 4));
+      ("dmat2", Matrix (Double, 2, 2));
+      ("dmat3", Matrix (Double, 3, 3));
+      ("dmat4", Matrix (Double, 4, 4));
+      ("dmat2x2", Matrix (Double, 2, 2));
+      ("dmat2x3", Matrix (Double, 2, 3));
+      ("dmat2x4", Matrix (Double, 2, 4));
+      ("dmat3x2", Matrix (Double, 3, 2));
+      ("dmat3x3", Matrix (Double, 3, 3));
+      ("dmat3x4", Matrix (Double, 3, 4));
+      ("dmat4x2", Matrix (Double, 4, 2));
+      ("dmat4x3", Matrix (Double, 4, 3));
+      ("dmat4x4", Matrix (Double, 4, 4));
+      (* Sampler Types *)
+      ("sampler1D", Sampler 1);
+      ("sampler2D", Sampler 2);
+      ("sampler3D", Sampler 3);
+      (* Texture Types *)
+      ("texture1D", Texture 1);
+      ("texture2D", Texture 2);
+      ("texture3D", Texture 3);
+      (* Render Target Types *)
+      ("rt_rgb", RenderTarget RGB);
       ("rt_rgba", RenderTarget RGBA);
       ("rt_ds", RenderTarget DS);
-      (* Built-in vector types *)
-      ("bvec2", generate_vector_type 2 "bool" "bvec");
-      ("bvec3", generate_vector_type 3 "bool" "bvec");
-      ("bvec4", generate_vector_type 4 "bool" "bvec");
-      ("ivec2", generate_vector_type 2 "int" "ivec");
-      ("ivec3", generate_vector_type 3 "int" "ivec");
-      ("ivec4", generate_vector_type 4 "int" "ivec");
-      ("uvec2", generate_vector_type 2 "uint" "uvec");
-      ("uvec3", generate_vector_type 3 "uint" "uvec");
-      ("uvec4", generate_vector_type 4 "uint" "uvec");
-      ("fvec2", generate_vector_type 2 "float" "fvec");
-      ("fvec3", generate_vector_type 3 "float" "fvec");
-      ("fvec4", generate_vector_type 4 "float" "fvec");
-      ("dvec2", generate_vector_type 2 "double" "dvec");
-      ("dvec3", generate_vector_type 3 "double" "dvec");
-      ("dvec4", generate_vector_type 4 "double" "dvec");
-      (* Built-in matrix types *)
-      ("fmat2", Array (TypeRef "float", [ OfInt 2; OfInt 2 ]));
-      ("fmat3", Array (TypeRef "float", [ OfInt 3; OfInt 3 ]));
-      ("fmat4", Array (TypeRef "float", [ OfInt 4; OfInt 4 ]));
-      ("fmat2x2", Array (TypeRef "float", [ OfInt 2; OfInt 2 ]));
-      ("fmat2x3", Array (TypeRef "float", [ OfInt 2; OfInt 3 ]));
-      ("fmat2x4", Array (TypeRef "float", [ OfInt 2; OfInt 4 ]));
-      ("fmat3x2", Array (TypeRef "float", [ OfInt 3; OfInt 2 ]));
-      ("fmat3x3", Array (TypeRef "float", [ OfInt 3; OfInt 3 ]));
-      ("fmat3x4", Array (TypeRef "float", [ OfInt 3; OfInt 4 ]));
-      ("fmat4x2", Array (TypeRef "float", [ OfInt 4; OfInt 2 ]));
-      ("fmat4x3", Array (TypeRef "float", [ OfInt 4; OfInt 3 ]));
-      ("fmat4x4", Array (TypeRef "float", [ OfInt 4; OfInt 4 ]));
-      ("dmat2", Array (TypeRef "double", [ OfInt 2; OfInt 2 ]));
-      ("dmat3", Array (TypeRef "double", [ OfInt 3; OfInt 3 ]));
-      ("dmat4", Array (TypeRef "double", [ OfInt 4; OfInt 4 ]));
-      ("dmat2x2", Array (TypeRef "double", [ OfInt 2; OfInt 2 ]));
-      ("dmat2x3", Array (TypeRef "double", [ OfInt 2; OfInt 3 ]));
-      ("dmat2x4", Array (TypeRef "double", [ OfInt 2; OfInt 4 ]));
-      ("dmat3x2", Array (TypeRef "double", [ OfInt 3; OfInt 2 ]));
-      ("dmat3x3", Array (TypeRef "double", [ OfInt 3; OfInt 3 ]));
-      ("dmat3x4", Array (TypeRef "double", [ OfInt 3; OfInt 4 ]));
-      ("dmat4x2", Array (TypeRef "double", [ OfInt 4; OfInt 2 ]));
-      ("dmat4x3", Array (TypeRef "double", [ OfInt 4; OfInt 3 ]));
-      ("dmat4x4", Array (TypeRef "double", [ OfInt 4; OfInt 4 ]));
-      (* Built-in opaque types *)
-      ("sampler2D", generate_sampler_type 2);
-      ("texture2D", generate_texture_type 2)
+      (* Atom Types *)
+      ("atom", Atom Singleton);
+      ("atomlist", Atom List);
+      ("atomset", Atom Set)
     ]
   in
   let builtin_functions =
