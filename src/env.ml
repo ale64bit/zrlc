@@ -115,6 +115,20 @@ let rec find_any_function ~local name env =
   | Some penv when not local -> find_any_function ~local name penv
   | _ -> None
 
+let rec find_all_functions ~local name env =
+  let all_functions_bindings =
+    List.find_all
+      (fun ((fname, _), _) -> fname = name)
+      (FunctionSymbolTable.bindings env.functions)
+  in
+  let all_functions =
+    List.map (fun (_, L.{ value = ft; _ }) -> ft) all_functions_bindings
+  in
+  match env.parent with
+  | Some penv when not local ->
+      all_functions @ find_all_functions ~local name penv
+  | _ -> all_functions
+
 let find_var ~local name env =
   let f env = env.vars in
   find ~local name env f

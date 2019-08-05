@@ -88,6 +88,8 @@ val find_function :
 
 val find_any_function : local:bool -> string -> t -> Type.t Located.t option
 
+val find_all_functions : local:bool -> string -> t -> Type.t list
+
 val find_var : local:bool -> string -> t -> Type.t Located.t option
 
 val find_val : local:bool -> string -> t -> Type.t Located.t option

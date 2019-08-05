@@ -15,8 +15,6 @@ type error =
   | `InvalidCast of Type.t * Type.t
   | `NotAnExpression of string
   | `NoSuchMember of Type.t * string
-  | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list
-  | `TooManyArguments of Ast.expression * Type.t list * Type.t list
   | `NotEnoughReturnArguments of Type.t list * Type.t list
   | `TooManyReturnArguments of Type.t list * Type.t list
   | `NotEnoughIndices of Ast.expression * int * int
@@ -34,7 +32,8 @@ type error =
   | `NonBoolIfCondition of Ast.expression * Type.t
   | `CannotRangeOver of Ast.expression * Type.t
   | `NonIntegerRangeExpression of Ast.expression * Type.t
-  | `MissingReturn of string ]
+  | `MissingReturn of string
+  | `NoMatchingFunction of string * Type.t list ]
 
 val check : Ast.root -> (TypedAst.root, [> error ] Located.t) result
 

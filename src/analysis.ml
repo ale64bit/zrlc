@@ -20,8 +20,6 @@ type error =
   | `InvalidCast of Type.t * Type.t
   | `NotAnExpression of string
   | `NoSuchMember of Type.t * string
-  | `NotEnoughArguments of Ast.expression * Type.t list * Type.t list
-  | `TooManyArguments of Ast.expression * Type.t list * Type.t list
   | `NotEnoughReturnArguments of Type.t list * Type.t list
   | `TooManyReturnArguments of Type.t list * Type.t list
   | `NotEnoughIndices of Ast.expression * int * int
@@ -39,7 +37,8 @@ type error =
   | `NonBoolIfCondition of Ast.expression * Type.t
   | `CannotRangeOver of Ast.expression * Type.t
   | `NonIntegerRangeExpression of Ast.expression * Type.t
-  | `MissingReturn of string ]
+  | `MissingReturn of string
+  | `NoMatchingFunction of string * Type.t list ]
 
 (* Helpers *)
 
@@ -520,9 +519,8 @@ and find_matching_overload env loc name arg_types =
   match Env.find_function ~local:false name arg_types env with
   | Some L.{ value = Type.Function (args, ret); _ } -> Ok (args, ret)
   | _ ->
-      error loc
-        (`Unimplemented
-          (Printf.sprintf "no matching function for call to '%s'" name))
+      let candidates = Env.find_all_functions ~local:false name env in
+      error loc (`NoMatchingFunction (name, candidates))
 
 and check_call env loc f_expr arg_exprs =
   List.fold_results
@@ -555,46 +553,38 @@ and check_call env loc f_expr arg_exprs =
       in
       let all_named = List.for_all is_named arg_exprs in
       let all_unnamed = List.for_all (fun x -> not (is_named x)) arg_exprs in
-      let have = List.length arg_types in
-      let want = List.length args in
       let want_types = List.map (fun (_, t) -> t) args in
-      if all_unnamed && have < want then
-        error loc (`NotEnoughArguments (f_expr, arg_types, want_types))
-      else if all_unnamed && have > want then
-        error loc (`TooManyArguments (f_expr, arg_types, want_types))
-      else
-        let name = Ast.string_of_expression f_expr in
-        match (is_function, is_pipeline, all_named, all_unnamed) with
-        (* Case #0: function + no arguments *)
-        | true, false, true, true ->
-            let () = assert (List.length arg_exprs = 0) in
-            check_call_args name arg_exprs arg_types want_types >>= fun () ->
-            Ok ret
-        (* Case #1: function + unnamed arguments *)
-        | true, false, false, true ->
-            check_call_args name arg_exprs arg_types want_types >>= fun () ->
-            Ok ret
-        (* Case #2: function + named arguments *)
-        | true, false, true, false ->
-            check_call_named_args ~strict:true loc name args arg_exprs
-              arg_types
-            >>= fun () ->
-            Ok ret
-        (* Case #3: pipeline + unnamed arguments *)
-        | false, true, false, true ->
-            (* TODO: create custom error *)
-            error loc
-              (`Unimplemented
-                "pipelines can be called only with named parameters")
-        (* Case #4: pipeline + named arguments *)
-        | false, true, true, _ ->
-            check_pipeline_call env loc name args arg_exprs arg_types
-            >>= fun () ->
-            Ok ret
-        | _, _, false, false ->
-            let expr = L.{ loc; value = Ast.Call (f_expr, arg_exprs) } in
-            error loc (`MixedArgumentStyle expr)
-        | _ -> error loc (`Unimplemented "NOT IMPLEMENTED: weird call...") )
+      let name = Ast.string_of_expression f_expr in
+      match (is_function, is_pipeline, all_named, all_unnamed) with
+      (* Case #0: function + no arguments *)
+      | true, false, true, true ->
+          let () = assert (List.length arg_exprs = 0) in
+          check_call_args name arg_exprs arg_types want_types >>= fun () ->
+          Ok ret
+      (* Case #1: function + unnamed arguments *)
+      | true, false, false, true ->
+          check_call_args name arg_exprs arg_types want_types >>= fun () ->
+          Ok ret
+      (* Case #2: function + named arguments *)
+      | true, false, true, false ->
+          check_call_named_args ~strict:true loc name args arg_exprs arg_types
+          >>= fun () ->
+          Ok ret
+      (* Case #3: pipeline + unnamed arguments *)
+      | false, true, false, true ->
+          (* TODO: create custom error *)
+          error loc
+            (`Unimplemented
+              "pipelines can be called only with named parameters")
+      (* Case #4: pipeline + named arguments *)
+      | false, true, true, _ ->
+          check_pipeline_call env loc name args arg_exprs arg_types
+          >>= fun () ->
+          Ok ret
+      | _, _, false, false ->
+          let expr = L.{ loc; value = Ast.Call (f_expr, arg_exprs) } in
+          error loc (`MixedArgumentStyle expr)
+      | _ -> error loc (`Unimplemented "NOT IMPLEMENTED: weird call...") )
   | _ -> error loc (`InvalidCallOperation (f_expr, f_type))
 
 and valid_arg arg_type want_type =

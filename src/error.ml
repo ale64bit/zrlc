@@ -54,22 +54,6 @@ let string_of_error Located.{ loc; value } =
   | `NoSuchMember (typ, id) ->
       Printf.sprintf "%s: error: type %s has no member %s" pos
         (Type.string_of_type typ) id
-  | `NotEnoughArguments (expr, have, want) ->
-      Printf.sprintf
-        "%s: error: not enough arguments in call to %s\n\
-         \thave (%s)\n\
-         \twant (%s)"
-        pos
-        (Ast.string_of_expression expr)
-        (String.concat ", " (List.map Type.string_of_type have))
-        (String.concat ", " (List.map Type.string_of_type want))
-  | `TooManyArguments (expr, have, want) ->
-      Printf.sprintf
-        "%s: error: too many arguments in call to %s\n\thave (%s)\n\twant (%s)"
-        pos
-        (Ast.string_of_expression expr)
-        (String.concat ", " (List.map Type.string_of_type have))
-        (String.concat ", " (List.map Type.string_of_type want))
   | `NotEnoughReturnArguments (have, want) ->
       Printf.sprintf
         "%s: error: not enough arguments to return\n\thave (%s)\n\twant (%s)"
@@ -147,6 +131,18 @@ let string_of_error Located.{ loc; value } =
   | `MissingReturn fname ->
       Printf.sprintf "%s: error: missing return in non-void function %s" pos
         fname
+  | `NoMatchingFunction (fname, candidates) ->
+      let notes =
+        String.concat "\n"
+          (List.map (fun t -> "\t" ^ Type.string_of_type t) candidates)
+      in
+      if String.length notes = 0 then
+        Printf.sprintf "%s: error: no matching function for call to '%s'." pos
+          fname
+      else
+        Printf.sprintf
+          "%s: error: no matching function for call to '%s'. Candidates:\n%s"
+          pos fname notes
 
 let debug_string_of_error Located.{ loc; value } =
   let loc = Located.string_of_location loc in
@@ -195,16 +191,6 @@ let debug_string_of_error Located.{ loc; value } =
   | `NoSuchMember (typ, id) ->
       Printf.sprintf "%s: NoSuchMember (typ=%s, id=%s)" loc
         (Type.string_of_type typ) id
-  | `NotEnoughArguments (expr, have, want) ->
-      Printf.sprintf "%s: NotEnoughArguments (expr=%s, have=%s, want=%s)" loc
-        (Ast.string_of_expression expr)
-        (String.concat ", " (List.map Type.string_of_type have))
-        (String.concat ", " (List.map Type.string_of_type want))
-  | `TooManyArguments (expr, have, want) ->
-      Printf.sprintf "%s: TooManyArguments (expr=%s, have=%s, want=%s)" loc
-        (Ast.string_of_expression expr)
-        (String.concat ", " (List.map Type.string_of_type have))
-        (String.concat ", " (List.map Type.string_of_type want))
   | `NotEnoughReturnArguments (have, want) ->
       Printf.sprintf "%s: NotEnoughReturnArguments (have=%s, want=%s)" loc
         (String.concat ", " (List.map Type.string_of_type have))
@@ -272,3 +258,9 @@ let debug_string_of_error Located.{ loc; value } =
         (Type.string_of_type t)
   | `MissingReturn fname ->
       Printf.sprintf "%s: MissingReturn fname=%s" loc fname
+  | `NoMatchingFunction (fname, candidates) ->
+      let candidates =
+        String.concat ", " (List.map Type.string_of_type candidates)
+      in
+      Printf.sprintf "%s: NoMatchingFunction: (fname=%s, candidates=[%s])" loc
+        fname candidates
