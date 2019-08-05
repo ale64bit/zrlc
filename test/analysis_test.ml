@@ -495,7 +495,7 @@ let test_no_such_member =
   in
   "test_no_such_member" >:: analysis_error_test src want_err
 
-let test_not_enough_arguments =
+let test_no_matching_function =
   let src =
     {|
     module test
@@ -508,42 +508,19 @@ let test_not_enough_arguments =
     |}
   in
   let want_loc = loc_of src (Pcre.quote "f1(1)") in
-  let expr = L.{ loc = loc_of ~n:1 src "f1"; value = Ast.Id "f1" } in
-  let have_types = List.init 1 (fun _ -> Type.Primitive Int) in
-  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
   let want_err =
     L.
       {
         loc = want_loc;
-        value = `NotEnoughArguments (expr, have_types, want_types);
+        value =
+          `NoMatchingFunction
+            ( "f1",
+              [ Type.Function
+                  ([ ("x", Primitive Int); ("y", Primitive Int) ], [])
+              ] );
       }
   in
-  "test_not_enough_arguments" >:: analysis_error_test src want_err
-
-let test_too_many_arguments =
-  let src =
-    {|
-    module test
-    pipeline P() {
-      def f1(x, y: int) {}
-      def f2() {
-        return f1(1, 2, 3)
-      }
-    }
-    |}
-  in
-  let want_loc = loc_of src (Pcre.quote "f1(1, 2, 3)") in
-  let expr = L.{ loc = loc_of ~n:1 src "f1"; value = Ast.Id "f1" } in
-  let have_types = List.init 3 (fun _ -> Type.Primitive Int) in
-  let want_types = List.init 2 (fun _ -> Type.Primitive Int) in
-  let want_err =
-    L.
-      {
-        loc = want_loc;
-        value = `TooManyArguments (expr, have_types, want_types);
-      }
-  in
-  "test_too_many_arguments" >:: analysis_error_test src want_err
+  "test_no_matching_function" >:: analysis_error_test src want_err
 
 let test_not_enough_return_arguments =
   let src =
@@ -694,31 +671,6 @@ let test_mixed_argument_style =
   in
   let want_err = L.{ loc = want_loc; value = `MixedArgumentStyle expr } in
   "test_mixed_argument_style" >:: analysis_error_test src want_err
-
-let test_invalid_argument =
-  let src =
-    {|
-    module test
-    pipeline P() {
-      def f1(x: int) {}
-      def f2() {
-        return f1(false)
-      }
-    }
-    |}
-  in
-  let want_loc = loc_of src "false" in
-  let have_type = Type.Primitive Bool in
-  let want_type = Type.Primitive Int in
-  let expr = L.{ loc = loc_of src "false"; value = Ast.BoolLiteral false } in
-  let want_err =
-    L.
-      {
-        loc = want_loc;
-        value = `InvalidArgument (expr, have_type, want_type, "f1");
-      }
-  in
-  "test_invalid_argument" >:: analysis_error_test src want_err
 
 let test_invalid_return_argument =
   let src =
@@ -917,15 +869,13 @@ let tests =
          test_invalid_index_operation;
          test_invalid_call_operation;
          test_no_such_member;
-         test_not_enough_arguments;
-         test_too_many_arguments;
+         test_no_matching_function;
          test_not_enough_return_arguments;
          test_too_many_return_arguments;
          test_not_enough_indices;
          test_too_many_indices;
          test_multiple_value_in_single_value_context;
          test_mixed_argument_style;
-         test_invalid_argument;
          test_invalid_return_argument;
          test_missing_named_argument;
          test_unexpected_named_argument;

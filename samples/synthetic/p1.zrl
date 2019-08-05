@@ -1,5 +1,5 @@
-# Using empty atom containers to drive control flow and change the clear color
-# of a render target (render pass is implicit since there are no pipelines).
+// Using empty atom containers to drive control flow and change the clear color
+// of a render target (render pass is implicit since there are no pipelines).
 module p1
 
 renderer R() {

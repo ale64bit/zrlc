@@ -1,6 +1,6 @@
 module simple
 
-pipeline Forward() {
+pipeline Forward(): fvec4 {
 
   def vertex(x, y: fvec3) {
     val z = pow(x, y)
@@ -11,6 +11,7 @@ pipeline Forward() {
 
 renderer Simple() {
 
-  def main() {}
+  def main(a: atom) { 
+  }
 }
 
