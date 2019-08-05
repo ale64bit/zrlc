@@ -84,6 +84,8 @@ let rec string_of_type = function
 
 let is_ref = function TypeRef _ -> true | _ -> false
 
+let is_record = function Record _ -> true | _ -> false
+
 module Common = struct
   let bool = Primitive Bool
 

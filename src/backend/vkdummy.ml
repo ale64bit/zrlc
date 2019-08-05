@@ -6,15 +6,40 @@ module MapString = Map.Make (String)
 module SetString = Set.Make (String)
 
 module Error = struct
-  type t = [ `Unsupported of string | `MissingRendererEntryPoint of string ]
+  type t =
+    [ `Unsupported of string
+    | `MissingRendererEntryPoint of string
+    | `InvalidUniformType of Type.t * string
+    | `StageMismatch of string * Type.t list * string * Type.t list
+    | `MissingInputBinding of string * string
+    | `MultipleDepthBuffers of string ]
 
   let string_of_error L.{ loc; value } =
     let pos = L.string_of_start_position loc in
-    let prefix = Printf.sprintf "%s: vkdummy error" pos in
+    let prefix = Printf.sprintf "%s: backend error" pos in
     match value with
     | `Unsupported msg -> Printf.sprintf "%s: unsupported: %s" prefix msg
     | `MissingRendererEntryPoint r ->
         Printf.sprintf "%s: renderer %s is missing the entry point" prefix r
+    | `InvalidUniformType (t, reason) ->
+        Printf.sprintf "%s: invalid uniform type '%s': %s" prefix
+          (Type.string_of_type t) reason
+    | `StageMismatch (src_name, src, dst_name, dst) ->
+        let src_sig = String.concat ", " (List.map Type.string_of_type src) in
+        let dst_sig = String.concat ", " (List.map Type.string_of_type dst) in
+        Printf.sprintf
+          "%s: stage output-input signatures must match:\n\
+           \t'%s' output signature: (%s)\n\
+           \t'%s' input signature: (%s)"
+          prefix src_name src_sig dst_name dst_sig
+    | `MissingInputBinding (pipeline, input) ->
+        Printf.sprintf "%s: missing binding for input %s in call to %s" prefix
+          input pipeline
+    | `MultipleDepthBuffers pipeline ->
+        Printf.sprintf
+          "%s: multiple depth buffers written in call to %s. At most one \
+           depth buffer can be written per pipeline call."
+          prefix pipeline
 end
 
 type graphics_pipeline = {
@@ -44,7 +69,7 @@ let array_type_size dims =
 let rec has_opaque_members env seen =
   let open Type in
   function
-  | Sampler 2 -> true
+  | Sampler _ | Texture _ -> true
   | Array (t, _) -> has_opaque_members env seen t
   | Record fields ->
       List.exists (fun (_, t) -> has_opaque_members env seen t) fields
@@ -2188,40 +2213,57 @@ template <> struct %s_fb<RenderTargetReference *> {
     (Ok ([], cc_header))
     root_elems
 
-let check_stage_chaining loc from_stage to_stage =
+let check_stage_chaining loc src_name from_stage dst_name to_stage =
   match (from_stage, to_stage) with
   | Type.Function (_, outputs), Type.Function (params, _) ->
       let _, inputs = List.split params in
       if outputs = inputs then Ok ()
-      else
-        error loc (`Unsupported "stage outputs must match next stage inputs")
-  | _ -> failwith "stages must have Function types"
+      else error loc (`StageMismatch (src_name, outputs, dst_name, inputs))
+  | _ -> failwith "stages must have Function type"
 
-let gen_uniform_bindings env set id t =
+let gen_uniform_bindings env loc set id t =
   let open Type in
   match t with
-  | Array (_, dims) ->
-      let count = array_type_size dims in
-      (* TODO: check nested type doesn't contain opaque members *)
-      [ (set, 0, count, id, t, "") ]
-  | Sampler 2 -> [ (set, 0, 1, id, t, "") ]
+  | Array (tt, dims) ->
+      if Type.is_ref tt && has_opaque_members env SetString.empty tt then
+        error loc
+          (`InvalidUniformType
+            (t, "uniform types cannot contain nested opaque members"))
+      else
+        let count = array_type_size dims in
+        Ok [ (set, 0, count, id, t, "") ]
+  | Sampler 2 -> Ok [ (set, 0, 1, id, t, "") ]
   | TypeRef name -> (
       match Env.find_type ~local:false name env with
       | Some L.{ value = Record fields as tt; _ } ->
-          (* TODO: check nested type doesn't contain opaque members *)
+          let top_type = t in
           if has_opaque_members env SetString.empty tt then
-            List.map
-              (fun (i, (name, t)) ->
-                let new_id = id ^ "_" ^ name ^ "_" in
-                match t with
-                | Array (_, dims) ->
-                    let count = array_type_size dims in
-                    (set, i, count, new_id, t, name)
-                | _ -> (set, i, 1, new_id, t, name))
-              (List.index fields)
-          else [ (set, 0, 1, id, t, "") ]
-      | _ -> [ (set, 0, 1, id, t, "") ] )
-  | _ -> failwith ("unexpected pipeline uniform type: " ^ Type.string_of_type t)
+            List.fold_left
+              (fun acc (i, (name, t)) ->
+                acc >>= fun bindings ->
+                if Type.is_ref t && has_opaque_members env SetString.empty t
+                then
+                  error loc
+                    (`InvalidUniformType
+                      ( top_type,
+                        "uniform types cannot contain nested opaque members" ))
+                else
+                  let new_id = id ^ "_" ^ name ^ "_" in
+                  match tt with
+                  | Array (_, dims) ->
+                      let count = array_type_size dims in
+                      let binding = (set, i, count, new_id, t, name) in
+                      Ok (binding :: bindings)
+                  | _ ->
+                      let binding = (set, i, 1, new_id, t, name) in
+                      Ok (binding :: bindings))
+              (Ok []) (List.index fields)
+          else Ok [ (set, 0, 1, id, t, "") ]
+      | _ -> Ok [ (set, 0, 1, id, t, "") ] )
+  | _ ->
+      failwith
+        (Printf.sprintf "unexpected pipeline uniform type: %s"
+           (Type.string_of_type t))
 
 let refactor_depth_test f =
   let TypedAst.{ fd_body; _ } = f in
@@ -2341,20 +2383,14 @@ let gen_graphics_pipeline loc pd =
   in
   let TypedAst.{ fd_type = vertex_type; _ } = vertex in
   let TypedAst.{ fd_type = fragment_type; _ } = fragment in
-  check_stage_chaining loc vertex_type fragment_type >>= fun () ->
+  check_stage_chaining loc "vertex" vertex_type "fragment" fragment_type
+  >>= fun () ->
   match (pd_type, vertex_type) with
   | Type.Function (uniforms, outputs), Type.Function (inputs, _) ->
       let uniform_set =
         List.fold_left
           (fun s (i, (name, _)) -> MapString.add name i s)
           MapString.empty (List.index uniforms)
-      in
-      let uniforms =
-        List.flatten
-          List.(
-            map
-              (fun (i, (name, t)) -> gen_uniform_bindings pd_env i name t)
-              (index uniforms))
       in
       let _, inputs =
         List.fold_left
@@ -2363,6 +2399,13 @@ let gen_graphics_pipeline loc pd =
           (0, []) inputs
       in
       let outputs = List.index outputs in
+      List.fold_left
+        (fun acc (i, (name, t)) ->
+          acc >>= fun uniforms ->
+          gen_uniform_bindings pd_env loc i name t >>= fun bindings ->
+          Ok (bindings @ uniforms))
+        (Ok []) (List.index uniforms)
+      >>= fun uniforms ->
       Ok
         {
           gp_name = pd_name;
