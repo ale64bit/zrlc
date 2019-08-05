@@ -267,6 +267,150 @@ let create_depth_render_target =
       1, 1, format, VK_IMAGE_TILING_OPTIMAL, usage, 
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
 
+let bind_sampled_image =
+  Function.(
+    empty "BindSampledImage" |> set_return_type "void"
+    |> add_param ("VkDescriptorSet", "set")
+    |> add_param ("uint32_t", "binding")
+    |> add_param ("SampledImageReference&", "ref")
+    |> add_param ("std::vector<std::unique_ptr<zrl::Image>>&", "images")
+    |> append_code_section
+         {|
+      const VkExtent3D extent = {ref.width, ref.height, 1};
+      const bool is_empty  = extent.width * extent.height * extent.depth == 0;
+
+      // Create sampler if needed.
+      VkSampler sampler = VK_NULL_HANDLE;
+      if (is_empty) {
+        sampler = dummy_sampler_;
+      } else {
+        auto it = sampler_cache_.find(ref.sampler_create_info);
+        if (it == sampler_cache_.end()) {
+          DLOG << name_ << ": creating new sampler\n";
+          CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
+                                   &ref.sampler_create_info, nullptr, &sampler));
+          sampler_cache_[ref.sampler_create_info] = sampler;
+        } else {
+          sampler = it->second;
+        }
+      }
+
+      VkImageView img_view = VK_NULL_HANDLE;
+      VkImageLayout img_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+      if (ref.rt_ref != nullptr) { 
+        // Load image from render target.
+        img_view = ref.rt_ref->attachment;
+        img_layout = VK_IMAGE_LAYOUT_GENERAL;
+      } else { 
+        // Create image resource.
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT;
+        img_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        std::unique_ptr<zrl::Image> img;
+        VkDeviceSize src_offset = 0;
+        if (is_empty) {
+          LOG(WARNING) << name_ << ": missing texture, will use dummy 4x4 image\n";
+          img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 1,
+              VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, 
+              usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        } else {
+          uint32_t mip_levels = 1;
+          if (ref.build_mipmaps) {
+            VkFormatProperties props = core_.GetLogicalDevice()
+                                            .GetPhysicalDevice()
+                                            .GetFormatProperties(ref.format);
+            CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT,
+                     "BLIT_SRC is required for building mipmaps");
+            CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT,
+                     "BLIT_DST is required for building mipmaps");
+            mip_levels = std::floor(std::log2(std::max(ref.width, ref.height))) + 1;
+            usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+          }
+          img = std::make_unique<zrl::Image>(core_,
+              extent, mip_levels, 1, ref.format, VK_IMAGE_TILING_OPTIMAL, usage,
+              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+          src_offset = staging_buffer_->PushData(ref.size, ref.image_data);
+          delete ref.image_data;
+        }
+
+        // Schedule copy and barriers.
+        VkImageMemoryBarrier pre_copy_barrier = {};
+        pre_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        pre_copy_barrier.pNext = nullptr;
+        pre_copy_barrier.srcAccessMask = 0;
+        pre_copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        pre_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        pre_copy_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        pre_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        pre_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        pre_copy_barrier.image = img->GetHandle();
+        pre_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        pre_copy_barrier.subresourceRange.baseMipLevel = 0;
+        pre_copy_barrier.subresourceRange.levelCount = 1;
+        pre_copy_barrier.subresourceRange.baseArrayLayer = 0;
+        pre_copy_barrier.subresourceRange.layerCount = 1;
+        pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
+
+        if (!is_empty) {
+          VkBufferImageCopy buffer_image_copy = {};
+          buffer_image_copy.bufferOffset = src_offset;
+          buffer_image_copy.bufferRowLength = 0;
+          buffer_image_copy.bufferImageHeight = 0;
+          buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          buffer_image_copy.imageSubresource.mipLevel = 0;
+          buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
+          buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
+          buffer_image_copy.imageOffset = {0, 0, 0};
+          buffer_image_copy.imageExtent = img->GetExtent();
+          pending_image_copies_.push_back(
+              std::make_tuple(img->GetHandle(), buffer_image_copy, ref.build_mipmaps));
+        }
+
+        if (!ref.build_mipmaps) {
+          VkImageMemoryBarrier post_copy_barrier = {};
+          post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+          post_copy_barrier.pNext = nullptr;
+          post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+          post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+          post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+          post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+          post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+          post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+          post_copy_barrier.image = img->GetHandle();
+          post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          post_copy_barrier.subresourceRange.baseMipLevel = 0;
+          post_copy_barrier.subresourceRange.levelCount = 1;
+          post_copy_barrier.subresourceRange.baseArrayLayer = 0;
+          post_copy_barrier.subresourceRange.layerCount = 1;
+          pending_post_copy_image_barriers_.push_back(post_copy_barrier);
+        }
+        img_view = img->GetViewHandle();
+        images.push_back(std::move(img));
+      }
+
+      // Update descriptor set.
+      VkDescriptorImageInfo image_info = {};
+      image_info.sampler = sampler;
+      image_info.imageView = img_view; 
+      image_info.imageLayout = img_layout;
+
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.pNext = nullptr;
+      write.dstSet = set;
+      write.dstBinding = binding;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      write.pImageInfo = &image_info;
+      write.pBufferInfo = nullptr;
+      write.pTexelBufferView = nullptr;
+
+      vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
+                             1, &write, 0, nullptr);
+    |})
+
 let ctor_body =
   {|  const auto &device = core_.GetLogicalDevice();
   //======================================================================
@@ -369,10 +513,11 @@ let ctor_body =
   DLOG << name_ << ": initializing render targets\n";
   rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
   for (size_t i = 0; i < rt_builtin_screen_img_view_.size(); ++i) {
-    VkImageView view = CreateImageView(core_.GetSwapchain().GetImages()[i],
+    VkImage img = core_.GetSwapchain().GetImages()[i];
+    VkImageView view = CreateImageView(img,
                                        core_.GetSwapchain().GetSurfaceFormat());
     rt_builtin_screen_img_view_[i] = view;
-    rt_builtin_screen_ref_.push_back({VK_FORMAT_B8G8R8A8_UNORM, view, 
+    rt_builtin_screen_ref_.push_back({VK_FORMAT_B8G8R8A8_UNORM, view, img,
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
@@ -438,12 +583,12 @@ let begin_recording =
     rt_builtin_screen_ref_.clear();
     rt_builtin_screen_img_view_.resize(core_.GetSwapchain().GetImageCount());
     for (size_t i = 0; i < rt_builtin_screen_img_view_.size(); ++i) {
+      VkImage img = core_.GetSwapchain().GetImages()[i];
       VkImageView view =
-          CreateImageView(core_.GetSwapchain().GetImages()[i],
-                          core_.GetSwapchain().GetSurfaceFormat());
+          CreateImageView(img, core_.GetSwapchain().GetSurfaceFormat());
       rt_builtin_screen_img_view_[i] = view;
       rt_builtin_screen_ref_.push_back(
-          {VK_FORMAT_B8G8R8A8_UNORM, view, VK_IMAGE_LAYOUT_UNDEFINED,
+          {VK_FORMAT_B8G8R8A8_UNORM, view, img, VK_IMAGE_LAYOUT_UNDEFINED,
            VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
            VkClearValue{}});
     }
@@ -833,6 +978,7 @@ let empty rname pkg =
         |> add_private_function create_image_view
         |> add_private_function create_color_render_target
         |> add_private_function create_depth_render_target
+        |> add_private_function bind_sampled_image
         |> add_private_function get_or_create_render_pass
         |> add_private_function get_or_create_framebuffer
         |> add_private_function begin_recording

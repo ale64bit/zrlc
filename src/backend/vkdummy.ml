@@ -610,135 +610,8 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
     Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set binding
       count name (Type.string_of_type t)
   in
-  Printf.sprintf
-    {|%s
-    {
-      const VkExtent3D extent = {%s.width, %s.height, 1};
-      const bool is_empty  = extent.width * extent.height * extent.depth == 0;
-
-      // Create sampler if needed.
-      VkSampler sampler = VK_NULL_HANDLE;
-      if (is_empty) {
-        sampler = dummy_sampler_;
-      } else {
-        auto it = sampler_cache_.find(%s.sampler_create_info);
-        if (it == sampler_cache_.end()) {
-          DLOG << name_ << ": creating new sampler\n";
-          CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
-                                   &%s.sampler_create_info, nullptr, &sampler));
-          sampler_cache_[%s.sampler_create_info] = sampler;
-        } else {
-          sampler = it->second;
-        }
-      }
-
-      // Create image resource.
-      const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  
-                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                      VK_IMAGE_USAGE_SAMPLED_BIT;
-
-      std::unique_ptr<zrl::Image> img;
-      VkDeviceSize src_offset = 0;
-      if (is_empty) {
-        LOG(WARNING) << name_ << ": missing texture, will use dummy!\n";
-        img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 1,
-            VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, 
-            usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-      } else {
-        uint32_t mip_levels = 1;
-        if (%s.build_mipmaps) {
-          VkFormatProperties props = core_.GetLogicalDevice()
-                                          .GetPhysicalDevice()
-                                          .GetFormatProperties(%s.format);
-          CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT,
-                   "BLIT_SRC is required for building mipmaps");
-          CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT,
-                   "BLIT_DST is required for building mipmaps");
-          mip_levels = std::floor(std::log2(std::max(%s.width, %s.height))) + 1;
-        }
-        img = std::make_unique<zrl::Image>(core_,
-            extent, mip_levels, 1, %s.format, VK_IMAGE_TILING_OPTIMAL, usage,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        src_offset = staging_buffer_->PushData(%s.size, %s.image_data);
-        delete %s.image_data;
-      }
-
-      // Schedule copy and barriers.
-      VkImageMemoryBarrier pre_copy_barrier = {};
-      pre_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-      pre_copy_barrier.pNext = nullptr;
-      pre_copy_barrier.srcAccessMask = 0;
-      pre_copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-      pre_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      pre_copy_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-      pre_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      pre_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      pre_copy_barrier.image = img->GetHandle();
-      pre_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      pre_copy_barrier.subresourceRange.baseMipLevel = 0;
-      pre_copy_barrier.subresourceRange.levelCount = 1;
-      pre_copy_barrier.subresourceRange.baseArrayLayer = 0;
-      pre_copy_barrier.subresourceRange.layerCount = 1;
-      pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
-
-      if (!is_empty) {
-        VkBufferImageCopy buffer_image_copy = {};
-        buffer_image_copy.bufferOffset = src_offset;
-        buffer_image_copy.bufferRowLength = 0;
-        buffer_image_copy.bufferImageHeight = 0;
-        buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        buffer_image_copy.imageSubresource.mipLevel = 0;
-        buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
-        buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
-        buffer_image_copy.imageOffset = {0, 0, 0};
-        buffer_image_copy.imageExtent = img->GetExtent();
-        pending_image_copies_.push_back(
-            std::make_tuple(img->GetHandle(), buffer_image_copy, %s.build_mipmaps));
-      }
-
-      if (!%s.build_mipmaps) {
-        VkImageMemoryBarrier post_copy_barrier = {};
-        post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        post_copy_barrier.pNext = nullptr;
-        post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        post_copy_barrier.image = img->GetHandle();
-        post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        post_copy_barrier.subresourceRange.baseMipLevel = 0;
-        post_copy_barrier.subresourceRange.levelCount = 1;
-        post_copy_barrier.subresourceRange.baseArrayLayer = 0;
-        post_copy_barrier.subresourceRange.layerCount = 1;
-        pending_post_copy_image_barriers_.push_back(post_copy_barrier);
-      }
-
-      // Update descriptor set.
-      VkDescriptorImageInfo image_info = {};
-      image_info.sampler = sampler;
-      image_info.imageView = img->GetViewHandle();
-      image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-      VkWriteDescriptorSet write = {};
-      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      write.pNext = nullptr;
-      write.dstSet = set;
-      write.dstBinding = %d;
-      write.dstArrayElement = 0;
-      write.descriptorCount = 1;
-      write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      write.pImageInfo = &image_info;
-      write.pBufferInfo = nullptr;
-      write.pTexelBufferView = nullptr;
-
-      vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
-                             1, &write, 0, nullptr);
-      images.push_back(std::move(img));
-    }|}
-    comment data data data data data data data data data data data data data
-    data data binding
+  Printf.sprintf "%s\nBindSampledImage(set, %d, %s, images);" comment binding
+    data
 
 let gen_ubo_binding_write set binding count name t wrapped_name =
   let data =
@@ -1429,10 +1302,10 @@ let gen_render_targets rd_type r =
               in
               let ref_ctor_args =
                 Printf.sprintf
-                  "{%s, %s.GetViewHandle(), VK_IMAGE_LAYOUT_UNDEFINED, \
-                   VK_IMAGE_LAYOUT_UNDEFINED, \
+                  "{%s, %s.GetViewHandle(), %s.GetHandle(), \
+                   VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED, \
                    VK_ATTACHMENT_LOAD_OP_DONT_CARE, {}}"
-                  format img_id
+                  format img_id img_id
               in
               let r =
                 RendererEnv.
@@ -1783,7 +1656,7 @@ let descriptor_set_register_struct =
 
 let merge_hash_function =
   {|template <class T> inline void MergeHash(size_t &h1, const T h2) {
-  h1 = h1 * 31 + static_cast<size_t>(h2);
+    h1 = h1*31 + static_cast<size_t>(h2);
 }|}
 
 let expand_extent_function =
@@ -1804,6 +1677,7 @@ let render_target_reference_struct =
   {|struct RenderTargetReference {
   const VkFormat format = VK_FORMAT_UNDEFINED;
   const VkImageView attachment = VK_NULL_HANDLE;
+  const VkImage image = VK_NULL_HANDLE;
   VkImageLayout current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1813,6 +1687,7 @@ let render_target_reference_struct =
 let sampled_image_reference_struct =
   {|struct SampledImageReference {
   VkSamplerCreateInfo sampler_create_info;
+  RenderTargetReference *rt_ref = nullptr;
   VkFormat format = VK_FORMAT_UNDEFINED;
   VkDeviceSize size = 0;
   uint32_t width = 0;
@@ -2260,8 +2135,25 @@ let gen_types_header pipelines root_elems cpp_constants =
           match pipeline.gp_declaration.pd_type with
           | Type.Function (params, _) ->
               List.map
-                (fun (name, _) ->
-                  Printf.sprintf "template<class T> struct %s_%s;" pname name)
+                (fun (name, t) ->
+                  match t with
+                  | Type.Sampler 2 ->
+                      (* Generate automatic providers for render targets. *)
+                      Printf.sprintf
+                        {|template<class T> struct %s_%s;
+template <> struct %s_fb<RenderTargetReference *> {
+  void operator()(RenderTargetReference *const &rt_ref, uint32_t &uid,
+                  SampledImageReference *data) const noexcept {
+    uid = 0;
+    if (data != nullptr) {
+      data->rt_ref = rt_ref;
+    }
+  }
+};|}
+                        pname name pname
+                  | _ ->
+                      Printf.sprintf "template<class T> struct %s_%s;" pname
+                        name)
                 params
           | _ -> failwith "pipeline types must be Function types"
         in
@@ -2312,6 +2204,7 @@ let gen_uniform_bindings env set id t =
       let count = array_type_size dims in
       (* TODO: check nested type doesn't contain opaque members *)
       [ (set, 0, count, id, t, "") ]
+  | Sampler 2 -> [ (set, 0, 1, id, t, "") ]
   | TypeRef name -> (
       match Env.find_type ~local:false name env with
       | Some L.{ value = Record fields as tt; _ } ->
