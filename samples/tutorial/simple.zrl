@@ -1,24 +1,16 @@
 module simple
 
-pipeline Forward(): fvec4 {
+pipeline Forward() {
 
-  def vertex(pos, col: fvec3): fvec3 {
-    builtin.position = fvec4(pos.x, pos.y, pos.z, 1.0)
-    return col
+  def vertex(x, y: fvec3) {
+    val z = pow(x, y)
   }
 
-  def fragment(col: fvec3): fvec4 {
-    return fvec4(col.x, col.y, col.z, 1.0)
-  }
+  def fragment() {}
 }
 
 renderer Simple() {
 
-  def main(geometry: atomlist) {
-    builtin.screen = fvec4(0.0, 0.0, 0.0, 1.0) 
-    for g in geometry {
-      builtin.screen += Forward(pos = g)
-    }
-  }
+  def main() {}
 }
 

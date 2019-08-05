@@ -44,7 +44,7 @@ let array_type_size dims =
 let rec has_opaque_members env seen =
   let open Type in
   function
-  | TypeRef "sampler2D" -> true
+  | Sampler 2 -> true
   | Array (t, _) -> has_opaque_members env seen t
   | Record fields ->
       List.exists (fun (_, t) -> has_opaque_members env seen t) fields
@@ -57,81 +57,98 @@ let rec has_opaque_members env seen =
         | _ -> false )
   | _ -> false
 
-let rec glsl_type_locations env = function
-  | Type.TypeRef "int" -> 1
-  | Type.TypeRef "bool" -> 1
-  | Type.TypeRef "float" -> 1
-  | Type.TypeRef "fvec2" -> 1
-  | Type.TypeRef "fvec3" -> 1
-  | Type.TypeRef "fvec4" -> 1
-  | Type.TypeRef "ivec2" -> 1
-  | Type.TypeRef "ivec3" -> 1
-  | Type.TypeRef "ivec4" -> 1
-  | Type.TypeRef "uvec2" -> 1
-  | Type.TypeRef "uvec3" -> 1
-  | Type.TypeRef "uvec4" -> 1
-  | Type.TypeRef "fmat2" -> 2
-  | Type.TypeRef "fmat3" -> 3
-  | Type.TypeRef "fmat4" -> 4
-  | Type.Array (t, dims) ->
+let rec glsl_type_locations env =
+  let open Type in
+  function
+  | Primitive Int -> 1
+  | Primitive Bool -> 1
+  | Primitive Float -> 1
+  | Vector (Float, 2) -> 1
+  | Vector (Float, 3) -> 1
+  | Vector (Float, 4) -> 1
+  | Vector (Int, 2) -> 1
+  | Vector (Int, 3) -> 1
+  | Vector (Int, 4) -> 1
+  | Vector (UInt, 2) -> 1
+  | Vector (UInt, 3) -> 1
+  | Vector (UInt, 4) -> 1
+  | Matrix (Float, 2, 2) -> 2
+  | Matrix (Float, 3, 3) -> 3
+  | Matrix (Float, 4, 4) -> 4
+  | Array (t, dims) ->
       let size = array_type_size dims in
       size * glsl_type_locations env t
-  | Type.Record fields ->
+  | Record fields ->
       List.fold_left
         (fun acc (_, t) -> acc + glsl_type_locations env t)
         0 fields
-  | Type.TypeRef name -> (
+  | TypeRef name -> (
       match Env.find_type ~local:false name env with
-      | Some L.{ value = Type.Record _ as r; _ } -> glsl_type_locations env r
+      | Some L.{ value = Record _ as r; _ } -> glsl_type_locations env r
       | Some L.{ value = t; _ } ->
-          failwith ("unsupported type: " ^ Type.string_of_type t)
+          failwith ("unsupported type: " ^ string_of_type t)
       | None -> failwith ("no such type: " ^ name) )
-  | t -> failwith ("unsupported type: " ^ Type.string_of_type t)
+  | t ->
+      failwith
+        (Printf.sprintf "unsupported type: '%s'" (Type.string_of_type t))
 
-let rec zrl_to_glsl_type = function
-  | Type.TypeRef "int" -> "int"
-  | Type.TypeRef "float" -> "float"
-  | Type.TypeRef "fvec2" -> "vec2"
-  | Type.TypeRef "fvec3" -> "vec3"
-  | Type.TypeRef "fvec4" -> "vec4"
-  | Type.TypeRef "ivec2" -> "ivec2"
-  | Type.TypeRef "ivec3" -> "ivec3"
-  | Type.TypeRef "ivec4" -> "ivec4"
-  | Type.TypeRef "uvec2" -> "uvec2"
-  | Type.TypeRef "uvec3" -> "uvec3"
-  | Type.TypeRef "uvec4" -> "uvec4"
-  | Type.TypeRef "fmat2" -> "mat2"
-  | Type.TypeRef "fmat3" -> "mat3"
-  | Type.TypeRef "fmat4" -> "mat4"
-  | Type.TypeRef s -> s
-  | Type.Array (t, dims) ->
+let rec zrl_to_glsl_type =
+  let open Type in
+  function
+  | Primitive Bool -> "bool"
+  | Primitive Int -> "int"
+  | Primitive Float -> "float"
+  | Vector (Float, 2) -> "vec2"
+  | Vector (Float, 3) -> "vec3"
+  | Vector (Float, 4) -> "vec4"
+  | Vector (Int, 2) -> "ivec2"
+  | Vector (Int, 3) -> "ivec3"
+  | Vector (Int, 4) -> "ivec4"
+  | Vector (UInt, 2) -> "uvec2"
+  | Vector (UInt, 3) -> "uvec3"
+  | Vector (UInt, 4) -> "uvec4"
+  | Matrix (Float, 2, 2) -> "mat2"
+  | Matrix (Float, 3, 3) -> "mat3"
+  | Matrix (Float, 4, 4) -> "mat4"
+  | Sampler 2 -> "sampler2D"
+  | TypeRef s -> s
+  | Array (t, dims) ->
       let string_of_dim = function
-        | Type.OfInt i -> Printf.sprintf "[%d]" i
+        | OfInt i -> Printf.sprintf "[%d]" i
         | _ -> failwith "unsupported array dimension"
       in
       let dims = List.map string_of_dim dims in
       Printf.sprintf "%s%s" (zrl_to_glsl_type t) (String.concat "" dims)
-  | t -> failwith "unsupported type: " ^ Type.string_of_type t
+  | t ->
+      failwith
+        (Printf.sprintf "unsupported type: '%s'" (Type.string_of_type t))
 
 let rec zrl_to_cpp_type =
   let open Type in
   function
-  | TypeRef "int" -> "int32_t"
-  | TypeRef "uint" -> "uint32_t"
-  | TypeRef "bool" -> "VkBool32"
-  | TypeRef "float" -> "float"
-  | TypeRef "fvec2" -> "glm::fvec2"
-  | TypeRef "fvec3" -> "glm::fvec3"
-  | TypeRef "fvec4" -> "glm::fvec4"
-  | TypeRef "ivec2" -> "glm::ivec2"
-  | TypeRef "ivec3" -> "glm::ivec3"
-  | TypeRef "ivec4" -> "glm::ivec4"
-  | TypeRef "uvec2" -> "glm::uvec2"
-  | TypeRef "uvec3" -> "glm::uvec3"
-  | TypeRef "uvec4" -> "glm::uvec4"
-  | TypeRef "fmat2" -> "glm::fmat2"
-  | TypeRef "fmat3" -> "glm::fmat3"
-  | TypeRef "fmat4" -> "glm::fmat4"
+  | Primitive Int -> "int32_t"
+  | Primitive UInt -> "uint32_t"
+  | Primitive Bool -> "VkBool32"
+  | Primitive Float -> "float"
+  | Primitive Double -> "double"
+  | Vector (Bool, 2) -> "glm::bvec2"
+  | Vector (Bool, 3) -> "glm::bvec3"
+  | Vector (Bool, 4) -> "glm::bvec4"
+  | Vector (Float, 2) -> "glm::fvec2"
+  | Vector (Float, 3) -> "glm::fvec3"
+  | Vector (Float, 4) -> "glm::fvec4"
+  | Vector (Int, 2) -> "glm::ivec2"
+  | Vector (Int, 3) -> "glm::ivec3"
+  | Vector (Int, 4) -> "glm::ivec4"
+  | Vector (UInt, 2) -> "glm::uvec2"
+  | Vector (UInt, 3) -> "glm::uvec3"
+  | Vector (UInt, 4) -> "glm::uvec4"
+  | Vector (Double, 2) -> "glm::dvec2"
+  | Vector (Double, 3) -> "glm::dvec3"
+  | Vector (Double, 4) -> "glm::dvec4"
+  | Matrix (Float, 2, 2) -> "glm::fmat2"
+  | Matrix (Float, 3, 3) -> "glm::fmat3"
+  | Matrix (Float, 4, 4) -> "glm::fmat4"
   | Array (t, dims) ->
       let arr t = function
         | OfInt i -> Printf.sprintf "std::array<%s, %d>" t i
@@ -143,10 +160,10 @@ let rec zrl_to_cpp_type =
         | d :: ds -> arr (aux ds) d
       in
       aux dims
-  | TypeRef "rt_rgb" -> "RenderTargetReference*"
-  | TypeRef "rt_rgba" -> "RenderTargetReference*"
-  | TypeRef "rt_ds" -> "RenderTargetReference*"
-  | TypeRef "sampler2D" -> "SampledImageReference"
+  | RenderTarget RGB -> "RenderTargetReference*"
+  | RenderTarget RGBA -> "RenderTargetReference*"
+  | RenderTarget DS -> "RenderTargetReference*"
+  | Sampler 2 -> "SampledImageReference"
   | TypeRef s -> s
   | t -> failwith "unsupported type: " ^ string_of_type t
 
@@ -243,17 +260,12 @@ let rec gen_cpp_expression env L.{ value; _ } =
   | FloatLiteral f -> string_of_float f
   | Id id -> gen_cpp_builtin_call_id id
 
-let is_rt_clear_or_write env op lvalues =
+let is_rt_clear_or_write op lvalues =
   let open Type in
-  let is_rt tname =
-    match Env.find_type ~local:false tname env with
-    | Some L.{ value = RenderTarget _; _ } -> true
-    | _ -> false
-  in
   match op with
   | Ast.Assign | Ast.AssignPlus ->
       List.for_all
-        (function [ TypeRef tname ], _ when is_rt tname -> true | _ -> false)
+        (function [ RenderTarget _ ], _ -> true | _ -> false)
         lvalues
   | _ -> false
 
@@ -275,7 +287,7 @@ let gen_clear env lhs rhs f =
       let clear_value_expr = gen_cpp_expression env rhs in
       let update_clear_value =
         match ts with
-        | [ Type.TypeRef "rt_ds" ] ->
+        | [ Type.RenderTarget DS ] ->
             Printf.sprintf "_rt->clear_value.depthStencil.depth = %s;"
               clear_value_expr
         | _ ->
@@ -331,22 +343,22 @@ let gen_shader_stage_create_infos p =
 let format_of_vertex_input_type t =
   let open Type in
   match t with
-  | TypeRef "bool" -> "VK_FORMAT_R32_UINT"
-  | TypeRef "float" -> "VK_FORMAT_R32_SFLOAT"
-  | TypeRef "int" -> "VK_FORMAT_R32_SINT"
-  | TypeRef "uint" -> "VK_FORMAT_R32_UINT"
-  | TypeRef "bvec2" -> "VK_FORMAT_R32G32_UINT"
-  | TypeRef "bvec3" -> "VK_FORMAT_R32G32B32_UINT"
-  | TypeRef "bvec4" -> "VK_FORMAT_R32G32B32A32_UINT"
-  | TypeRef "fvec2" -> "VK_FORMAT_R32G32_SFLOAT"
-  | TypeRef "fvec3" -> "VK_FORMAT_R32G32B32_SFLOAT"
-  | TypeRef "fvec4" -> "VK_FORMAT_R32G32B32A32_SFLOAT"
-  | TypeRef "ivec2" -> "VK_FORMAT_R32G32_SINT"
-  | TypeRef "ivec3" -> "VK_FORMAT_R32G32B32_SINT"
-  | TypeRef "ivec4" -> "VK_FORMAT_R32G32B32A32_SINT"
-  | TypeRef "uvec2" -> "VK_FORMAT_R32G32_UINT"
-  | TypeRef "uvec3" -> "VK_FORMAT_R32G32B32_UINT"
-  | TypeRef "uvec4" -> "VK_FORMAT_R32G32B32A32_UINT"
+  | Primitive Bool -> "VK_FORMAT_R32_UINT"
+  | Primitive Int -> "VK_FORMAT_R32_SINT"
+  | Primitive UInt -> "VK_FORMAT_R32_UINT"
+  | Primitive Float -> "VK_FORMAT_R32_SFLOAT"
+  | Vector (Bool, 2) -> "VK_FORMAT_R32G32_UINT"
+  | Vector (Bool, 3) -> "VK_FORMAT_R32G32B32_UINT"
+  | Vector (Bool, 4) -> "VK_FORMAT_R32G32B32A32_UINT"
+  | Vector (Int, 2) -> "VK_FORMAT_R32G32_SINT"
+  | Vector (Int, 3) -> "VK_FORMAT_R32G32B32_SINT"
+  | Vector (Int, 4) -> "VK_FORMAT_R32G32B32A32_SINT"
+  | Vector (UInt, 2) -> "VK_FORMAT_R32G32_UINT"
+  | Vector (UInt, 3) -> "VK_FORMAT_R32G32B32_UINT"
+  | Vector (UInt, 4) -> "VK_FORMAT_R32G32B32A32_UINT"
+  | Vector (Float, 2) -> "VK_FORMAT_R32G32_SFLOAT"
+  | Vector (Float, 3) -> "VK_FORMAT_R32G32B32_SFLOAT"
+  | Vector (Float, 4) -> "VK_FORMAT_R32G32B32A32_SFLOAT"
   | _ -> failwith ("invalid input vertex type: " ^ Type.string_of_type t)
 
 let gen_vertex_input_state_create_info p =
@@ -405,9 +417,8 @@ let gen_create_and_bind_pipeline env p f lhs =
     List.fold_left
       (fun acc (_, lhs) ->
         match Analysis.check_expr env lhs with
-        | Ok [ Type.TypeRef "rt_rgb" ] -> 1 + acc
-        | Ok [ Type.TypeRef "rt_rgba" ] -> 1 + acc
-        | Ok [ Type.TypeRef "rt_ds" ] -> acc
+        | Ok [ Type.RenderTarget (RGB | RGBA) ] -> 1 + acc
+        | Ok [ Type.RenderTarget DS ] -> acc
         | _ -> failwith "unexpected expression type")
       0 lhs
   in
@@ -798,9 +809,9 @@ let gen_uniform_atom_binding env pipeline id expr f =
       (List.map
          (fun (set, binding, count, name, t, wrapped_name) ->
            match t with
-           | Type.TypeRef "sampler2D" ->
+           | Type.Sampler 2 ->
                gen_sampler_binding_write set binding count name t wrapped_name
-           | Type.Array (TypeRef "sampler2D", _) ->
+           | Type.Array (Sampler 2, _) ->
                failwith "TODO: binding array of samplers not supported yet"
            | _ -> gen_ubo_binding_write set binding count name t wrapped_name)
          bindings)
@@ -1225,7 +1236,7 @@ let rec gen_cpp_stmt pipelines stmt f =
               Function.(f |> append_code_section decl))
             f bindings )
   | Assignment { asg_op; asg_lvalues; asg_rvalues } -> (
-      if is_rt_clear_or_write env asg_op asg_lvalues then
+      if is_rt_clear_or_write asg_op asg_lvalues then
         gen_clear_or_write env pipelines asg_lvalues asg_op asg_rvalues f
       else
         match (asg_lvalues, asg_rvalues) with
@@ -1326,16 +1337,16 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
         List.fold_left
           (fun f (pname, t) ->
             match t with
-            | Type.TypeRef (("int" | "float" | "bool") as tname) ->
-                Function.(f |> add_param (tname, pname))
-            | Type.TypeRef "atom" ->
+            | Type.Primitive _ ->
+                Function.(f |> add_param (zrl_to_cpp_type t, pname))
+            | Type.Atom Singleton ->
                 let tmpl_param = pname ^ "AtomType" in
                 let param = (Printf.sprintf "const %s&" tmpl_param, pname) in
                 Function.(
                   f
                   |> add_template_param ("class " ^ tmpl_param)
                   |> add_param param)
-            | Type.TypeRef "atomset" ->
+            | Type.Atom Set ->
                 let tmpl_param = pname ^ "AtomType" in
                 let param =
                   ( Printf.sprintf "const std::unordered_set<%s>&" tmpl_param,
@@ -1345,7 +1356,7 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
                   f
                   |> add_template_param ("class " ^ tmpl_param)
                   |> add_param param)
-            | Type.TypeRef "atomlist" ->
+            | Type.Atom List ->
                 let tmpl_param = pname ^ "AtomType" in
                 let param =
                   (Printf.sprintf "const std::vector<%s>&" tmpl_param, pname)
@@ -1354,11 +1365,7 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
                   f
                   |> add_template_param ("class " ^ tmpl_param)
                   |> add_param param)
-            | Type.TypeRef "rt_rgb" ->
-                Function.(f |> add_param ("RenderTargetReference*", pname))
-            | Type.TypeRef "rt_rgba" ->
-                Function.(f |> add_param ("RenderTargetReference*", pname))
-            | Type.TypeRef "rt_ds" ->
+            | Type.RenderTarget _ ->
                 Function.(f |> add_param ("RenderTargetReference*", pname))
             | Type.TypeRef _ ->
                 let cr = "const " ^ zrl_to_cpp_type t ^ "&" in
@@ -1391,16 +1398,16 @@ let gen_render_targets rd_type r =
         (fun acc (pname, t) ->
           acc >>= fun r ->
           match t with
-          | Type.TypeRef (("rt_rgba" | "rt_ds") as rt_type_name) ->
+          | Type.RenderTarget ((RGBA | DS) as rtt) ->
               let img_id = pname ^ "_image_" in
               let ref_id = pname ^ "_ref_" in
               let img_member = ("zrl::Image", img_id) in
               let ref_member = ("RenderTargetReference", ref_id) in
               let ptr_member = ("RenderTargetReference *", pname) in
               let rt_type, format =
-                if rt_type_name = "rt_rgba" then
+                if rtt = RGBA then
                   (RendererEnv.Color, "VK_FORMAT_B8G8R8A8_UNORM")
-                else if rt_type_name = "rt_ds" then
+                else if rtt = DS then
                   (RendererEnv.DepthStencil, "VK_FORMAT_D16_UNORM")
                 else failwith "unsupported render target type"
               in
@@ -1533,8 +1540,7 @@ let gen_descriptor_set_layouts p r =
           (fun (_, binding, count, name, t, _) ->
             let descriptor_type =
               match t with
-              | Type.TypeRef "sampler2D" | Type.Array (TypeRef "sampler2D", _)
-                ->
+              | Type.Sampler 2 | Type.Array (Sampler 2, _) ->
                   "VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER"
               | _ -> "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER"
             in
@@ -2550,9 +2556,6 @@ let gen_glsl_builtin_call_id = function
   | "fmat2" -> "mat2"
   | "fmat3" -> "mat3"
   | "fmat4" -> "mat4"
-  | "pow2" -> "pow"
-  | "pow3" -> "pow"
-  | "pow4" -> "pow"
   | other -> other
 
 let is_record_type t env =
@@ -2952,7 +2955,7 @@ let gen_shaders env name glsl_types pipeline =
 let wrap_uniform set binding t name =
   let open Type in
   match t with
-  | TypeRef "sampler2D" | Array (TypeRef "sampler2D", _) ->
+  | Sampler 2 | Array (Sampler 2, _) ->
       (* Cannot wrap opaque types in blocks in GLSL *)
       (zrl_to_glsl_type t, name)
   | _ ->

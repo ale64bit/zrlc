@@ -384,11 +384,27 @@ let check_assignop ltyp op rtyp err =
       Ok ()
   | Vector (Bool, m), Assign, Vector (Bool, n) when m = n -> Ok ()
   (* Vector *)
-  | Vector (Int, m), (Assign | AssignPlus | AssignMinus), Vector (Int, n)
-  | Vector (UInt, m), (Assign | AssignPlus | AssignMinus), Vector (UInt, n)
-  | Vector (Float, m), (Assign | AssignPlus | AssignMinus), Vector (Float, n)
-  | Vector (Double, m), (Assign | AssignPlus | AssignMinus), Vector (Double, n)
+  | ( Vector (Int, m),
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      Vector (Int, n) )
+  | ( Vector (UInt, m),
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      Vector (UInt, n) )
+  | ( Vector (Float, m),
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      Vector (Float, n) )
+  | ( Vector (Double, m),
+      (Assign | AssignPlus | AssignMinus | AssignMult),
+      Vector (Double, n) )
     when m = n ->
+      Ok ()
+  (* Vector-Primitive *)
+  | Vector (Int, _), (AssignPlus | AssignMinus | AssignMult), Primitive Int
+  | Vector (UInt, _), (AssignPlus | AssignMinus | AssignMult), Primitive UInt
+  | Vector (Float, _), (AssignPlus | AssignMinus | AssignMult), Primitive Float
+  | ( Vector (Double, _),
+      (AssignPlus | AssignMinus | AssignMult),
+      Primitive Double ) ->
       Ok ()
   (* Matrix *)
   | Matrix (Int, n, m), (Assign | AssignPlus | AssignMinus), Matrix (Int, q, p)
@@ -500,8 +516,15 @@ and check_index env loc expr index_exprs =
       let expr = L.{ loc; value = Ast.Index (expr, index_exprs) } in
       error loc (`InvalidIndexOperation (expr, expr_type))
 
+and find_matching_overload env loc name arg_types =
+  match Env.find_function ~local:false name arg_types env with
+  | Some L.{ value = Type.Function (args, ret); _ } -> Ok (args, ret)
+  | _ ->
+      error loc
+        (`Unimplemented
+          (Printf.sprintf "no matching function for call to '%s'" name))
+
 and check_call env loc f_expr arg_exprs =
-  check_single_value_expr env f_expr >>= fun f_type ->
   List.fold_results
     (fun acc arg_expr ->
       acc >>= fun arg_types ->
@@ -509,6 +532,7 @@ and check_call env loc f_expr arg_exprs =
       Ok (arg_type :: arg_types))
     (Ok []) arg_exprs
   >>= fun arg_types ->
+  check_single_value_expr env f_expr >>= fun f_type ->
   match f_type with
   | Type.Function (args, ret) -> (
       let is_anonymous, name =
@@ -517,7 +541,14 @@ and check_call env loc f_expr arg_exprs =
         | _ -> (true, "")
       in
       let is_pipeline = (not is_anonymous) && Env.pipeline_exists name env in
-      let is_function = is_anonymous || Env.function_exists name env in
+      let is_function =
+        is_anonymous || Env.function_exists name arg_types env
+      in
+      (* Replace args and ret with a matching overload if the function call
+       * is not a pipeline call. *)
+      ( if not is_pipeline then find_matching_overload env loc name arg_types
+      else Ok (args, ret) )
+      >>= fun (args, ret) ->
       let is_named = function
         | L.{ value = Ast.NamedArg _; _ } -> true
         | _ -> false
@@ -563,7 +594,7 @@ and check_call env loc f_expr arg_exprs =
         | _, _, false, false ->
             let expr = L.{ loc; value = Ast.Call (f_expr, arg_exprs) } in
             error loc (`MixedArgumentStyle expr)
-        | _ -> error loc (`Unimplemented "not implemented: weird call") )
+        | _ -> error loc (`Unimplemented "NOT IMPLEMENTED: weird call...") )
   | _ -> error loc (`InvalidCallOperation (f_expr, f_type))
 
 and valid_arg arg_type want_type =

@@ -1,4 +1,11 @@
 module SymbolTable = Map.Make (String)
+
+module FunctionSymbolTable = Map.Make (struct
+  type t = string * Type.t list
+
+  let compare = Pervasives.compare
+end)
+
 module L = Located
 
 type const_value = Bool of bool | Int of int | Float of float
@@ -10,6 +17,8 @@ type located_const_value = const_value L.t [@@deriving to_yojson]
 
 type type_symbol_table = located_type SymbolTable.t
 
+type function_symbol_table = located_type FunctionSymbolTable.t
+
 type const_value_symbol_table = located_const_value SymbolTable.t
 
 let builtin_pos =
@@ -20,6 +29,10 @@ let builtin_loc = (builtin_pos, builtin_pos)
 let type_symbol_table_to_yojson st =
   let f (k, v) = (k, located_type_to_yojson v) in
   `Assoc (List.map f (SymbolTable.bindings st))
+
+let function_symbol_table_to_yojson st =
+  let f ((name, _), v) = (name, located_type_to_yojson v) in
+  `Assoc (List.map f (FunctionSymbolTable.bindings st))
 
 let const_value_symbol_table_to_yojson st =
   let f (k, v) = (k, located_const_value_to_yojson v) in
@@ -44,7 +57,7 @@ type t = {
   vals : type_symbol_table;
   pipelines : type_symbol_table;
   renderers : type_symbol_table;
-  functions : type_symbol_table;
+  functions : function_symbol_table;
 }
 [@@deriving to_yojson]
 
@@ -83,9 +96,24 @@ let find_renderer ~local name env =
   let f env = env.renderers in
   find ~local name env f
 
-let find_function ~local name env =
-  let f env = env.functions in
-  find ~local name env f
+let rec find_function ~local name params env =
+  let open Monad.Option in
+  FunctionSymbolTable.find_opt (name, params) env.functions
+  >>?
+  match env.parent with
+  | Some penv when not local -> find_function ~local name params penv
+  | _ -> None
+
+let rec find_any_function ~local name env =
+  let open Monad.Option in
+  let all_functions = FunctionSymbolTable.bindings env.functions in
+  ( match List.find_opt (fun ((fname, _), _) -> name = fname) all_functions with
+  | Some (_, f_type) -> Some f_type
+  | None -> None )
+  >>?
+  match env.parent with
+  | Some penv when not local -> find_any_function ~local name penv
+  | _ -> None
 
 let find_var ~local name env =
   let f env = env.vars in
@@ -100,7 +128,7 @@ let find_name ~local name env =
   find_constant_type ~local name env
   >>? find_type ~local name env >>? find_var ~local name env
   >>? find_val ~local name env
-  >>? find_function ~local name env
+  >>? find_any_function ~local name env
   >>? find_pipeline ~local name env
 
 let rec find_name_scope name env =
@@ -110,7 +138,7 @@ let rec find_name_scope name env =
     >>? find_type ~local:true name env
     >>? find_var ~local:true name env
     >>? find_val ~local:true name env
-    >>? find_function ~local:true name env
+    (*     >>? find_function ~local:true name env *)
     >>? find_pipeline ~local:true name env
   in
   match res with
@@ -127,7 +155,7 @@ let find_rvalue name env =
   find_constant_type ~local:false name env
   >>? find_var ~local:false name env
   >>? find_val ~local:false name env
-  >>? find_function ~local:false name env
+  >>? find_any_function ~local:false name env
   >>? find_pipeline ~local:false name env
 
 (* Exists *)
@@ -139,7 +167,8 @@ let pipeline_exists name env = find_pipeline ~local:false name env <> None
 
 let renderer_exists name env = find_renderer ~local:false name env <> None
 
-let function_exists name env = find_function ~local:false name env <> None
+let function_exists name params env =
+  find_function ~local:false name params env <> None
 
 let var_exists ~local name env = find_var ~local name env <> None
 
@@ -173,8 +202,20 @@ let add_renderer name typ env =
   { env with renderers = SymbolTable.add name typ env.renderers }
 
 let add_function name typ env =
-  let () = assert (not (function_exists name env)) in
-  { env with functions = SymbolTable.add name typ env.functions }
+  let L.{ value = t; _ } = typ in
+  match t with
+  | Type.Function (params, _) ->
+      let param_types = List.map (fun (_, t) -> t) params in
+      let () = assert (not (function_exists name param_types env)) in
+      {
+        env with
+        functions =
+          FunctionSymbolTable.add (name, param_types) typ env.functions;
+      }
+  | _ ->
+      failwith
+        (Printf.sprintf "cannot add non-function %s (type %s) as function" name
+           (Type.string_of_type t))
 
 let add_var name typ env =
   let () = assert (not (var_exists ~local:true name env)) in
@@ -196,198 +237,210 @@ let empty id =
     vals = SymbolTable.empty;
     pipelines = SymbolTable.empty;
     renderers = SymbolTable.empty;
-    functions = SymbolTable.empty;
+    functions = FunctionSymbolTable.empty;
   }
-
-let generate_constructor_type base params ret =
-  Type.Function
-    ( List.init (String.length params) (fun i ->
-          (Char.escaped params.[i], Type.TypeRef base)),
-      [ Type.TypeRef ret ] )
 
 let global =
   let open Type in
+  let open Type.Common in
+  (* Builtin types *)
   let builtin_types =
     [ (* Primitive Types *)
-      ("bool", Primitive Bool);
-      ("int", Primitive Int);
-      ("uint", Primitive UInt);
-      ("float", Primitive Float);
-      ("double", Primitive Double);
+      ("bool", bool);
+      ("int", int);
+      ("uint", uint);
+      ("float", float);
+      ("double", double);
       (* Vector Types *)
-      ("bvec2", Vector (Bool, 2));
-      ("bvec3", Vector (Bool, 3));
-      ("bvec4", Vector (Bool, 4));
-      ("ivec2", Vector (Int, 2));
-      ("ivec3", Vector (Int, 3));
-      ("ivec4", Vector (Int, 4));
-      ("uvec2", Vector (UInt, 2));
-      ("uvec3", Vector (UInt, 3));
-      ("uvec4", Vector (UInt, 4));
-      ("fvec2", Vector (Float, 2));
-      ("fvec3", Vector (Float, 3));
-      ("fvec4", Vector (Float, 4));
-      ("dvec2", Vector (Double, 2));
-      ("dvec3", Vector (Double, 3));
-      ("dvec4", Vector (Double, 4));
+      ("bvec2", bvec2);
+      ("bvec3", bvec3);
+      ("bvec4", bvec4);
+      ("ivec2", ivec2);
+      ("ivec3", ivec3);
+      ("ivec4", ivec4);
+      ("uvec2", uvec2);
+      ("uvec3", uvec3);
+      ("uvec4", uvec4);
+      ("fvec2", fvec2);
+      ("fvec3", fvec3);
+      ("fvec4", fvec4);
+      ("dvec2", dvec2);
+      ("dvec3", dvec3);
+      ("dvec4", dvec4);
       (* Matrix Types *)
-      ("bmat2", Matrix (Bool, 2, 2));
-      ("bmat3", Matrix (Bool, 3, 3));
-      ("bmat4", Matrix (Bool, 4, 4));
-      ("bmat2x2", Matrix (Bool, 2, 2));
-      ("bmat2x3", Matrix (Bool, 2, 3));
-      ("bmat2x4", Matrix (Bool, 2, 4));
-      ("bmat3x2", Matrix (Bool, 3, 2));
-      ("bmat3x3", Matrix (Bool, 3, 3));
-      ("bmat3x4", Matrix (Bool, 3, 4));
-      ("bmat4x2", Matrix (Bool, 4, 2));
-      ("bmat4x3", Matrix (Bool, 4, 3));
-      ("bmat4x4", Matrix (Bool, 4, 4));
-      ("imat2", Matrix (Int, 2, 2));
-      ("imat3", Matrix (Int, 3, 3));
-      ("imat4", Matrix (Int, 4, 4));
-      ("imat2x2", Matrix (Int, 2, 2));
-      ("imat2x3", Matrix (Int, 2, 3));
-      ("imat2x4", Matrix (Int, 2, 4));
-      ("imat3x2", Matrix (Int, 3, 2));
-      ("imat3x3", Matrix (Int, 3, 3));
-      ("imat3x4", Matrix (Int, 3, 4));
-      ("imat4x2", Matrix (Int, 4, 2));
-      ("imat4x3", Matrix (Int, 4, 3));
-      ("imat4x4", Matrix (Int, 4, 4));
-      ("umat2", Matrix (UInt, 2, 2));
-      ("umat3", Matrix (UInt, 3, 3));
-      ("umat4", Matrix (UInt, 4, 4));
-      ("umat2x2", Matrix (UInt, 2, 2));
-      ("umat2x3", Matrix (UInt, 2, 3));
-      ("umat2x4", Matrix (UInt, 2, 4));
-      ("umat3x2", Matrix (UInt, 3, 2));
-      ("umat3x3", Matrix (UInt, 3, 3));
-      ("umat3x4", Matrix (UInt, 3, 4));
-      ("umat4x2", Matrix (UInt, 4, 2));
-      ("umat4x3", Matrix (UInt, 4, 3));
-      ("umat4x4", Matrix (UInt, 4, 4));
-      ("fmat2", Matrix (Float, 2, 2));
-      ("fmat3", Matrix (Float, 3, 3));
-      ("fmat4", Matrix (Float, 4, 4));
-      ("fmat2x2", Matrix (Float, 2, 2));
-      ("fmat2x3", Matrix (Float, 2, 3));
-      ("fmat2x4", Matrix (Float, 2, 4));
-      ("fmat3x2", Matrix (Float, 3, 2));
-      ("fmat3x3", Matrix (Float, 3, 3));
-      ("fmat3x4", Matrix (Float, 3, 4));
-      ("fmat4x2", Matrix (Float, 4, 2));
-      ("fmat4x3", Matrix (Float, 4, 3));
-      ("fmat4x4", Matrix (Float, 4, 4));
-      ("dmat2", Matrix (Double, 2, 2));
-      ("dmat3", Matrix (Double, 3, 3));
-      ("dmat4", Matrix (Double, 4, 4));
-      ("dmat2x2", Matrix (Double, 2, 2));
-      ("dmat2x3", Matrix (Double, 2, 3));
-      ("dmat2x4", Matrix (Double, 2, 4));
-      ("dmat3x2", Matrix (Double, 3, 2));
-      ("dmat3x3", Matrix (Double, 3, 3));
-      ("dmat3x4", Matrix (Double, 3, 4));
-      ("dmat4x2", Matrix (Double, 4, 2));
-      ("dmat4x3", Matrix (Double, 4, 3));
-      ("dmat4x4", Matrix (Double, 4, 4));
+      ("bmat2", bmat2);
+      ("bmat3", bmat3);
+      ("bmat4", bmat4);
+      ("bmat2x2", bmat2x2);
+      ("bmat2x3", bmat2x3);
+      ("bmat2x4", bmat2x4);
+      ("bmat3x2", bmat3x2);
+      ("bmat3x3", bmat3x3);
+      ("bmat3x4", bmat3x4);
+      ("bmat4x2", bmat4x2);
+      ("bmat4x3", bmat4x3);
+      ("bmat4x4", bmat4x4);
+      ("imat2", imat2);
+      ("imat3", imat3);
+      ("imat4", imat4);
+      ("imat2x2", imat2x2);
+      ("imat2x3", imat2x3);
+      ("imat2x4", imat2x4);
+      ("imat3x2", imat3x2);
+      ("imat3x3", imat3x3);
+      ("imat3x4", imat3x4);
+      ("imat4x2", imat4x2);
+      ("imat4x3", imat4x3);
+      ("imat4x4", imat4x4);
+      ("umat2", umat2);
+      ("umat3", umat3);
+      ("umat4", umat4);
+      ("umat2x2", umat2x2);
+      ("umat2x3", umat2x3);
+      ("umat2x4", umat2x4);
+      ("umat3x2", umat3x2);
+      ("umat3x3", umat3x3);
+      ("umat3x4", umat3x4);
+      ("umat4x2", umat4x2);
+      ("umat4x3", umat4x3);
+      ("umat4x4", umat4x4);
+      ("fmat2", fmat2);
+      ("fmat3", fmat3);
+      ("fmat4", fmat4);
+      ("fmat2x2", fmat2x2);
+      ("fmat2x3", fmat2x3);
+      ("fmat2x4", fmat2x4);
+      ("fmat3x2", fmat3x2);
+      ("fmat3x3", fmat3x3);
+      ("fmat3x4", fmat3x4);
+      ("fmat4x2", fmat4x2);
+      ("fmat4x3", fmat4x3);
+      ("fmat4x4", fmat4x4);
+      ("dmat2", dmat2);
+      ("dmat3", dmat3);
+      ("dmat4", dmat4);
+      ("dmat2x2", dmat2x2);
+      ("dmat2x3", dmat2x3);
+      ("dmat2x4", dmat2x4);
+      ("dmat3x2", dmat3x2);
+      ("dmat3x3", dmat3x3);
+      ("dmat3x4", dmat3x4);
+      ("dmat4x2", dmat4x2);
+      ("dmat4x3", dmat4x3);
+      ("dmat4x4", dmat4x4);
       (* Sampler Types *)
-      ("sampler1D", Sampler 1);
-      ("sampler2D", Sampler 2);
-      ("sampler3D", Sampler 3);
+      ("sampler1D", sampler1D);
+      ("sampler2D", sampler2D);
+      ("sampler3D", sampler3D);
       (* Texture Types *)
-      ("texture1D", Texture 1);
-      ("texture2D", Texture 2);
-      ("texture3D", Texture 3);
+      ("texture1D", texture1D);
+      ("texture2D", texture2D);
+      ("texture3D", texture3D);
       (* Render Target Types *)
-      ("rt_rgb", RenderTarget RGB);
-      ("rt_rgba", RenderTarget RGBA);
-      ("rt_ds", RenderTarget DS);
+      ("rt_rgb", rt_rgb);
+      ("rt_rgba", rt_rgba);
+      ("rt_ds", rt_ds);
       (* Atom Types *)
-      ("atom", Atom Singleton);
-      ("atomlist", Atom List);
-      ("atomset", Atom Set)
+      ("atom", atom);
+      ("atomlist", atomlist);
+      ("atomset", atomset)
     ]
   in
+  let vector_ctor pt dim =
+    let mask = "xyzw" in
+    let t = Vector (pt, dim) in
+    let params =
+      List.init dim (fun i -> (String.make 1 mask.[i], Primitive pt))
+    in
+    (Type.string_of_type t, Function (params, [ t ]))
+  in
+  let matrix_ctor pt n m =
+    let mask = "xyzw" in
+    let t = Matrix (pt, n, m) in
+    let params =
+      List.init n (fun i -> (String.make 1 mask.[i], Vector (pt, m)))
+    in
+    let ctor_name =
+      if n = m then
+        match pt with
+        | Bool -> Printf.sprintf "bmat%d" n
+        | Int -> Printf.sprintf "imat%d" n
+        | UInt -> Printf.sprintf "umat%d" n
+        | Float -> Printf.sprintf "fmat%d" n
+        | Double -> Printf.sprintf "dmat%d" n
+      else Type.string_of_type t
+    in
+    (ctor_name, Function (params, [ t ]))
+  in
   let builtin_functions =
-    [ (* Primitive types *)
-      ("uint", generate_constructor_type "int" "i" "uint");
-      ("double", generate_constructor_type "float" "f" "double");
-      (* Built-in vector types *)
-      ("bvec2", generate_constructor_type "bool" "xy" "bvec2");
-      ("bvec3", generate_constructor_type "bool" "xyz" "bvec3");
-      ("bvec4", generate_constructor_type "bool" "xyzw" "bvec4");
-      ("ivec2", generate_constructor_type "int" "xy" "ivec2");
-      ("ivec3", generate_constructor_type "int" "xyz" "ivec3");
-      ("ivec4", generate_constructor_type "int" "xyzw" "ivec4");
-      ("uvec2", generate_constructor_type "uint" "xy" "uvec2");
-      ("uvec3", generate_constructor_type "uint" "xyz" "uvec3");
-      ("uvec4", generate_constructor_type "uint" "xyzw" "uvec4");
-      ("fvec2", generate_constructor_type "float" "xy" "fvec2");
-      ("fvec3", generate_constructor_type "float" "xyz" "fvec3");
-      ("fvec4", generate_constructor_type "float" "xyzw" "fvec4");
-      ("dvec2", generate_constructor_type "double" "xy" "dvec2");
-      ("dvec3", generate_constructor_type "double" "xyz" "dvec3");
-      ("dvec4", generate_constructor_type "double" "xyzw" "dvec4");
-      ("fmat2", generate_constructor_type "fvec2" "xy" "fmat2");
-      ("fmat3", generate_constructor_type "fvec3" "xyz" "fmat3");
-      ("fmat4", generate_constructor_type "fvec4" "xyzw" "fmat4");
-      (* TODO: Built-in matrix types *)
-      (* Texture lookup functions *)
+    [ (* Built-in vector types *)
+      vector_ctor Bool 2;
+      vector_ctor Bool 3;
+      vector_ctor Bool 4;
+      vector_ctor Int 2;
+      vector_ctor Int 3;
+      vector_ctor Int 4;
+      vector_ctor UInt 2;
+      vector_ctor UInt 3;
+      vector_ctor UInt 4;
+      vector_ctor Float 2;
+      vector_ctor Float 3;
+      vector_ctor Float 4;
+      vector_ctor Double 2;
+      vector_ctor Double 3;
+      vector_ctor Double 4;
+      (* Built-in matrix types *)
+      matrix_ctor Float 2 2;
+      matrix_ctor Float 2 3;
+      matrix_ctor Float 2 4;
+      matrix_ctor Float 3 2;
+      matrix_ctor Float 3 3;
+      matrix_ctor Float 3 4;
+      matrix_ctor Float 4 2;
+      matrix_ctor Float 4 3;
+      matrix_ctor Float 4 4;
+      matrix_ctor Double 2 2;
+      matrix_ctor Double 2 3;
+      matrix_ctor Double 2 4;
+      matrix_ctor Double 3 2;
+      matrix_ctor Double 3 3;
+      matrix_ctor Double 3 4;
+      matrix_ctor Double 4 2;
+      matrix_ctor Double 4 3;
+      matrix_ctor Double 4 4;
+      (* Texture lookup *)
       ( "texture",
-        Function
-          ( [ ("sampler", TypeRef "sampler2D"); ("coord", TypeRef "fvec2") ],
-            [ TypeRef "fvec4" ] ) );
+        Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
       (* Math functions *)
-      ("normalize", Function ([ ("v", TypeRef "fvec3") ], [ TypeRef "fvec3" ]));
-      ( "pow",
-        Function
-          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
-            [ TypeRef "float" ] ) );
-      ( "pow2",
-        Function
-          ( [ ("x", TypeRef "fvec2"); ("y", TypeRef "fvec2") ],
-            [ TypeRef "fvec2" ] ) );
-      ( "pow3",
-        Function
-          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
-            [ TypeRef "fvec3" ] ) );
-      ( "pow4",
-        Function
-          ( [ ("x", TypeRef "fvec4"); ("y", TypeRef "fvec4") ],
-            [ TypeRef "fvec4" ] ) );
+      ("normalize", Function ([ ("v", fvec2) ], [ fvec2 ]));
+      ("normalize", Function ([ ("v", fvec3) ], [ fvec3 ]));
+      ("normalize", Function ([ ("v", fvec4) ], [ fvec4 ]));
+      ("pow", Function ([ ("x", float); ("y", float) ], [ float ]));
+      ("pow", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
+      ("pow", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
+      ("pow", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]));
       ( "mix",
-        Function
-          ( [ ("x", TypeRef "fvec3");
-              ("y", TypeRef "fvec3");
-              ("k", TypeRef "float")
-            ],
-            [ TypeRef "fvec3" ] ) );
+        Function ([ ("x", fvec2); ("y", fvec2); ("k", float) ], [ fvec2 ]) );
+      ( "mix",
+        Function ([ ("x", fvec3); ("y", fvec3); ("k", float) ], [ fvec3 ]) );
+      ( "mix",
+        Function ([ ("x", fvec4); ("y", fvec4); ("k", float) ], [ fvec4 ]) );
       ( "clamp",
         Function
-          ( [ ("x", TypeRef "float");
-              ("minVal", TypeRef "float");
-              ("maxVal", TypeRef "float")
-            ],
-            [ TypeRef "float" ] ) );
-      ("sqrt", Function ([ ("x", TypeRef "float") ], [ TypeRef "float" ]));
-      ("length", Function ([ ("x", TypeRef "fvec3") ], [ TypeRef "float" ]));
-      ( "max",
-        Function
-          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
-            [ TypeRef "float" ] ) );
-      ( "min",
-        Function
-          ( [ ("x", TypeRef "float"); ("y", TypeRef "float") ],
-            [ TypeRef "float" ] ) );
-      ( "dot",
-        Function
-          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
-            [ TypeRef "float" ] ) );
-      ( "cross",
-        Function
-          ( [ ("x", TypeRef "fvec3"); ("y", TypeRef "fvec3") ],
-            [ TypeRef "fvec3" ] ) )
+          ([ ("x", float); ("minVal", float); ("maxVal", float) ], [ float ])
+      );
+      ("sqrt", Function ([ ("x", float) ], [ float ]));
+      ("length", Function ([ ("x", fvec2) ], [ float ]));
+      ("length", Function ([ ("x", fvec3) ], [ float ]));
+      ("length", Function ([ ("x", fvec4) ], [ float ]));
+      ("max", Function ([ ("x", float); ("y", float) ], [ float ]));
+      ("min", Function ([ ("x", float); ("y", float) ], [ float ]));
+      ("dot", Function ([ ("x", fvec2); ("y", fvec2) ], [ float ]));
+      ("dot", Function ([ ("x", fvec3); ("y", fvec3) ], [ float ]));
+      ("dot", Function ([ ("x", fvec4); ("y", fvec4) ], [ float ]));
+      ("cross", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
+      ("cross", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
+      ("cross", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]))
     ]
   in
   let env =
@@ -497,18 +550,21 @@ let rec filter_global env =
   let open Monad.Option in
   SymbolTable.(
     let skip src k _ = not (mem k src) in
+    let skip_function src k _ = not (FunctionSymbolTable.mem k src) in
     {
       env with
       parent =
         ( env.parent >>= fun t ->
           Some (filter_global t) );
-      types = SymbolTable.(filter (skip global.types) env.types);
-      constants = SymbolTable.(filter (skip global.constants) env.constants);
-      vals = SymbolTable.(filter (skip global.vals) env.vals);
-      vars = SymbolTable.(filter (skip global.vars) env.vars);
-      pipelines = SymbolTable.(filter (skip global.pipelines) env.pipelines);
-      renderers = SymbolTable.(filter (skip global.renderers) env.renderers);
-      functions = SymbolTable.(filter (skip global.functions) env.functions);
+      types = filter (skip global.types) env.types;
+      constants = filter (skip global.constants) env.constants;
+      vals = filter (skip global.vals) env.vals;
+      vars = filter (skip global.vars) env.vars;
+      pipelines = filter (skip global.pipelines) env.pipelines;
+      renderers = filter (skip global.renderers) env.renderers;
+      functions =
+        FunctionSymbolTable.(
+          filter (skip_function global.functions) env.functions);
     })
 
 let to_yojson t = to_yojson (filter_global t)

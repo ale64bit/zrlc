@@ -66,12 +66,12 @@ pipeline ForwardPass(g: Global, mat: Material, obj: PerObject): (fvec4, float) {
   // See http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
   def linear2srgb(color: fvec3): fvec3 {
     val invGamma = 1.0 / kGamma
-    return pow3(color, fvec3(invGamma, invGamma, invGamma))
+    return pow(color, fvec3(invGamma, invGamma, invGamma))
   }
 
   // See http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
   def srgb2linear(color: fvec4): fvec4 {
-    val v = pow3(color.xyz, fvec3(kGamma, kGamma, kGamma))
+    val v = pow(color.xyz, fvec3(kGamma, kGamma, kGamma))
     return fvec4(v.x, v.y, v.z, color.w)
   }
 

@@ -49,7 +49,7 @@ val pipeline_exists : string -> t -> bool
 
 val renderer_exists : string -> t -> bool
 
-val function_exists : string -> t -> bool
+val function_exists : string -> Type.t list -> t -> bool
 
 val var_exists : local:bool -> string -> t -> bool
 
@@ -83,7 +83,10 @@ val find_pipeline : local:bool -> string -> t -> Type.t Located.t option
 
 val find_renderer : local:bool -> string -> t -> Type.t Located.t option
 
-val find_function : local:bool -> string -> t -> Type.t Located.t option
+val find_function :
+  local:bool -> string -> Type.t list -> t -> Type.t Located.t option
+
+val find_any_function : local:bool -> string -> t -> Type.t Located.t option
 
 val find_var : local:bool -> string -> t -> Type.t Located.t option
 
