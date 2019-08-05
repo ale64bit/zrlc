@@ -12,7 +12,7 @@ module Error = struct
     | `InvalidUniformType of Type.t * string
     | `StageMismatch of string * Type.t list * string * Type.t list
     | `MissingInputBinding of string * string
-    | `MultipleDepthBuffers of string ]
+    | `MultipleDepthBuffers ]
 
   let string_of_error L.{ loc; value } =
     let pos = L.string_of_start_position loc in
@@ -35,11 +35,11 @@ module Error = struct
     | `MissingInputBinding (pipeline, input) ->
         Printf.sprintf "%s: missing binding for input %s in call to %s" prefix
           input pipeline
-    | `MultipleDepthBuffers pipeline ->
+    | `MultipleDepthBuffers ->
         Printf.sprintf
-          "%s: multiple depth buffers written in call to %s. At most one \
-           depth buffer can be written per pipeline call."
-          prefix pipeline
+          "%s: at most one depth buffer can be written per clear or write \
+           statement."
+          prefix
 end
 
 type graphics_pipeline = {
@@ -59,6 +59,11 @@ type graphics_pipeline = {
 }
 
 let error loc e = Error L.{ loc; value = e }
+
+let builtin_pos =
+  Lexing.{ pos_fname = "builtin"; pos_lnum = 0; pos_cnum = 0; pos_bol = 0 }
+
+let builtin_loc = (builtin_pos, builtin_pos)
 
 let array_type_size dims =
   List.fold_left
@@ -294,39 +299,56 @@ let is_rt_clear_or_write op lvalues =
         lvalues
   | _ -> false
 
-let gen_clear env lhs rhs f =
-  let bindings = List.combine lhs rhs in
+let check_at_most_one_depth_buffer loc lhs =
   List.fold_left
-    (fun f ((ts, lhs), (_, rhs)) ->
-      let rt_var =
-        Printf.sprintf "RenderTargetReference *_rt = (%s);"
-          (gen_cpp_expression env lhs)
-      in
-      let end_current_pass =
-        {|  if (current_render_pass_ != VK_NULL_HANDLE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
+    (fun acc (types, _) ->
+      acc >>= fun has_depth_buffer ->
+      match types with
+      | [ Type.RenderTarget DS ] ->
+          if has_depth_buffer then error loc `MultipleDepthBuffers else Ok true
+      | _ -> acc)
+    (Ok false) lhs
+  >>= fun _ ->
+  Ok ()
+
+let gen_clear env loc lhs rhs f =
+  check_at_most_one_depth_buffer loc lhs >>= fun () ->
+  let bindings = List.combine lhs rhs in
+  let f =
+    List.fold_left
+      (fun f ((ts, lhs), (_, rhs)) ->
+        let rt_var =
+          Printf.sprintf "RenderTargetReference *_rt = (%s);"
+            (gen_cpp_expression env lhs)
+        in
+        let end_current_pass =
+          {|  if (current_render_pass_ != VK_NULL_HANDLE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_DONT_CARE && _rt->load_op != VK_ATTACHMENT_LOAD_OP_CLEAR) { 
     vkCmdEndRenderPass(gc_cmd_buffer_[image_index_]);
     current_render_pass_ = VK_NULL_HANDLE;
   }|}
-      in
-      let update_load_op = "_rt->load_op = VK_ATTACHMENT_LOAD_OP_CLEAR;" in
-      let clear_value_expr = gen_cpp_expression env rhs in
-      let update_clear_value =
-        match ts with
-        | [ Type.RenderTarget DS ] ->
-            Printf.sprintf "_rt->clear_value.depthStencil.depth = %s;"
-              clear_value_expr
-        | _ ->
-            Printf.sprintf
-              "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof (%s));"
-              clear_value_expr clear_value_expr
-      in
-      Cpp.Function.(
-        f |> append_code_section "{" |> append_code_section rt_var
-        |> append_code_section end_current_pass
-        |> append_code_section update_load_op
-        |> append_code_section update_clear_value
-        |> append_code_section "}"))
-    f bindings
+        in
+        let update_load_op = "_rt->load_op = VK_ATTACHMENT_LOAD_OP_CLEAR;" in
+        let clear_value_expr = gen_cpp_expression env rhs in
+        let update_clear_value =
+          match ts with
+          | [ Type.RenderTarget DS ] ->
+              Printf.sprintf "_rt->clear_value.depthStencil.depth = %s;"
+                clear_value_expr
+          | _ ->
+              Printf.sprintf
+                "std::memcpy(&_rt->clear_value, glm::value_ptr(%s), sizeof \
+                 (%s));"
+                clear_value_expr clear_value_expr
+        in
+        Cpp.Function.(
+          f |> append_code_section "{" |> append_code_section rt_var
+          |> append_code_section end_current_pass
+          |> append_code_section update_load_op
+          |> append_code_section update_clear_value
+          |> append_code_section "}"))
+      f bindings
+  in
+  Ok f
 
 let gen_shader_stage_create_infos p =
   let vertex_stage =
@@ -614,17 +636,20 @@ let gen_create_and_bind_pipeline env p f lhs =
             p.gp_depth_compare_op num_color_attachments color_blend_attachments
             p.gp_name p.gp_name))
 
-let collect_atom_bindings = function
+let collect_atom_bindings loc = function
   | [ (_, L.{ value = Ast.Call (L.{ value = Ast.Id _; _ }, args); _ }) ] ->
-      List.map
-        (function
-          | L.{ value = Ast.NamedArg (lhs, rhs); _ } -> (lhs, rhs)
-          | expr ->
-              failwith
-                ( "unsupported pipeline atom binding: "
-                ^ Ast.string_of_expression expr ))
-        args
-  | _ -> failwith "unsupported right hand side of pipeline write statement"
+      Ok
+        (List.map
+           (function
+             | L.{ value = Ast.NamedArg (lhs, rhs); _ } -> (lhs, rhs)
+             | expr ->
+                 failwith
+                   ( "unsupported pipeline atom binding: "
+                   ^ Ast.string_of_expression expr ))
+           args)
+  | _ ->
+      error loc
+        (`Unsupported "invalid right hand side of pipeline write statement")
 
 let gen_sampler_binding_write set binding count name t wrapped_name =
   let data =
@@ -710,7 +735,8 @@ let gen_uniform_atom_binding env pipeline id expr f =
            | Type.Sampler 2 ->
                gen_sampler_binding_write set binding count name t wrapped_name
            | Type.Array (Sampler 2, _) ->
-               failwith "TODO: binding array of samplers not supported yet"
+               failwith
+                 "TODO(ale64bit): binding array of samplers not supported yet"
            | _ -> gen_ubo_binding_write set binding count name t wrapped_name)
          bindings)
   in
@@ -1009,8 +1035,19 @@ let gen_atom_bindings env pipeline f bindings =
       else failwith "each atom binding must be an input or uniform")
     f bindings
 
-let gen_write env pipeline lhs rhs f =
-  let bindings = collect_atom_bindings rhs in
+let check_all_inputs_are_bound loc pipeline bindings =
+  List.fold_left
+    (fun acc (_, name, _) ->
+      acc >>= fun () ->
+      let is_bound = List.exists (fun (id, _) -> id = name) bindings in
+      if is_bound then Ok ()
+      else error loc (`MissingInputBinding (pipeline.gp_name, name)))
+    (Ok ()) pipeline.gp_inputs
+
+let gen_write env loc pipeline lhs rhs f =
+  check_at_most_one_depth_buffer loc lhs >>= fun () ->
+  collect_atom_bindings loc rhs >>= fun bindings ->
+  check_all_inputs_are_bound loc pipeline bindings >>= fun () ->
   let rt_exprs =
     String.concat ", "
       (List.map (fun (_, lhs) -> gen_cpp_expression env lhs) lhs)
@@ -1059,83 +1096,91 @@ let gen_write env pipeline lhs rhs f =
   in
   let f = gen_create_and_bind_pipeline env pipeline f lhs in
   let f = gen_atom_bindings env pipeline f bindings in
-  Cpp.Function.(
-    f
-    |> append_code_section
-         {|
+  Ok
+    Cpp.Function.(
+      f
+      |> append_code_section
+           {|
            if (index_count > 0) {
              vkCmdDrawIndexed(gc_cmd_buffer_[image_index_], index_count, 1, 0, 0, 0);
            } else {
              vkCmdDraw(gc_cmd_buffer_[image_index_], vertex_count, 1, 0, 0);
            }
          |}
-    |> append_code_section "}}")
+      |> append_code_section "}}")
 
 let extract_pipeline_name_from_write = function
   | _, L.{ value = Ast.Call (L.{ value = Ast.Id id; _ }, _); _ } -> id
   | _ -> failwith "unexpected right-hand side in pipeline write statement"
 
-let gen_clear_or_write env pipelines lhs op rhs f =
+let gen_clear_or_write env loc pipelines lhs op rhs f =
   match op with
-  | Ast.Assign -> gen_clear env lhs rhs f
+  | Ast.Assign -> gen_clear env loc lhs rhs f
   | Ast.AssignPlus ->
       let () = assert (List.length rhs = 1) in
       let pid = extract_pipeline_name_from_write (List.hd rhs) in
       let p = MapString.find pid pipelines in
-      gen_write env p lhs rhs f
-  | _ -> failwith ("unexpected operator: " ^ Ast.string_of_assignop op)
+      gen_write env loc p lhs rhs f
+  | _ ->
+      error loc
+        (`Unsupported
+          (Printf.sprintf "unexpected operator %s" (Ast.string_of_assignop op)))
 
 let rec gen_cpp_stmt pipelines stmt f =
   let open Cpp in
   let open TypedAst in
-  let env, L.{ value = stmt; _ } = stmt in
+  let env, L.{ value = stmt; loc } = stmt in
   match stmt with
   | CallExpr (id, args) ->
       let arg_exprs =
         String.concat ", "
           (List.map (fun (_, expr) -> gen_cpp_expression env expr) args)
       in
-      Function.(
-        f
-        |> append_code_section
-             (Printf.sprintf "%s(%s);" (gen_cpp_builtin_call_id id) arg_exprs))
-  | Var { bind_ids; bind_values } | Val { bind_ids; bind_values } -> (
-      match (bind_ids, bind_values) with
-      | [ id ], [ ([ typ ], value) ] ->
-          let decl =
-            Printf.sprintf "%s %s = %s;" (zrl_to_cpp_type typ) id
-              (gen_cpp_expression env value)
-          in
-          Function.(f |> append_code_section decl)
-      | ids, [ (types, value) ] ->
-          let bindings = List.combine ids types in
-          let f =
+      Ok
+        Function.(
+          f
+          |> append_code_section
+               (Printf.sprintf "%s(%s);" (gen_cpp_builtin_call_id id) arg_exprs))
+  | Var { bind_ids; bind_values } | Val { bind_ids; bind_values } ->
+      Ok
+        ( match (bind_ids, bind_values) with
+        | [ id ], [ ([ typ ], value) ] ->
+            let decl =
+              Printf.sprintf "%s %s = %s;" (zrl_to_cpp_type typ) id
+                (gen_cpp_expression env value)
+            in
+            Function.(f |> append_code_section decl)
+        | ids, [ (types, value) ] ->
+            let bindings = List.combine ids types in
+            let f =
+              List.fold_left
+                (fun f (id, typ) ->
+                  let decl =
+                    Printf.sprintf "%s %s;" (zrl_to_cpp_type typ) id
+                  in
+                  Function.(f |> append_code_section decl))
+                f bindings
+            in
+            let assignment =
+              Printf.sprintf "std::tie(%s) = %s;" (String.concat ", " ids)
+                (gen_cpp_expression env value)
+            in
+            Function.(f |> append_code_section assignment)
+        | ids, values ->
+            let bindings = List.combine ids values in
             List.fold_left
-              (fun f (id, typ) ->
-                let decl = Printf.sprintf "%s %s;" (zrl_to_cpp_type typ) id in
+              (fun f (id, (t, value)) ->
+                let decl =
+                  Printf.sprintf "%s %s = %s;"
+                    (zrl_to_cpp_type (List.hd t))
+                    id
+                    (gen_cpp_expression env value)
+                in
                 Function.(f |> append_code_section decl))
-              f bindings
-          in
-          let assignment =
-            Printf.sprintf "std::tie(%s) = %s;" (String.concat ", " ids)
-              (gen_cpp_expression env value)
-          in
-          Function.(f |> append_code_section assignment)
-      | ids, values ->
-          let bindings = List.combine ids values in
-          List.fold_left
-            (fun f (id, (t, value)) ->
-              let decl =
-                Printf.sprintf "%s %s = %s;"
-                  (zrl_to_cpp_type (List.hd t))
-                  id
-                  (gen_cpp_expression env value)
-              in
-              Function.(f |> append_code_section decl))
-            f bindings )
+              f bindings )
   | Assignment { asg_op; asg_lvalues; asg_rvalues } -> (
       if is_rt_clear_or_write asg_op asg_lvalues then
-        gen_clear_or_write env pipelines asg_lvalues asg_op asg_rvalues f
+        gen_clear_or_write env loc pipelines asg_lvalues asg_op asg_rvalues f
       else
         match (asg_lvalues, asg_rvalues) with
         | [ (_, lhs) ], [ ([ _ ], rhs) ] ->
@@ -1145,7 +1190,7 @@ let rec gen_cpp_stmt pipelines stmt f =
                 (Ast.string_of_assignop asg_op)
                 (gen_cpp_expression env rhs)
             in
-            Function.(f |> append_code_section decl)
+            Ok Function.(f |> append_code_section decl)
         | lhs, [ (_, rhs) ] ->
             let lvalues =
               String.concat ", "
@@ -1155,36 +1200,46 @@ let rec gen_cpp_stmt pipelines stmt f =
               Printf.sprintf "std::tie(%s) = %s;" lvalues
                 (gen_cpp_expression env rhs)
             in
-            Function.(f |> append_code_section assignment)
+            Ok Function.(f |> append_code_section assignment)
         | lhs, rhs ->
             let bindings = List.combine lhs rhs in
-            List.fold_left
-              (fun f ((_, lhs), (_, rhs)) ->
-                let assignment =
-                  Printf.sprintf "%s %s %s;"
-                    (gen_cpp_expression env lhs)
-                    (Ast.string_of_assignop asg_op)
-                    (gen_cpp_expression env rhs)
-                in
-                Function.(f |> append_code_section assignment))
-              f bindings )
+            Ok
+              (List.fold_left
+                 (fun f ((_, lhs), (_, rhs)) ->
+                   let assignment =
+                     Printf.sprintf "%s %s %s;"
+                       (gen_cpp_expression env lhs)
+                       (Ast.string_of_assignop asg_op)
+                       (gen_cpp_expression env rhs)
+                   in
+                   Function.(f |> append_code_section assignment))
+                 f bindings) )
   | If { if_cond = _, cond_expr; if_true; if_false } ->
       let cond =
         Printf.sprintf "if (%s) {" (gen_cpp_expression env cond_expr)
       in
       let f = Function.(f |> append_code_section cond) in
-      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f if_true in
+      List.fold_left
+        (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
+        (Ok f) if_true
+      >>= fun f ->
       let f = Function.(f |> append_code_section "} else {") in
-      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f if_false in
-      Function.(f |> append_code_section "}")
+      List.fold_left
+        (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
+        (Ok f) if_false
+      >>= fun f ->
+      Ok Function.(f |> append_code_section "}")
   | ForIter { foriter_id; foriter_it = _, it_expr; foriter_body } ->
       let header =
         Printf.sprintf "for (const auto &%s : %s) {" foriter_id
           (gen_cpp_expression env it_expr)
       in
       let f = Function.(f |> append_code_section header) in
-      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f foriter_body in
-      Function.(f |> append_code_section "}")
+      List.fold_left
+        (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
+        (Ok f) foriter_body
+      >>= fun f ->
+      Ok Function.(f |> append_code_section "}")
   | ForRange
       { forrange_id;
         forrange_from = _, from_expr;
@@ -1198,20 +1253,25 @@ let rec gen_cpp_stmt pipelines stmt f =
           forrange_id
       in
       let f = Function.(f |> append_code_section header) in
-      let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f forrange_body in
-      Function.(f |> append_code_section "}")
+      List.fold_left
+        (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
+        (Ok f) forrange_body
+      >>= fun f ->
+      Ok Function.(f |> append_code_section "}")
   | Return [ (_, expr) ] ->
       let return = Printf.sprintf "return %s;" (gen_cpp_expression env expr) in
-      Function.(f |> append_code_section return)
+      Ok Function.(f |> append_code_section return)
   | Return exprs ->
       let return =
         Printf.sprintf "return std::make_tuple(%s);"
           (String.concat ", "
              (List.map (fun (_, expr) -> gen_cpp_expression env expr) exprs))
       in
-      Function.(f |> append_code_section return |> append_code_section "}")
+      Ok Function.(f |> append_code_section return |> append_code_section "}")
   | Discard ->
-      failwith "'discard' statement cannot be used outside fragment shaders"
+      error loc
+        (`Unsupported
+          "'discard' statement cannot be used outside fragment shaders")
 
 let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
   let open Cpp in
@@ -1225,8 +1285,8 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
           (String.concat ", " (List.map zrl_to_cpp_type rets))
     | t ->
         failwith
-          ( "C++ function must have Function type but got: "
-          ^ Type.string_of_type t )
+          (Printf.sprintf "C++ function must have Function type but got '%s'"
+             (Type.string_of_type t))
   in
   let f = Function.set_return_type ret_type f in
   let f =
@@ -1275,18 +1335,19 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
           f params
     | _ -> failwith "renderer functions must be of Function type"
   in
-  let f = List.fold_left (flip (gen_cpp_stmt pipelines)) f fd_body in
-  f
+  List.fold_left
+    (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
+    (Ok f) fd_body
 
 let gen_renderer_code pipelines rd_functions r =
   let open RendererEnv in
-  Ok
-    (List.fold_left
-       (fun r fd ->
-         let f = gen_cpp_function pipelines fd in
-         let rclass = Cpp.Class.(r.rclass |> add_private_function f) in
-         { r with rclass })
-       r rd_functions)
+  List.fold_left
+    (fun acc fd ->
+      acc >>= fun r ->
+      gen_cpp_function pipelines fd >>= fun f ->
+      let rclass = Cpp.Class.(r.rclass |> add_private_function f) in
+      Ok { r with rclass })
+    (Ok r) rd_functions
 
 let gen_render_targets rd_type r =
   let open Cpp in
@@ -2268,7 +2329,7 @@ let gen_uniform_bindings env loc set id t =
 let refactor_depth_test f =
   let TypedAst.{ fd_body; _ } = f in
   match fd_body with
-  (* TODO: RIP format *)
+  (* FIXME(ale64bit): RIP format *)
   | ( _,
       L.
         { value =
@@ -2682,7 +2743,8 @@ let rec gen_glsl_stmt stmt f =
       let f = Function.(f |> append_code_section "} else {") in
       let f = List.fold_left (fun f stmt -> gen_glsl_stmt stmt f) f if_false in
       Function.(f |> append_code_section "}")
-  | ForIter _ -> failwith "TODO: foreach statement not supported in GLSL"
+  | ForIter _ ->
+      failwith "TODO(ale64bit): foreach statement not supported in GLSL"
   | ForRange
       { forrange_id;
         forrange_from = _, from_expr;
@@ -2760,16 +2822,11 @@ let gen_glsl_function TypedAst.{ fd_name; fd_type; fd_body; _ } =
         (f, Some (ret_type_name, t))
     | t ->
         failwith
-          ( "GLSL function must have Function type but got: "
-          ^ Type.string_of_type t )
+          (Printf.sprintf "GLSL function must have Function type but got '%s'"
+             (Type.string_of_type t))
   in
   let f = List.fold_left (flip gen_glsl_stmt) f fd_body in
   (f, ret_struct)
-
-let builtin_pos =
-  Lexing.{ pos_fname = "builtin"; pos_lnum = 0; pos_cnum = 0; pos_bol = 0 }
-
-let builtin_loc = (builtin_pos, builtin_pos)
 
 let gen_shader env helpers structs name stage
     TypedAst.{ fd_name; fd_env; fd_type; _ } =

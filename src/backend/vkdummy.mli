@@ -7,7 +7,7 @@ module Error : sig
     | `InvalidUniformType of Type.t * string
     | `StageMismatch of string * Type.t list * string * Type.t list
     | `MissingInputBinding of string * string
-    | `MultipleDepthBuffers of string ]
+    | `MultipleDepthBuffers ]
 
   val string_of_error : t Located.t -> string
 end
