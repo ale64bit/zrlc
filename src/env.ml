@@ -408,6 +408,32 @@ let global =
       matrix_ctor Double 4 2;
       matrix_ctor Double 4 3;
       matrix_ctor Double 4 4;
+      (* Additional constructors for vector and matrix types *)
+      ("bvec2", Function ([ ("x", bool) ], [ bvec2 ]));
+      ("bvec3", Function ([ ("x", bool) ], [ bvec3 ]));
+      ("bvec4", Function ([ ("x", bool) ], [ bvec4 ]));
+      ("ivec2", Function ([ ("x", int) ], [ ivec2 ]));
+      ("ivec3", Function ([ ("x", int) ], [ ivec3 ]));
+      ("ivec4", Function ([ ("x", int) ], [ ivec4 ]));
+      ("uvec2", Function ([ ("x", uint) ], [ uvec2 ]));
+      ("uvec3", Function ([ ("x", uint) ], [ uvec3 ]));
+      ("uvec4", Function ([ ("x", uint) ], [ uvec4 ]));
+      ("fvec2", Function ([ ("x", float) ], [ fvec2 ]));
+      ("fvec3", Function ([ ("x", float) ], [ fvec3 ]));
+      ("fvec4", Function ([ ("x", float) ], [ fvec4 ]));
+      ("dvec2", Function ([ ("x", double) ], [ dvec2 ]));
+      ("dvec3", Function ([ ("x", double) ], [ dvec3 ]));
+      ("dvec4", Function ([ ("x", double) ], [ dvec4 ]));
+      ("bvec3", Function ([ ("x", bvec2); ("y", bool) ], [ bvec3 ]));
+      ("bvec4", Function ([ ("x", bvec3); ("y", bool) ], [ bvec4 ]));
+      ("ivec3", Function ([ ("x", ivec2); ("y", int) ], [ ivec3 ]));
+      ("ivec4", Function ([ ("x", ivec3); ("y", int) ], [ ivec4 ]));
+      ("uvec3", Function ([ ("x", uvec2); ("y", uint) ], [ uvec3 ]));
+      ("uvec4", Function ([ ("x", uvec3); ("y", uint) ], [ uvec4 ]));
+      ("fvec3", Function ([ ("x", fvec2); ("y", float) ], [ fvec3 ]));
+      ("fvec4", Function ([ ("x", fvec3); ("y", float) ], [ fvec4 ]));
+      ("dvec3", Function ([ ("x", dvec2); ("y", double) ], [ dvec3 ]));
+      ("dvec4", Function ([ ("x", dvec3); ("y", double) ], [ dvec4 ]));
       (* Texture lookup *)
       ( "texture",
         Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
