@@ -94,7 +94,6 @@ end
 module Class = struct
   type t = {
     name : string;
-    package : string list;
     includes : string list;
     public_functions : Function.t list;
     private_functions : Function.t list;
@@ -105,7 +104,6 @@ module Class = struct
   let empty name =
     {
       name;
-      package = [];
       includes = [];
       public_functions = [];
       private_functions = [];
@@ -116,8 +114,6 @@ module Class = struct
   let name c = c.name
 
   let private_functions c = c.private_functions
-
-  let set_package p c = { c with package = p }
 
   let add_include inc c = { c with includes = inc :: c.includes }
 
@@ -139,14 +135,7 @@ module Class = struct
   let add_static_section s c =
     { c with static_sections = s :: c.static_sections }
 
-  let header_guard c =
-    let path = String.concat "_" (List.map String.uppercase_ascii c.package) in
-    Printf.sprintf "%s%s_H_"
-      (if String.length path > 0 then path ^ "_" else "")
-      (String.uppercase_ascii c.name)
-
   let string_of_header c =
-    let hg = header_guard c in
     let includes =
       String.concat "\n"
         (List.map (fun i -> "#include " ^ i) (List.rev c.includes))
@@ -178,8 +167,7 @@ module Class = struct
            (List.rev c.private_members))
     in
     Printf.sprintf
-      {|#ifndef %s
-#define %s
+      {|#pragma once
 
 %s
 
@@ -189,16 +177,11 @@ public:
 private:
   %s
   %s
-};
-
-#endif // %s|}
-      hg hg includes c.name public_function_signatures private_members
-      private_function_signatures hg
+};|}
+      includes c.name public_function_signatures private_members
+      private_function_signatures
 
   let string_of_source c =
-    let include_path =
-      match c.package with [] -> "" | p -> String.concat "/" p ^ "/"
-    in
     let non_templates =
       List.filter
         (fun f -> not (Function.is_template f))
@@ -209,23 +192,16 @@ private:
         ( List.rev c.static_sections
         @ List.map Function.string_of_implementation non_templates )
     in
-    Printf.sprintf {|#include "%s%s.h"
-%s|} include_path c.name implementations
+    Printf.sprintf {|#include "%s.h"
+%s|} c.name implementations
 end
 
 module Header = struct
-  type t = {
-    name : string;
-    package : string list;
-    includes : string list;
-    sections : string list;
-  }
+  type t = { name : string; includes : string list; sections : string list }
 
-  let empty name = { name; package = []; includes = []; sections = [] }
+  let empty name = { name; includes = []; sections = [] }
 
   let name h = h.name
-
-  let set_package p h = { h with package = p }
 
   let add_include inc h = { h with includes = inc :: h.includes }
 
@@ -246,24 +222,14 @@ end
 module Library = struct
   type t = {
     name : string;
-    package : string list;
     classes : Class.t list;
     headers : Header.t list;
     copts : string;
     defines : string;
-    deps : string list;
   }
 
-  let empty name package =
-    {
-      name;
-      package;
-      classes = [];
-      headers = [];
-      copts = "[]";
-      defines = "[]";
-      deps = [];
-    }
+  let empty name =
+    { name; classes = []; headers = []; copts = "[]"; defines = "[]" }
 
   let classes l = l.classes
 
@@ -273,50 +239,7 @@ module Library = struct
 
   let set_defines defines l = { l with defines }
 
-  let add_class c l =
-    { l with classes = Class.set_package l.package c :: l.classes }
+  let add_class c l = { l with classes = c :: l.classes }
 
-  let add_header h l =
-    { l with headers = Header.set_package l.package h :: l.headers }
-
-  let add_dep dep l = { l with deps = dep :: l.deps }
-
-  let string_of_library l =
-    let quote_and_comma s = "\"" ^ s ^ "\"," in
-    let srcs =
-      String.concat "\n        "
-        List.(
-          map (fun c -> quote_and_comma (Class.name c ^ ".cc")) (rev l.classes))
-    in
-    let hdrs =
-      String.concat "\n        "
-        List.(
-          map (fun c -> quote_and_comma (Class.name c ^ ".h")) (rev l.classes))
-    in
-    let single_hdrs =
-      String.concat "\n        "
-        List.(
-          map (fun h -> quote_and_comma (Header.name h ^ ".h")) (rev l.headers))
-    in
-    let deps =
-      String.concat "\n        " List.(map quote_and_comma (rev l.deps))
-    in
-    Printf.sprintf
-      {|cc_library(
-    name = "%s",
-    srcs = [
-        %s
-    ],
-    hdrs = [
-        %s
-    ],
-    copts = %s,
-    defines = %s,
-    deps = [
-        %s
-    ],
-)|}
-      l.name srcs
-      (hdrs ^ "\n" ^ single_hdrs)
-      l.copts l.defines deps
+  let add_header h l = { l with headers = h :: l.headers }
 end

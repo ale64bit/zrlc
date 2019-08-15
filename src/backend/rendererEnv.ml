@@ -855,8 +855,7 @@ let wait_device_and_queues_idle =
   CHECK_VK(vkDeviceWaitIdle(device));
 |}
 
-let empty rname pkg =
-  let pkg_path = String.concat "/" pkg in
+let empty rname =
   {
     name = rname;
     render_targets = MapString.(empty |> add "builtin_screen" Color);
@@ -875,7 +874,7 @@ let empty rname pkg =
         |> add_include "\"core/LRU.h\""
         |> add_include "\"glm/glm.hpp\""
         |> add_include "\"glm/gtc/type_ptr.hpp\""
-        |> add_include (Printf.sprintf {|"%s/Types.h"|} pkg_path)
+        |> add_include "\"Types.h\""
         |> add_private_member ("using UID = uint32_t", "")
         |> add_private_member ("const std::string ", "name_")
         |> add_private_member ("zrl::Core&", "core_")

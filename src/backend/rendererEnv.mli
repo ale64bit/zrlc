@@ -13,6 +13,6 @@ type t = {
   dtor : Function.t;
 }
 
-val empty : string -> string list -> t
+val empty : string -> t
 
 val export : t -> Class.t

@@ -6,7 +6,7 @@ This repository contains the source code for ZRL, including the compiler, docume
 
 ## Quick Start
 
-Check the [tutorial](docs/tutorial/README.md).
+Check the [examples](docs/examples/README.md).
 
 ## Building the compiler
 
@@ -36,7 +36,7 @@ TODO
 
 ## Contributing
 
-TODO
+See the [Contributing](CONTRIBUTING.md) section.
 
 ## License
 

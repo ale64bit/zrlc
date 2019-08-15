@@ -308,8 +308,7 @@ let check_at_most_one_depth_buffer loc lhs =
           if has_depth_buffer then error loc `MultipleDepthBuffers else Ok true
       | _ -> acc)
     (Ok false) lhs
-  >>= fun _ ->
-  Ok ()
+  >>= fun _ -> Ok ()
 
 let gen_clear env loc lhs rhs f =
   check_at_most_one_depth_buffer loc lhs >>= fun () ->
@@ -352,17 +351,18 @@ let gen_clear env loc lhs rhs f =
 
 let gen_shader_stage_create_infos p =
   let vertex_stage =
-    [ Printf.sprintf
+    [
+      Printf.sprintf
         {|
     VkPipelineShaderStageCreateInfo vertex_stage = {};
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertex_stage.module = %sVert_shader_module_;
+    vertex_stage.module = k%s_vert_glsl_shader_module_;
     vertex_stage.pName = "main";
     vertex_stage.pSpecializationInfo = nullptr;
     shader_stages.push_back(vertex_stage);
   |}
-        p.gp_name
+        p.gp_name;
     ]
   in
   let fragment_stage =
@@ -374,7 +374,7 @@ let gen_shader_stage_create_infos p =
     VkPipelineShaderStageCreateInfo fragment_stage = {};
     fragment_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragment_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragment_stage.module = %sFrag_shader_module_;
+    fragment_stage.module = k%s_frag_glsl_shader_module_;
     fragment_stage.pName = "main";
     fragment_stage.pSpecializationInfo = nullptr;
     shader_stages.push_back(fragment_stage);
@@ -1227,8 +1227,7 @@ let rec gen_cpp_stmt pipelines stmt f =
       List.fold_left
         (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
         (Ok f) if_false
-      >>= fun f ->
-      Ok Function.(f |> append_code_section "}")
+      >>= fun f -> Ok Function.(f |> append_code_section "}")
   | ForIter { foriter_id; foriter_it = _, it_expr; foriter_body } ->
       let header =
         Printf.sprintf "for (const auto &%s : %s) {" foriter_id
@@ -1238,13 +1237,13 @@ let rec gen_cpp_stmt pipelines stmt f =
       List.fold_left
         (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
         (Ok f) foriter_body
-      >>= fun f ->
-      Ok Function.(f |> append_code_section "}")
+      >>= fun f -> Ok Function.(f |> append_code_section "}")
   | ForRange
-      { forrange_id;
+      {
+        forrange_id;
         forrange_from = _, from_expr;
         forrange_to = _, to_expr;
-        forrange_body
+        forrange_body;
       } ->
       let header =
         Printf.sprintf "for (int %s = (%s); i <= (%s); ++%s) {" forrange_id
@@ -1256,8 +1255,7 @@ let rec gen_cpp_stmt pipelines stmt f =
       List.fold_left
         (fun acc stmt -> acc >>= gen_cpp_stmt pipelines stmt)
         (Ok f) forrange_body
-      >>= fun f ->
-      Ok Function.(f |> append_code_section "}")
+      >>= fun f -> Ok Function.(f |> append_code_section "}")
   | Return [ (_, expr) ] ->
       let return = Printf.sprintf "return %s;" (gen_cpp_expression env expr) in
       Ok Function.(f |> append_code_section return)
@@ -1432,25 +1430,29 @@ let gen_render_targets rd_type r =
         (Ok r) params
   | _ -> failwith "renderer must be of Function type"
 
-let gen_shader_modules cfg_bazel_package glsl_libraries r =
-  let pkg = String.concat "/" cfg_bazel_package in
+let gen_shader_modules glsl_libraries r =
   let shaders = List.flatten (List.map Glsl.Library.shaders glsl_libraries) in
   let r =
     List.fold_left
       (fun r shader ->
         let stage_name =
           match Glsl.Shader.stage shader with
-          | Vertex -> "Vert"
-          | Geometry -> "Geom"
-          | Fragment -> "Frag"
-          | Compute -> "Comp"
+          | Vertex -> "vert"
+          | Geometry -> "geom"
+          | Fragment -> "frag"
+          | Compute -> "comp"
         in
-        let shader_name = Glsl.Shader.name shader ^ stage_name in
-        let module_member = shader_name ^ "_shader_module_" in
+        let shader_name =
+          Printf.sprintf "%s.%s" (Glsl.Shader.name shader) stage_name
+        in
+        let shader_variable_name =
+          Printf.sprintf "k%s_%s_glsl_" (Glsl.Shader.name shader) stage_name
+        in
+        let module_member = shader_variable_name ^ "shader_module_" in
         let rclass =
           Cpp.Class.(
             r.RendererEnv.rclass
-            |> add_include (Printf.sprintf {|"%s/%s.h"|} pkg shader_name)
+            |> add_include (Printf.sprintf {|"%s.glsl.h"|} shader_name)
             |> add_private_member ("VkShaderModule", module_member))
         in
         let ctor =
@@ -1464,13 +1466,13 @@ let gen_shader_modules cfg_bazel_package glsl_libraries r =
     create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     create_info.pNext = nullptr;
     create_info.flags = 0;
-    create_info.codeSize = sizeof k%s;
-    create_info.pCode = k%s;
+    create_info.codeSize = sizeof %s;
+    create_info.pCode = %s;
     CHECK_VK(vkCreateShaderModule(core_.GetLogicalDevice().GetHandle(), &create_info,
                                   nullptr, &%s));
   }
 |}
-                    shader_name shader_name module_member))
+                    shader_variable_name shader_variable_name module_member))
         in
         let dtor =
           Cpp.Function.(
@@ -1676,25 +1678,18 @@ let gen_pipeline_layout_lcp pipelines r =
   in
   Ok RendererEnv.{ r with ctor }
 
-let gen_renderer_library Config.{ cfg_bazel_package; _ } pipelines
-    glsl_libraries TypedAst.{ rd_name; rd_type; rd_functions; _ } =
+let gen_renderer_library pipelines glsl_libraries
+    TypedAst.{ rd_name; rd_type; rd_functions; _ } =
   let open Cpp in
-  let r = RendererEnv.empty rd_name cfg_bazel_package in
-  gen_shader_modules cfg_bazel_package glsl_libraries r
+  let r = RendererEnv.empty rd_name in
+  gen_shader_modules glsl_libraries r
   >>= gen_pipeline_members pipelines
   >>= gen_pipeline_layout_lcp pipelines
   >>= gen_render_targets rd_type
   >>= gen_renderer_code pipelines rd_functions
   >>= fun r ->
   let output_class = RendererEnv.export r in
-  let types_target = "//" ^ String.concat "/" cfg_bazel_package ^ ":Types" in
-  let lib =
-    Library.(
-      empty rd_name cfg_bazel_package
-      |> set_copts "COPTS" |> set_defines "DEFINES" |> add_class output_class
-      |> add_dep types_target |> add_dep "//core" |> add_dep "@glm"
-      |> add_dep "@vulkan//:sdk")
-  in
+  let lib = Library.(empty rd_name |> add_class output_class) in
   Ok lib
 
 let gen_glsl_type td_name td_type =
@@ -2332,35 +2327,40 @@ let refactor_depth_test f =
   (* FIXME(ale64bit): RIP format *)
   | ( _,
       L.
-        { value =
+        {
+          value =
             If
-              { if_cond =
+              {
+                if_cond =
                   ( _,
                     L.
-                      { value =
+                      {
+                        value =
                           BinExpr
                             ( L.
-                                { value =
+                                {
+                                  value =
                                     Access
                                       ( L.
-                                          { value =
+                                          {
+                                            value =
                                               Access
                                                 ( L.{ value = Id "builtin"; _ },
                                                   "fragCoord" );
-                                            _
+                                            _;
                                           },
                                         "z" );
-                                  _
+                                  _;
                                 },
                               ( ( Equal | NotEqual | LessThan | GreaterThan
                                 | LessOrEqual | GreaterOrEqual ) as op ),
                               L.{ value = Access (_, "currentDepth"); _ } );
-                        _
+                        _;
                       } );
                 if_true = [ (_, L.{ value = Discard; _ }) ];
-                if_false = []
+                if_false = [];
               };
-          _
+          _;
         } )
     :: other_stmts ->
       let write_enabled, compare_op =
@@ -2376,35 +2376,40 @@ let refactor_depth_test f =
       (true, write_enabled, compare_op, { f with fd_body = other_stmts })
   | ( _,
       L.
-        { value =
+        {
+          value =
             If
-              { if_cond =
+              {
+                if_cond =
                   ( _,
                     L.
-                      { value =
+                      {
+                        value =
                           BinExpr
                             ( L.{ value = Access (_, "currentDepth"); _ },
                               ( ( Equal | NotEqual | LessThan | GreaterThan
                                 | LessOrEqual | GreaterOrEqual ) as op ),
                               L.
-                                { value =
+                                {
+                                  value =
                                     Access
                                       ( L.
-                                          { value =
+                                          {
+                                            value =
                                               Access
                                                 ( L.{ value = Id "builtin"; _ },
                                                   "fragCoord" );
-                                            _
+                                            _;
                                           },
                                         "z" );
-                                  _
+                                  _;
                                 } );
-                        _
+                        _;
                       } );
                 if_true = [ (_, L.{ value = Discard; _ }) ];
-                if_false = []
+                if_false = [];
               };
-          _
+          _;
         } )
     :: other_stmts ->
       let write_enabled, compare_op =
@@ -2524,24 +2529,14 @@ let gen_pipelines root_elems =
       | _ -> acc)
     (Ok MapString.empty) root_elems
 
-let gen_renderer_libraries cfg pipelines glsl_libraries root_elems =
-  let pkg = String.concat "/" cfg.Config.cfg_bazel_package in
+let gen_renderer_libraries pipelines glsl_libraries root_elems =
   List.fold_left
     (fun acc tl ->
       acc >>= fun renderer_libraries ->
       let L.{ value; _ } = tl in
       match value with
       | TypedAst.RendererDecl rd ->
-          gen_renderer_library cfg pipelines glsl_libraries rd >>= fun lib ->
-          let lib =
-            List.fold_left
-              (fun lib glsl_lib ->
-                let dep =
-                  Printf.sprintf "//%s:%s" pkg (Glsl.Library.name glsl_lib)
-                in
-                Cpp.Library.add_dep dep lib)
-              lib glsl_libraries
-          in
+          gen_renderer_library pipelines glsl_libraries rd >>= fun lib ->
           Ok (lib :: renderer_libraries)
       | _ -> acc)
     (Ok []) root_elems
@@ -2746,10 +2741,11 @@ let rec gen_glsl_stmt stmt f =
   | ForIter _ ->
       failwith "TODO(ale64bit): foreach statement not supported in GLSL"
   | ForRange
-      { forrange_id;
+      {
+        forrange_id;
         forrange_from = _, from_expr;
         forrange_to = _, to_expr;
-        forrange_body
+        forrange_body;
       } ->
       let header =
         Printf.sprintf "for (int %s = (%s); i <= (%s); %s++) {" forrange_id
@@ -2923,8 +2919,9 @@ let gen_shaders env name glsl_types pipeline =
     match vertex_ret_struct with Some s -> s :: structs | None -> structs
   in
   let vertex_shader =
-    [ gen_shader env (vertex_fn :: helpers) vertex_structs name Shader.Vertex
-        pipeline.gp_vertex_stage
+    [
+      gen_shader env (vertex_fn :: helpers) vertex_structs name Shader.Vertex
+        pipeline.gp_vertex_stage;
     ]
   in
   let fragment_shader =
@@ -3018,13 +3015,12 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
   >>= fun (glsl_types, cc_types_header) ->
   let cc_types =
     Cpp.Library.(
-      empty "Types" cfg.Config.cfg_bazel_package
-      |> set_copts "COPTS" |> set_defines "DEFINES"
+      empty "Types" |> set_copts "COPTS" |> set_defines "DEFINES"
       |> add_header cc_types_header)
   in
   gen_glsl_libraries root_env glsl_types glsl_constants pipelines
   >>= fun glsl_libraries ->
-  gen_renderer_libraries cfg pipelines glsl_libraries root_elems
+  gen_renderer_libraries pipelines glsl_libraries root_elems
   >>= fun renderer_libraries ->
   let build =
     List.fold_left (flip Build.add_glsl_library) build glsl_libraries
@@ -3034,4 +3030,5 @@ let gen cfg TypedAst.{ root_elems; root_env; _ } =
   in
   Ok
     Build.(
-      build |> add_cc_library cc_types |> write_to cfg.cfg_output_directory)
+      build |> add_cc_library cc_types
+      |> write_to cfg.Config.cfg_output_directory)

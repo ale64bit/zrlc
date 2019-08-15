@@ -45,8 +45,6 @@ module Class : sig
 
   val private_functions : t -> Function.t list
 
-  val set_package : string list -> t -> t
-
   val add_include : string -> t -> t
 
   val add_public_function : Function.t -> t -> t
@@ -69,8 +67,6 @@ module Header : sig
 
   val name : t -> string
 
-  val set_package : string list -> t -> t
-
   val add_include : string -> t -> t
 
   val add_section : string -> t -> t
@@ -81,7 +77,7 @@ end
 module Library : sig
   type t
 
-  val empty : string -> string list -> t
+  val empty : string -> t
 
   val classes : t -> Class.t list
 
@@ -94,8 +90,4 @@ module Library : sig
   val add_class : Class.t -> t -> t
 
   val add_header : Header.t -> t -> t
-
-  val add_dep : string -> t -> t
-
-  val string_of_library : t -> string
 end

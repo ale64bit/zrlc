@@ -149,30 +149,4 @@ module Library = struct
   let shaders l = l.shaders
 
   let add_shader sh l = { l with shaders = sh :: l.shaders }
-
-  let string_of_library l =
-    let quote_and_comma s = "\"" ^ s ^ "\"," in
-    let shaders =
-      String.concat "\n        "
-        List.(
-          map
-            (fun s ->
-              let stage_ext =
-                match Shader.stage s with
-                | Vertex -> ".vert"
-                | Geometry -> ".geom"
-                | Fragment -> ".frag"
-                | Compute -> ".comp"
-              in
-              quote_and_comma (Shader.name s ^ stage_ext ^ ".glsl"))
-            (rev l.shaders))
-    in
-    Printf.sprintf
-      {|glsl_library(
-    name = "%s",
-    srcs = [
-        %s
-    ],
-)|}
-      l.name shaders
 end

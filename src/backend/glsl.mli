@@ -58,6 +58,4 @@ module Library : sig
   val shaders : t -> Shader.t list
 
   val add_shader : Shader.t -> t -> t
-
-  val string_of_library : t -> string
 end
