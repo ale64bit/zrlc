@@ -531,7 +531,11 @@ let gen_create_and_bind_pipeline env p f lhs =
     rasterization_state.rasterizerDiscardEnable = VK_FALSE;
     rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
     rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT;
+#ifndef ZRL_FRONT_FACE_COUNTER_CLOCKWISE
+    rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE;
+#else
     rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+#endif
     rasterization_state.depthBiasEnable = VK_FALSE;
     rasterization_state.depthBiasConstantFactor = 0.0f;
     rasterization_state.depthBiasClamp = 0.0f;
@@ -2222,7 +2226,7 @@ let gen_types_header pipelines root_elems cpp_constants =
                       (* Generate automatic providers for render targets. *)
                       Printf.sprintf
                         {|template<class T> struct %s_%s;
-template <> struct %s_fb<RenderTargetReference *> {
+template <> struct %s_%s<RenderTargetReference *> {
   void operator()(RenderTargetReference *const &rt_ref, uint32_t &uid,
                   SampledImageReference *data) const noexcept {
     uid = 0;
@@ -2231,7 +2235,7 @@ template <> struct %s_fb<RenderTargetReference *> {
     }
   }
 };|}
-                        pname name pname
+                        pname name pname name
                   | _ ->
                       Printf.sprintf "template<class T> struct %s_%s;" pname
                         name)
@@ -2280,6 +2284,9 @@ let check_stage_chaining loc src_name from_stage dst_name to_stage =
 let gen_uniform_bindings env loc set id t =
   let open Type in
   match t with
+  | Vector _ -> Ok [ (set, 0, 1, id, t, "") ]
+  | Matrix _ -> Ok [ (set, 0, 1, id, t, "") ]
+  | Sampler 2 -> Ok [ (set, 0, 1, id, t, "") ]
   | Array (tt, dims) ->
       if Type.is_ref tt && has_opaque_members env SetString.empty tt then
         error loc
@@ -2288,7 +2295,6 @@ let gen_uniform_bindings env loc set id t =
       else
         let count = array_type_size dims in
         Ok [ (set, 0, count, id, t, "") ]
-  | Sampler 2 -> Ok [ (set, 0, 1, id, t, "") ]
   | TypeRef name -> (
       match Env.find_type ~local:false name env with
       | Some L.{ value = Record fields as tt; _ } ->
