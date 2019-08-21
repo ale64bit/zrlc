@@ -113,21 +113,17 @@ let rec check_type env ctx_loc t =
         (fun acc (name, t) ->
           acc >>= fun new_fields ->
           check_valid_identifier ctx_loc name >>= fun () ->
-          check_type env ctx_loc t >>= fun nt ->
-          Ok ((name, nt) :: new_fields))
+          check_type env ctx_loc t >>= fun nt -> Ok ((name, nt) :: new_fields))
         (Ok []) fields
-      >>= fun new_fields ->
-      Ok (Record new_fields)
+      >>= fun new_fields -> Ok (Record new_fields)
   | Array (t, dims) ->
       check_type env ctx_loc t >>= fun nt ->
       List.fold_results
         (fun acc dim ->
           acc >>= fun new_dims ->
-          check_array_dim env ctx_loc dim >>= fun ndim ->
-          Ok (ndim :: new_dims))
+          check_array_dim env ctx_loc dim >>= fun ndim -> Ok (ndim :: new_dims))
         (Ok []) dims
-      >>= fun new_dims ->
-      Ok (Array (nt, new_dims))
+      >>= fun new_dims -> Ok (Array (nt, new_dims))
   | Function (args, rets) ->
       let idfn (name, _) = name in
       let errfn arg = error ctx_loc (`DuplicateParameter (idfn arg)) in
@@ -135,22 +131,20 @@ let rec check_type env ctx_loc t =
       List.fold_results
         (fun acc (name, t) ->
           acc >>= fun new_args ->
-          check_type env ctx_loc t >>= fun nt ->
-          Ok ((name, nt) :: new_args))
+          check_type env ctx_loc t >>= fun nt -> Ok ((name, nt) :: new_args))
         (Ok []) args
       >>= fun new_args ->
       List.fold_results
         (fun acc t ->
           acc >>= fun new_rets ->
-          check_type env ctx_loc t >>= fun nt ->
-          Ok (nt :: new_rets))
+          check_type env ctx_loc t >>= fun nt -> Ok (nt :: new_rets))
         (Ok []) rets
-      >>= fun new_rets ->
-      Ok (Function (new_args, new_rets))
+      >>= fun new_rets -> Ok (Function (new_args, new_rets))
   | Primitive _ -> Ok t
   | Vector _ -> Ok t
   | Matrix _ -> Ok t
   | Sampler _ -> Ok t
+  | SamplerCube -> Ok t
   | Texture _ -> Ok t
   | RenderTarget _ -> Ok t
   | Atom _ -> Ok t
@@ -499,17 +493,12 @@ and check_index env loc expr index_exprs =
                 error loc (`NonIntegerArrayIndex index_expr))
           (Ok ())
           (List.combine index_exprs index_types)
-        >>= fun () ->
-        Ok t
+        >>= fun () -> Ok t
   | Matrix (pt, _, n) -> (
       let have = List.length index_types in
       match have with
-      | 1 ->
-          check_index_exprs >>= fun () ->
-          Ok (Vector (pt, n))
-      | 2 ->
-          check_index_exprs >>= fun () ->
-          Ok (Primitive pt)
+      | 1 -> check_index_exprs >>= fun () -> Ok (Vector (pt, n))
+      | 2 -> check_index_exprs >>= fun () -> Ok (Primitive pt)
       | _ -> error loc (`TooManyIndices (expr, have, 2)) )
   | _ ->
       let expr = L.{ loc; value = Ast.Index (expr, index_exprs) } in
@@ -568,8 +557,7 @@ and check_call env loc f_expr arg_exprs =
       (* Case #2: function + named arguments *)
       | true, false, true, false ->
           check_call_named_args ~strict:true loc name args arg_exprs arg_types
-          >>= fun () ->
-          Ok ret
+          >>= fun () -> Ok ret
       (* Case #3: pipeline + unnamed arguments *)
       | false, true, false, true ->
           (* TODO: create custom error *)
@@ -579,8 +567,7 @@ and check_call env loc f_expr arg_exprs =
       (* Case #4: pipeline + named arguments *)
       | false, true, true, _ ->
           check_pipeline_call env loc name args arg_exprs arg_types
-          >>= fun () ->
-          Ok ret
+          >>= fun () -> Ok ret
       | _, _, false, false ->
           let expr = L.{ loc; value = Ast.Call (f_expr, arg_exprs) } in
           error loc (`MixedArgumentStyle expr)
@@ -687,28 +674,20 @@ and check_expr env expr =
   let open Ast in
   let L.{ loc; value } = expr in
   match value with
-  | Access (expr, id) ->
-      check_access env loc expr id >>= fun typ ->
-      Ok [ typ ]
+  | Access (expr, id) -> check_access env loc expr id >>= fun typ -> Ok [ typ ]
   | Index (expr, index_exprs) ->
-      check_index env loc expr index_exprs >>= fun typ ->
-      Ok [ typ ]
+      check_index env loc expr index_exprs >>= fun typ -> Ok [ typ ]
   | Call (f_expr, arg_exprs) -> check_call env loc f_expr arg_exprs
-  | Cast (t, expr) ->
-      check_cast env loc t expr >>= fun typ ->
-      Ok [ typ ]
+  | Cast (t, expr) -> check_cast env loc t expr >>= fun typ -> Ok [ typ ]
   | NamedArg (_, expr) ->
-      check_single_value_expr env expr >>= fun typ ->
-      Ok [ typ ]
+      check_single_value_expr env expr >>= fun typ -> Ok [ typ ]
   | BinExpr (lhs, op, rhs) ->
       check_single_value_expr env lhs >>= fun ltyp ->
       check_single_value_expr env rhs >>= fun rtyp ->
-      check_binop expr ltyp op rtyp >>= fun typ ->
-      Ok [ typ ]
+      check_binop expr ltyp op rtyp >>= fun typ -> Ok [ typ ]
   | UnExpr (op, rhs) ->
       check_single_value_expr env rhs >>= fun typ ->
-      check_unop loc op typ >>= fun typ ->
-      Ok [ typ ]
+      check_unop loc op typ >>= fun typ -> Ok [ typ ]
   | BoolLiteral _ -> Ok [ Primitive Bool ]
   | IntLiteral _ -> Ok [ Primitive Int ]
   | FloatLiteral _ -> Ok [ Primitive Float ]
@@ -826,8 +805,7 @@ and check_lvalues env exprs =
   List.fold_results
     (fun acc expr ->
       acc >>= fun expr_types ->
-      check_lvalue env expr >>= fun expr_type ->
-      Ok (expr_type :: expr_types))
+      check_lvalue env expr >>= fun expr_type -> Ok (expr_type :: expr_types))
     (Ok []) exprs
 
 and check_single_assignment loc op lhs_types rhs_exprs rhs_types =
@@ -1100,8 +1078,7 @@ let check_function_sig env loc fd =
 let check_function_group env functions =
   List.fold_left
     (fun acc L.{ loc; value } ->
-      acc >>= fun env ->
-      check_function_sig env loc value)
+      acc >>= fun env -> check_function_sig env loc value)
     (Ok env) functions
   >>= fun env ->
   List.fold_results

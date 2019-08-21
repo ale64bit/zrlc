@@ -141,6 +141,7 @@ let rec zrl_to_glsl_type =
   | Matrix (Float, 3, 3) -> "mat3"
   | Matrix (Float, 4, 4) -> "mat4"
   | Sampler 2 -> "sampler2D"
+  | SamplerCube -> "samplerCube"
   | TypeRef s -> s
   | Array (t, dims) ->
       let string_of_dim = function
@@ -190,10 +191,9 @@ let rec zrl_to_cpp_type =
         | d :: ds -> arr (aux ds) d
       in
       aux dims
-  | RenderTarget RGB -> "RenderTargetReference*"
-  | RenderTarget RGBA -> "RenderTargetReference*"
-  | RenderTarget DS -> "RenderTargetReference*"
-  | Sampler 2 -> "SampledImageReference"
+  | RenderTarget _ -> "RenderTargetReference*"
+  | Sampler 2 -> "SampledImage2DReference"
+  | SamplerCube -> "SampledCubeMapReference"
   | TypeRef s -> s
   | t -> failwith "unsupported type: " ^ string_of_type t
 
@@ -655,7 +655,7 @@ let collect_atom_bindings loc = function
       error loc
         (`Unsupported "invalid right hand side of pipeline write statement")
 
-let gen_sampler_binding_write set binding count name t wrapped_name =
+let gen_sampler2D_binding_write set binding count name t wrapped_name =
   let data =
     Printf.sprintf "data%s"
       (if String.length wrapped_name = 0 then "" else "." ^ wrapped_name)
@@ -664,7 +664,7 @@ let gen_sampler_binding_write set binding count name t wrapped_name =
     Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set binding
       count name (Type.string_of_type t)
   in
-  Printf.sprintf "%s\nBindSampledImage(set, %d, %s, images);" comment binding
+  Printf.sprintf "%s\nBindSampledImage2D(set, %d, %s, images);" comment binding
     data
 
 let gen_ubo_binding_write set binding count name t wrapped_name =
@@ -736,9 +736,16 @@ let gen_uniform_atom_binding env pipeline id expr f =
       (List.map
          (fun (set, binding, count, name, t, wrapped_name) ->
            match t with
+           | Type.Sampler 1 ->
+               failwith "TODO(ale64bit): binding sampler1D not supported yet"
            | Type.Sampler 2 ->
-               gen_sampler_binding_write set binding count name t wrapped_name
-           | Type.Array (Sampler 2, _) ->
+               gen_sampler2D_binding_write set binding count name t
+                 wrapped_name
+           | Type.Sampler 3 ->
+               failwith "TODO(ale64bit): binding sampler3D not supported yet"
+           | Type.SamplerCube ->
+               failwith "TODO(ale64bit): binding samplerCube not supported yet"
+           | Type.Array (Sampler _, _) ->
                failwith
                  "TODO(ale64bit): binding array of samplers not supported yet"
            | _ -> gen_ubo_binding_write set binding count name t wrapped_name)
@@ -1367,7 +1374,7 @@ let gen_render_targets rd_type r =
               let ptr_member = ("RenderTargetReference *", pname) in
               let rt_type, format =
                 if rtt = RGBA then
-                  (RendererEnv.Color, "VK_FORMAT_B8G8R8A8_UNORM")
+                  (RendererEnv.Color, "core_.GetSwapchain().GetSurfaceFormat()")
                 else if rtt = DS then
                   (RendererEnv.DepthStencil, "VK_FORMAT_D16_UNORM")
                 else failwith "unsupported render target type"
@@ -1376,15 +1383,19 @@ let gen_render_targets rd_type r =
                 match rt_type with
                 | RendererEnv.Color ->
                     "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
-                     1, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, \
+                     1, 1, core_.GetSwapchain().GetSurfaceFormat(), \
+                     VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, \
+                     VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | \
                      VK_IMAGE_USAGE_SAMPLED_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_COLOR_BIT"
                 | RendererEnv.DepthStencil ->
                     "core_, ExpandExtent(core_.GetSwapchain().GetExtent()), \
-                     1, 1, VK_FORMAT_D16_UNORM, VK_IMAGE_TILING_OPTIMAL, \
-                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, \
+                     1, 1, VK_FORMAT_D16_UNORM, VK_IMAGE_TYPE_2D, \
+                     VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, \
+                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | \
+                     VK_IMAGE_USAGE_SAMPLED_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_DEPTH_BIT"
               in
@@ -1769,8 +1780,8 @@ let render_target_reference_struct =
   VkClearValue clear_value;
 };|}
 
-let sampled_image_reference_struct =
-  {|struct SampledImageReference {
+let sampled_image2D_reference_struct =
+  {|struct SampledImage2DReference {
   VkSamplerCreateInfo sampler_create_info;
   RenderTargetReference *rt_ref = nullptr;
   VkFormat format = VK_FORMAT_UNDEFINED;
@@ -1778,8 +1789,19 @@ let sampled_image_reference_struct =
   uint32_t width = 0;
   uint32_t height = 0;
   uint32_t channels = 0;
-  unsigned char* image_data = nullptr;
+  std::vector<std::vector<unsigned char*>> image_data;
   bool build_mipmaps = false;
+};|}
+
+let sampled_cubemap_reference_struct =
+  {|struct SampledCubeMapReference {
+  VkSamplerCreateInfo sampler_create_info;
+  VkFormat format = VK_FORMAT_UNDEFINED;
+  VkDeviceSize size = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t channels = 0;
+  std::array<unsigned char*, 6> image_data;
 };|}
 
 let render_pass_hash =
@@ -2199,7 +2221,8 @@ let gen_types_header pipelines root_elems cpp_constants =
       |> add_section descriptor_set_register_struct
       |> add_section uniform_resource_struct
       |> add_section render_target_reference_struct
-      |> add_section sampled_image_reference_struct
+      |> add_section sampled_image2D_reference_struct
+      |> add_section sampled_cubemap_reference_struct
       |> add_section render_pass_hash
       |> add_section render_pass_equal_to
       |> add_section framebuffer_hash
@@ -2228,7 +2251,7 @@ let gen_types_header pipelines root_elems cpp_constants =
                         {|template<class T> struct %s_%s;
 template <> struct %s_%s<RenderTargetReference *> {
   void operator()(RenderTargetReference *const &rt_ref, uint32_t &uid,
-                  SampledImageReference *data) const noexcept {
+                  SampledImage2DReference *data) const noexcept {
     uid = 0;
     if (data != nullptr) {
       data->rt_ref = rt_ref;
@@ -2287,6 +2310,7 @@ let gen_uniform_bindings env loc set id t =
   | Vector _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Matrix _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Sampler 2 -> Ok [ (set, 0, 1, id, t, "") ]
+  | SamplerCube -> Ok [ (set, 0, 1, id, t, "") ]
   | Array (tt, dims) ->
       if Type.is_ref tt && has_opaque_members env SetString.empty tt then
         error loc

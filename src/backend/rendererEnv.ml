@@ -46,11 +46,11 @@ let get_or_create_render_pass =
     
       VkAttachmentReference reference = {};
       reference.attachment = attachment_number;
-      reference.layout = (rt->format == VK_FORMAT_B8G8R8A8_UNORM
+      reference.layout = (rt->format == core_.GetSwapchain().GetSurfaceFormat()
                           ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                           : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     
-      if (rt->format == VK_FORMAT_B8G8R8A8_UNORM) {
+      if (rt->format == core_.GetSwapchain().GetSurfaceFormat()) {
         color_attachments.push_back(reference);
       } else {
         depth_stencil_attachment = reference;
@@ -243,15 +243,11 @@ let create_color_render_target =
     empty "CreateColorRenderTarget"
     |> set_return_type "std::unique_ptr<zrl::Image>"
     |> append_code_section
-         {|  constexpr VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
+         {|  const VkFormat format = core_.GetSwapchain().GetSurfaceFormat();
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
-  constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_COLOR_BIT;
-  const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
-  return std::make_unique<zrl::Image>(
-      core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
-      1, 1, format, VK_IMAGE_TILING_OPTIMAL, usage,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
+  return zrl::Image::Image2D(core_, core_.GetSwapchain().GetExtent(), 1, 1,
+                             format, usage);|})
 
 let create_depth_render_target =
   Function.(
@@ -260,30 +256,35 @@ let create_depth_render_target =
     |> append_code_section
          {|  constexpr VkFormat format = VK_FORMAT_D16_UNORM;
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  constexpr VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
-  const VkExtent2D extent2D = core_.GetSwapchain().GetExtent();
-  return std::make_unique<zrl::Image>(
-      core_, VkExtent3D{extent2D.width, extent2D.height, 1}, 
-      1, 1, format, VK_IMAGE_TILING_OPTIMAL, usage, 
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aspects);|})
+  return zrl::Image::DepthBuffer(core_, core_.GetSwapchain().GetExtent(),
+                                 format, usage);|})
 
 let bind_sampled_image =
   Function.(
-    empty "BindSampledImage" |> set_return_type "void"
+    empty "BindSampledImage2D" |> set_return_type "void"
     |> add_param ("VkDescriptorSet", "set")
     |> add_param ("uint32_t", "binding")
-    |> add_param ("SampledImageReference&", "ref")
+    |> add_param ("SampledImage2DReference&", "ref")
     |> add_param ("std::vector<std::unique_ptr<zrl::Image>>&", "images")
     |> append_code_section
          {|
-      const VkExtent3D extent = {ref.width, ref.height, 1};
-      const bool is_empty  = extent.width * extent.height * extent.depth == 0;
+      const VkExtent2D extent = {ref.width, ref.height};
+      const bool is_empty  = extent.width * extent.height == 0;
+      uint32_t layer_count = static_cast<uint32_t>(ref.image_data.size());
+      uint32_t level_count = (layer_count == 0)
+                             ? 1
+                             : static_cast<uint32_t>(ref.image_data[0].size());
 
       // Create sampler if needed.
       VkSampler sampler = VK_NULL_HANDLE;
       if (is_empty) {
         sampler = dummy_sampler_;
       } else {
+        if (ref.build_mipmaps) {
+          ref.sampler_create_info.maxLod = std::floor(
+                                           std::log2(
+                                           std::max(ref.width, ref.height))) + 1;
+        }
         auto it = sampler_cache_.find(ref.sampler_create_info);
         if (it == sampler_cache_.end()) {
           DLOG << name_ << ": creating new sampler\n";
@@ -306,17 +307,23 @@ let bind_sampled_image =
         VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                   VK_IMAGE_USAGE_SAMPLED_BIT;
         img_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        for (size_t i = 1; i < ref.image_data.size(); ++i) {
+          CHECK_PC(ref.image_data[0].size() == ref.image_data[i].size(), 
+                   "all image layers must have the same level count");
+        }
 
         std::unique_ptr<zrl::Image> img;
-        VkDeviceSize src_offset = 0;
         if (is_empty) {
+          CHECK_PC(!ref.build_mipmaps, "cannot build mipmaps for dummy texture");
           LOG(WARNING) << name_ << ": missing texture, will use dummy 4x4 image\n";
-          img = std::make_unique<zrl::Image>(core_, VkExtent3D{4, 4, 1}, 1, 1,
-              VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, 
-              usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+          layer_count = 1;
+          img = zrl::Image::Image2D(core_, VkExtent2D{4, 4}, level_count, 
+                                    layer_count, core_.GetSwapchain().GetSurfaceFormat(), 
+                                    usage);
         } else {
-          uint32_t mip_levels = 1;
           if (ref.build_mipmaps) {
+            CHECK_PC(level_count == 1, 
+                     "build_mipmaps requested but image data already has multiple levels");
             VkFormatProperties props = core_.GetLogicalDevice()
                                             .GetPhysicalDevice()
                                             .GetFormatProperties(ref.format);
@@ -324,14 +331,11 @@ let bind_sampled_image =
                      "BLIT_SRC is required for building mipmaps");
             CHECK_PC(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT,
                      "BLIT_DST is required for building mipmaps");
-            mip_levels = std::floor(std::log2(std::max(ref.width, ref.height))) + 1;
-            usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            level_count = std::floor(std::log2(std::max(ref.width, ref.height))) + 1;
+            usage ^= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
           }
-          img = std::make_unique<zrl::Image>(core_,
-              extent, mip_levels, 1, ref.format, VK_IMAGE_TILING_OPTIMAL, usage,
-              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-          src_offset = staging_buffer_->PushData(ref.size, ref.image_data);
-          delete ref.image_data;
+          img = zrl::Image::Image2D(core_, extent, level_count, layer_count, 
+                                    ref.format, usage);
         }
 
         // Schedule copy and barriers.
@@ -345,26 +349,35 @@ let bind_sampled_image =
         pre_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         pre_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         pre_copy_barrier.image = img->GetHandle();
-        pre_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        pre_copy_barrier.subresourceRange.aspectMask = img->GetAspects();
         pre_copy_barrier.subresourceRange.baseMipLevel = 0;
-        pre_copy_barrier.subresourceRange.levelCount = 1;
+        pre_copy_barrier.subresourceRange.levelCount = ref.build_mipmaps ? 1 : img->GetLevelCount();
         pre_copy_barrier.subresourceRange.baseArrayLayer = 0;
-        pre_copy_barrier.subresourceRange.layerCount = 1;
+        pre_copy_barrier.subresourceRange.layerCount = img->GetLayerCount();
         pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
 
         if (!is_empty) {
-          VkBufferImageCopy buffer_image_copy = {};
-          buffer_image_copy.bufferOffset = src_offset;
-          buffer_image_copy.bufferRowLength = 0;
-          buffer_image_copy.bufferImageHeight = 0;
-          buffer_image_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-          buffer_image_copy.imageSubresource.mipLevel = 0;
-          buffer_image_copy.imageSubresource.baseArrayLayer = 0; // TODO get this from img
-          buffer_image_copy.imageSubresource.layerCount = 1; // TODO get this from img
-          buffer_image_copy.imageOffset = {0, 0, 0};
-          buffer_image_copy.imageExtent = img->GetExtent();
-          pending_image_copies_.push_back(
-              std::make_tuple(img->GetHandle(), buffer_image_copy, ref.build_mipmaps));
+          const uint32_t copy_levels = ref.build_mipmaps ? 1 : level_count;
+          for (uint32_t layer = 0; layer < layer_count; ++layer) {
+            for (uint32_t level = 0; level < copy_levels; ++level) {
+              auto src_offset = staging_buffer_->PushData(ref.size >> level, 
+                                                          ref.image_data[layer][level]);
+              delete ref.image_data[layer][level];
+
+              VkBufferImageCopy buffer_image_copy = {};
+              buffer_image_copy.bufferOffset = src_offset;
+              buffer_image_copy.bufferRowLength = 0;
+              buffer_image_copy.bufferImageHeight = 0;
+              buffer_image_copy.imageSubresource.aspectMask = img->GetAspects();
+              buffer_image_copy.imageSubresource.mipLevel = level;
+              buffer_image_copy.imageSubresource.baseArrayLayer = layer;
+              buffer_image_copy.imageSubresource.layerCount = 1;
+              buffer_image_copy.imageOffset = {0, 0, 0};
+              buffer_image_copy.imageExtent = img->GetExtent();
+              pending_image_copies_.push_back(
+                  std::make_tuple(img->GetHandle(), buffer_image_copy, ref.build_mipmaps));
+            }
+          }
         }
 
         if (!ref.build_mipmaps) {
@@ -378,11 +391,11 @@ let bind_sampled_image =
           post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
           post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
           post_copy_barrier.image = img->GetHandle();
-          post_copy_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          post_copy_barrier.subresourceRange.aspectMask = img->GetAspects();
           post_copy_barrier.subresourceRange.baseMipLevel = 0;
-          post_copy_barrier.subresourceRange.levelCount = 1;
+          post_copy_barrier.subresourceRange.levelCount = img->GetLevelCount();
           post_copy_barrier.subresourceRange.baseArrayLayer = 0;
-          post_copy_barrier.subresourceRange.layerCount = 1;
+          post_copy_barrier.subresourceRange.layerCount = img->GetLayerCount();
           pending_post_copy_image_barriers_.push_back(post_copy_barrier);
         }
         img_view = img->GetViewHandle();
@@ -517,7 +530,7 @@ let ctor_body =
     VkImageView view = CreateImageView(img,
                                        core_.GetSwapchain().GetSurfaceFormat());
     rt_builtin_screen_img_view_[i] = view;
-    rt_builtin_screen_ref_.push_back({VK_FORMAT_B8G8R8A8_UNORM, view, img,
+    rt_builtin_screen_ref_.push_back({core_.GetSwapchain().GetSurfaceFormat(), view, img,
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
@@ -588,7 +601,7 @@ let begin_recording =
           CreateImageView(img, core_.GetSwapchain().GetSurfaceFormat());
       rt_builtin_screen_img_view_[i] = view;
       rt_builtin_screen_ref_.push_back(
-          {VK_FORMAT_B8G8R8A8_UNORM, view, img, VK_IMAGE_LAYOUT_UNDEFINED,
+          {core_.GetSwapchain().GetSurfaceFormat(), view, img, VK_IMAGE_LAYOUT_UNDEFINED,
            VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
            VkClearValue{}});
     }
@@ -697,12 +710,17 @@ let stop_recording_body =
                          static_cast<uint32_t>(pending_pre_copy_image_barriers_.size()),
                          pending_pre_copy_image_barriers_.data());
     for (const auto t : pending_image_copies_) {
+      VkImage image = VK_NULL_HANDLE;
+      VkBufferImageCopy buffer_image_copy;
+      bool build_mipmaps = false;
+      std::tie(image, buffer_image_copy, build_mipmaps) = t;
       vkCmdCopyBufferToImage(t_cmd_buffer_[image_index_],
                              staging_buffer_->GetHandle(),
-                             std::get<0>(t), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                             1, &std::get<1>(t));
-      if (std::get<2>(t)) { // needs mipmaps
-        const VkExtent3D extent = std::get<1>(t).imageExtent;
+                             image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             1, &buffer_image_copy);
+      if (build_mipmaps) { 
+        const VkExtent3D extent = buffer_image_copy.imageExtent;
+        const uint32_t layer = buffer_image_copy.imageSubresource.baseArrayLayer;
         const uint32_t mip_levels = std::floor(
                                     std::log2(
                                     std::max(extent.width, extent.height))) + 1;
@@ -715,7 +733,7 @@ let stop_recording_body =
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = std::get<0>(t);
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.baseArrayLayer = layer;
         barrier.subresourceRange.layerCount = 1;
         barrier.subresourceRange.levelCount = 1;
 
@@ -748,14 +766,14 @@ let stop_recording_body =
           // Blit previous level.
           VkImageBlit blit = {};
           blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-          blit.srcSubresource.baseArrayLayer = 0;
+          blit.srcSubresource.baseArrayLayer = layer;
           blit.srcSubresource.layerCount = 1;
           blit.srcSubresource.mipLevel = i-1;
           blit.srcOffsets[1].x = static_cast<int32_t>(extent.width >> (i-1));
           blit.srcOffsets[1].y = static_cast<int32_t>(extent.height >> (i-1));
           blit.srcOffsets[1].z = 1;
           blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-          blit.dstSubresource.baseArrayLayer = 0;
+          blit.dstSubresource.baseArrayLayer = layer;
           blit.dstSubresource.layerCount = 1;
           blit.dstSubresource.mipLevel = i;
           blit.dstOffsets[1].x = static_cast<int32_t>(extent.width >> i);

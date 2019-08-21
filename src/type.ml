@@ -8,6 +8,7 @@ type t =
   | Vector of primitive_type * int
   | Matrix of primitive_type * int * int
   | Sampler of int
+  | SamplerCube
   | Texture of int
   | RenderTarget of render_target_type
   | Atom of atom_type
@@ -74,6 +75,7 @@ let rec string_of_type = function
   | Matrix (Float, m, n) -> Printf.sprintf "fmat%dx%d" m n
   | Matrix (Double, m, n) -> Printf.sprintf "dmat%dx%d" m n
   | Sampler n -> Printf.sprintf "sampler%dD" n
+  | SamplerCube -> "samplerCube"
   | Texture n -> Printf.sprintf "texture%dD" n
   | RenderTarget RGB -> "rt_rgb"
   | RenderTarget RGBA -> "rt_rgba"
@@ -252,6 +254,8 @@ module Common = struct
   let sampler2D = Sampler 2
 
   let sampler3D = Sampler 3
+
+  let samplerCube = SamplerCube
 
   let texture1D = Texture 1
 

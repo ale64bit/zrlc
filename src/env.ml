@@ -259,14 +259,15 @@ let global =
   let open Type.Common in
   (* Builtin types *)
   let builtin_types =
-    [ (* Primitive Types *)
-      ("bool", bool);
+    [
+      (* Primitive Types *)
+        ("bool", bool);
       ("int", int);
       ("uint", uint);
       ("float", float);
       ("double", double);
       (* Vector Types *)
-      ("bvec2", bvec2);
+        ("bvec2", bvec2);
       ("bvec3", bvec3);
       ("bvec4", bvec4);
       ("ivec2", ivec2);
@@ -282,7 +283,7 @@ let global =
       ("dvec3", dvec3);
       ("dvec4", dvec4);
       (* Matrix Types *)
-      ("bmat2", bmat2);
+        ("bmat2", bmat2);
       ("bmat3", bmat3);
       ("bmat4", bmat4);
       ("bmat2x2", bmat2x2);
@@ -343,21 +344,22 @@ let global =
       ("dmat4x3", dmat4x3);
       ("dmat4x4", dmat4x4);
       (* Sampler Types *)
-      ("sampler1D", sampler1D);
+        ("sampler1D", sampler1D);
       ("sampler2D", sampler2D);
       ("sampler3D", sampler3D);
+      ("samplerCube", samplerCube);
       (* Texture Types *)
-      ("texture1D", texture1D);
+        ("texture1D", texture1D);
       ("texture2D", texture2D);
       ("texture3D", texture3D);
       (* Render Target Types *)
-      ("rt_rgb", rt_rgb);
+        ("rt_rgb", rt_rgb);
       ("rt_rgba", rt_rgba);
       ("rt_ds", rt_ds);
       (* Atom Types *)
-      ("atom", atom);
+        ("atom", atom);
       ("atomlist", atomlist);
-      ("atomset", atomset)
+      ("atomset", atomset);
     ]
   in
   let vector_ctor pt dim =
@@ -387,8 +389,9 @@ let global =
     (ctor_name, Function (params, [ t ]))
   in
   let builtin_functions =
-    [ (* Built-in vector types *)
-      vector_ctor Bool 2;
+    [
+      (* Built-in vector types *)
+        vector_ctor Bool 2;
       vector_ctor Bool 3;
       vector_ctor Bool 4;
       vector_ctor Int 2;
@@ -404,7 +407,7 @@ let global =
       vector_ctor Double 3;
       vector_ctor Double 4;
       (* Built-in matrix types *)
-      matrix_ctor Float 2 2;
+        matrix_ctor Float 2 2;
       matrix_ctor Float 2 3;
       matrix_ctor Float 2 4;
       matrix_ctor Float 3 2;
@@ -423,7 +426,7 @@ let global =
       matrix_ctor Double 4 3;
       matrix_ctor Double 4 4;
       (* Additional constructors for vector and matrix types *)
-      ("bvec2", Function ([ ("x", bool) ], [ bvec2 ]));
+        ("bvec2", Function ([ ("x", bool) ], [ bvec2 ]));
       ("bvec3", Function ([ ("x", bool) ], [ bvec3 ]));
       ("bvec4", Function ([ ("x", bool) ], [ bvec4 ]));
       ("ivec2", Function ([ ("x", int) ], [ ivec2 ]));
@@ -449,10 +452,10 @@ let global =
       ("dvec3", Function ([ ("x", dvec2); ("y", double) ], [ dvec3 ]));
       ("dvec4", Function ([ ("x", dvec3); ("y", double) ], [ dvec4 ]));
       (* Texture lookup *)
-      ( "texture",
-        Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
+        ( "texture",
+          Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
       (* Math functions *)
-      ("normalize", Function ([ ("v", fvec2) ], [ fvec2 ]));
+        ("normalize", Function ([ ("v", fvec2) ], [ fvec2 ]));
       ("normalize", Function ([ ("v", fvec3) ], [ fvec3 ]));
       ("normalize", Function ([ ("v", fvec4) ], [ fvec4 ]));
       ("pow", Function ([ ("x", float); ("y", float) ], [ float ]));
@@ -480,7 +483,7 @@ let global =
       ("dot", Function ([ ("x", fvec4); ("y", fvec4) ], [ float ]));
       ("cross", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
       ("cross", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
-      ("cross", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]))
+      ("cross", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]));
     ]
   in
   let env =
@@ -561,18 +564,20 @@ let add_builtin fname env =
       | Pipeline _, "vertex" ->
           let t =
             Record
-              [ ("position", TypeRef "fvec4");
+              [
+                ("position", TypeRef "fvec4");
                 ("vertexID", TypeRef "int");
-                ("instanceID", TypeRef "int")
+                ("instanceID", TypeRef "int");
               ]
           in
           add_var "builtin" L.{ loc = builtin_loc; value = t } env
       | Pipeline _, "fragment" ->
           let t =
             Record
-              [ ("fragCoord", TypeRef "fvec4");
+              [
+                ("fragCoord", TypeRef "fvec4");
                 ("currentDepth", TypeRef "float");
-                ("frontFacing", TypeRef "bool")
+                ("frontFacing", TypeRef "bool");
               ]
           in
           add_val "builtin" L.{ loc = builtin_loc; value = t } env
@@ -593,9 +598,7 @@ let rec filter_global env =
     let skip_function src k _ = not (FunctionSymbolTable.mem k src) in
     {
       env with
-      parent =
-        ( env.parent >>= fun t ->
-          Some (filter_global t) );
+      parent = (env.parent >>= fun t -> Some (filter_global t));
       types = filter (skip global.types) env.types;
       constants = filter (skip global.constants) env.constants;
       vals = filter (skip global.vals) env.vals;
