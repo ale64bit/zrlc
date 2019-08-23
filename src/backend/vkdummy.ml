@@ -667,6 +667,17 @@ let gen_sampler2D_binding_write set binding count name t wrapped_name =
   Printf.sprintf "%s\nBindSampledImage2D(set, %d, %s, images);" comment binding
     data
 
+let gen_samplerCube_binding_write set binding count name t wrapped_name =
+  let data =
+    Printf.sprintf "data%s"
+      (if String.length wrapped_name = 0 then "" else "." ^ wrapped_name)
+  in
+  let comment =
+    Printf.sprintf "// SET=%d BINDING=%d COUNT=%d NAME=%s T=%s" set binding
+      count name (Type.string_of_type t)
+  in
+  Printf.sprintf "%s\nBindCubeMap(set, %d, %s, images);" comment binding data
+
 let gen_ubo_binding_write set binding count name t wrapped_name =
   let data =
     Printf.sprintf "data%s"
@@ -744,7 +755,8 @@ let gen_uniform_atom_binding env pipeline id expr f =
            | Type.Sampler 3 ->
                failwith "TODO(ale64bit): binding sampler3D not supported yet"
            | Type.SamplerCube ->
-               failwith "TODO(ale64bit): binding samplerCube not supported yet"
+               gen_samplerCube_binding_write set binding count name t
+                 wrapped_name
            | Type.Array (Sampler _, _) ->
                failwith
                  "TODO(ale64bit): binding array of samplers not supported yet"
@@ -1304,7 +1316,7 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
         List.fold_left
           (fun f (pname, t) ->
             match t with
-            | Type.Primitive _ ->
+            | Type.Primitive _ | Type.Vector _ | Type.Matrix _ ->
                 Function.(f |> add_param (zrl_to_cpp_type t, pname))
             | Type.Atom Singleton ->
                 let tmpl_param = pname ^ "AtomType" in
@@ -1516,7 +1528,8 @@ let gen_descriptor_set_layouts p r =
           (fun (_, binding, count, name, t, _) ->
             let descriptor_type =
               match t with
-              | Type.Sampler 2 | Type.Array (Sampler 2, _) ->
+              | Type.Sampler _ | Type.SamplerCube | Type.Array (Sampler _, _)
+                ->
                   "VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER"
               | _ -> "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER"
             in
@@ -2201,6 +2214,32 @@ let builtin_struct =
   RenderTargetReference *screen = nullptr;
 };|}
 
+let gen_render_target_binder pname name =
+  Printf.sprintf
+    {|template <> struct %s_%s<RenderTargetReference *> {
+  void operator()(RenderTargetReference *const &rt_ref, uint32_t &uid,
+                  SampledImage2DReference *data) const noexcept {
+    uid = 0;
+    if (data != nullptr) {
+      data->rt_ref = rt_ref;
+    }
+  }
+};|}
+    pname name
+
+let gen_vector_matrix_type_uniform_binder pname name t =
+  let tname = zrl_to_cpp_type t in
+  Printf.sprintf
+    {|template <> struct %s_%s<%s> {
+  void operator()(const %s &t, uint32_t &uid, %s *data) const noexcept {
+    uid = 0;
+    if (data != nullptr) {
+      *data = t;
+    }
+  }
+};|}
+    pname name tname tname tname
+
 let gen_types_header pipelines root_elems cpp_constants =
   let cc_header =
     Cpp.Header.(
@@ -2244,24 +2283,19 @@ let gen_types_header pipelines root_elems cpp_constants =
           | Type.Function (params, _) ->
               List.map
                 (fun (name, t) ->
+                  let binder_template =
+                    Printf.sprintf "template<class T> struct %s_%s;" pname name
+                  in
                   match t with
+                  | Type.Vector _ | Type.Matrix _ ->
+                      let vm_binder =
+                        gen_vector_matrix_type_uniform_binder pname name t
+                      in
+                      String.concat "\n" [ binder_template; vm_binder ]
                   | Type.Sampler 2 ->
-                      (* Generate automatic providers for render targets. *)
-                      Printf.sprintf
-                        {|template<class T> struct %s_%s;
-template <> struct %s_%s<RenderTargetReference *> {
-  void operator()(RenderTargetReference *const &rt_ref, uint32_t &uid,
-                  SampledImage2DReference *data) const noexcept {
-    uid = 0;
-    if (data != nullptr) {
-      data->rt_ref = rt_ref;
-    }
-  }
-};|}
-                        pname name pname name
-                  | _ ->
-                      Printf.sprintf "template<class T> struct %s_%s;" pname
-                        name)
+                      let rt_binder = gen_render_target_binder pname name in
+                      String.concat "\n" [ binder_template; rt_binder ]
+                  | _ -> binder_template)
                 params
           | _ -> failwith "pipeline types must be Function types"
         in
@@ -2309,7 +2343,7 @@ let gen_uniform_bindings env loc set id t =
   match t with
   | Vector _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Matrix _ -> Ok [ (set, 0, 1, id, t, "") ]
-  | Sampler 2 -> Ok [ (set, 0, 1, id, t, "") ]
+  | Sampler _ -> Ok [ (set, 0, 1, id, t, "") ]
   | SamplerCube -> Ok [ (set, 0, 1, id, t, "") ]
   | Array (tt, dims) ->
       if Type.is_ref tt && has_opaque_members env SetString.empty tt then
@@ -2975,7 +3009,7 @@ let gen_shaders env name glsl_types pipeline =
 let wrap_uniform set binding t name =
   let open Type in
   match t with
-  | Sampler 2 | Array (Sampler 2, _) ->
+  | Sampler _ | SamplerCube | Array (Sampler _, _) ->
       (* Cannot wrap opaque types in blocks in GLSL *)
       (zrl_to_glsl_type t, name)
   | _ ->

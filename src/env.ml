@@ -454,6 +454,8 @@ let global =
       (* Texture lookup *)
         ( "texture",
           Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
+      ( "texture",
+        Function ([ ("sampler", samplerCube); ("coord", fvec3) ], [ fvec4 ]) );
       (* Math functions *)
         ("normalize", Function ([ ("v", fvec2) ], [ fvec2 ]));
       ("normalize", Function ([ ("v", fvec3) ], [ fvec3 ]));

@@ -259,7 +259,7 @@ let create_depth_render_target =
   return zrl::Image::DepthBuffer(core_, core_.GetSwapchain().GetExtent(),
                                  format, usage);|})
 
-let bind_sampled_image =
+let bind_sampled_image2D =
   Function.(
     empty "BindSampledImage2D" |> set_return_type "void"
     |> add_param ("VkDescriptorSet", "set")
@@ -280,6 +280,8 @@ let bind_sampled_image =
       if (is_empty) {
         sampler = dummy_sampler_;
       } else {
+        ref.sampler_create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ref.sampler_create_info.pNext = nullptr;
         if (ref.build_mipmaps) {
           ref.sampler_create_info.maxLod = std::floor(
                                            std::log2(
@@ -401,6 +403,135 @@ let bind_sampled_image =
         img_view = img->GetViewHandle();
         images.push_back(std::move(img));
       }
+
+      // Update descriptor set.
+      VkDescriptorImageInfo image_info = {};
+      image_info.sampler = sampler;
+      image_info.imageView = img_view; 
+      image_info.imageLayout = img_layout;
+
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.pNext = nullptr;
+      write.dstSet = set;
+      write.dstBinding = binding;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      write.pImageInfo = &image_info;
+      write.pBufferInfo = nullptr;
+      write.pTexelBufferView = nullptr;
+
+      vkUpdateDescriptorSets(core_.GetLogicalDevice().GetHandle(),
+                             1, &write, 0, nullptr);
+    |})
+
+let bind_cube_map =
+  Function.(
+    empty "BindCubeMap" |> set_return_type "void"
+    |> add_param ("VkDescriptorSet", "set")
+    |> add_param ("uint32_t", "binding")
+    |> add_param ("SampledCubeMapReference&", "ref")
+    |> add_param ("std::vector<std::unique_ptr<zrl::Image>>&", "images")
+    |> append_code_section
+         {|
+      const VkExtent2D extent = {ref.width, ref.height};
+      const bool is_empty  = extent.width * extent.height == 0;
+      const uint32_t layer_count = 6;
+
+      // Create sampler if needed.
+      VkSampler sampler = VK_NULL_HANDLE;
+      if (is_empty) {
+        sampler = dummy_sampler_;
+      } else {
+        ref.sampler_create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ref.sampler_create_info.pNext = nullptr;
+        auto it = sampler_cache_.find(ref.sampler_create_info);
+        if (it == sampler_cache_.end()) {
+          DLOG << name_ << ": creating new sampler\n";
+          CHECK_VK(vkCreateSampler(core_.GetLogicalDevice().GetHandle(),
+                                   &ref.sampler_create_info, nullptr, &sampler));
+          sampler_cache_[ref.sampler_create_info] = sampler;
+        } else {
+          sampler = it->second;
+        }
+      }
+
+      VkImageView img_view = VK_NULL_HANDLE;
+      VkImageLayout img_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+      // Create image resource.
+      VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                VK_IMAGE_USAGE_SAMPLED_BIT;
+      img_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+      std::unique_ptr<zrl::Image> img;
+      if (is_empty) {
+        LOG(WARNING) << name_ << ": missing cubemap, will use dummy 4x4 cubemap\n";
+        img = zrl::Image::CubeMap(core_, VkExtent2D{4, 4}, 
+                                  core_.GetSwapchain().GetSurfaceFormat(), 
+                                  usage);
+      } else {
+        img = zrl::Image::CubeMap(core_, extent, ref.format, usage);
+      }
+
+      // Schedule copy and barriers.
+      VkImageMemoryBarrier pre_copy_barrier = {};
+      pre_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      pre_copy_barrier.pNext = nullptr;
+      pre_copy_barrier.srcAccessMask = 0;
+      pre_copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      pre_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      pre_copy_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      pre_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      pre_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      pre_copy_barrier.image = img->GetHandle();
+      pre_copy_barrier.subresourceRange.aspectMask = img->GetAspects();
+      pre_copy_barrier.subresourceRange.baseMipLevel = 0;
+      pre_copy_barrier.subresourceRange.levelCount = img->GetLevelCount();
+      pre_copy_barrier.subresourceRange.baseArrayLayer = 0;
+      pre_copy_barrier.subresourceRange.layerCount = img->GetLayerCount();
+      pending_pre_copy_image_barriers_.push_back(pre_copy_barrier);
+
+      if (!is_empty) {
+        for (uint32_t layer = 0; layer < layer_count; ++layer) {
+          auto src_offset = staging_buffer_->PushData(ref.size, ref.image_data[layer]);
+          delete ref.image_data[layer];
+
+          VkBufferImageCopy buffer_image_copy = {};
+          buffer_image_copy.bufferOffset = src_offset;
+          buffer_image_copy.bufferRowLength = 0;
+          buffer_image_copy.bufferImageHeight = 0;
+          buffer_image_copy.imageSubresource.aspectMask = img->GetAspects();
+          buffer_image_copy.imageSubresource.mipLevel = 0;
+          buffer_image_copy.imageSubresource.baseArrayLayer = layer;
+          buffer_image_copy.imageSubresource.layerCount = 1;
+          buffer_image_copy.imageOffset = {0, 0, 0};
+          buffer_image_copy.imageExtent = img->GetExtent();
+          pending_image_copies_.push_back(
+              std::make_tuple(img->GetHandle(), buffer_image_copy, false));
+        }
+      }
+
+      VkImageMemoryBarrier post_copy_barrier = {};
+      post_copy_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      post_copy_barrier.pNext = nullptr;
+      post_copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      post_copy_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      post_copy_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      post_copy_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      post_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      post_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      post_copy_barrier.image = img->GetHandle();
+      post_copy_barrier.subresourceRange.aspectMask = img->GetAspects();
+      post_copy_barrier.subresourceRange.baseMipLevel = 0;
+      post_copy_barrier.subresourceRange.levelCount = img->GetLevelCount();
+      post_copy_barrier.subresourceRange.baseArrayLayer = 0;
+      post_copy_barrier.subresourceRange.layerCount = img->GetLayerCount();
+      pending_post_copy_image_barriers_.push_back(post_copy_barrier);
+
+      img_view = img->GetViewHandle();
+      images.push_back(std::move(img));
 
       // Update descriptor set.
       VkDescriptorImageInfo image_info = {};
@@ -995,7 +1126,8 @@ let empty rname =
         |> add_private_function create_image_view
         |> add_private_function create_color_render_target
         |> add_private_function create_depth_render_target
-        |> add_private_function bind_sampled_image
+        |> add_private_function bind_sampled_image2D
+        |> add_private_function bind_cube_map
         |> add_private_function get_or_create_render_pass
         |> add_private_function get_or_create_framebuffer
         |> add_private_function begin_recording
