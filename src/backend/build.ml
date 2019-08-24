@@ -20,7 +20,7 @@ let create_dir_if_needed dir =
   if not (Sys.file_exists dir) then Unix.mkdir dir 0o755 else ()
 
 let write_file fname contents =
-  let out = open_out fname in
+  let out = open_out_bin fname in
   let () = Printf.fprintf out "%s" contents in
   close_out out
 
