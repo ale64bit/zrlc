@@ -3,7 +3,7 @@ module SymbolTable = Map.Make (String)
 module FunctionSymbolTable = Map.Make (struct
   type t = string * Type.t list
 
-  let compare = Pervasives.compare
+  let compare = Stdlib.compare
 end)
 
 module L = Located

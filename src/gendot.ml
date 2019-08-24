@@ -1,7 +1,7 @@
 module Node = struct
   type t = int * Graph.Graphviz.DotAttributes.vertex list
 
-  let compare = Pervasives.compare
+  let compare = Stdlib.compare
 
   let hash (i, _) = i
 
