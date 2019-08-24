@@ -13,7 +13,7 @@ Check the [examples](docs/examples/README.md).
 The compiler is written in [OCaml](https://en.wikipedia.org/wiki/OCaml) and uses [dune](https://dune.build/) as build system. The easiest way to have a working setup is first installing [opam](https://opam.ocaml.org/), which is the package manager for OCaml and then runnning:
 
 ```
-opam install dune menhir pcre yojson ocamlgraph oUnit
+opam install dune menhir pcre yojson ocamlgraph oUnit ppx_deriving_yojson
 ```
 
 This will install dune and the compiler dependencies. After this, you can clone the repo and build the compiler as follows:
