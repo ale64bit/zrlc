@@ -1833,7 +1833,7 @@ let render_pass_hash =
 
 let render_pass_equal_to =
   {|struct RenderPassEqualTo {
-  constexpr bool operator()(const std::vector<RenderTargetReference> &a,
+  bool operator()(const std::vector<RenderTargetReference> &a,
                   const std::vector<RenderTargetReference> &b) const noexcept {
     if (a.size() != b.size()) {
       return false;
@@ -1863,7 +1863,7 @@ let framebuffer_hash =
 
 let framebuffer_equal_to =
   {|struct FramebufferEqualTo {
-  constexpr bool operator()(const std::vector<RenderTargetReference> &a,
+  bool operator()(const std::vector<RenderTargetReference> &a,
                   const std::vector<RenderTargetReference> &b) const noexcept {
     if (a.size() != b.size()) {
       return false;
