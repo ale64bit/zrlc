@@ -480,12 +480,30 @@ let global =
         Function
           ([ ("x", float); ("minVal", float); ("maxVal", float) ], [ float ])
       );
+      ( "clamp",
+        Function
+          ([ ("x", fvec2); ("minVal", fvec2); ("maxVal", fvec2) ], [ fvec2 ])
+      );
+      ( "clamp",
+        Function
+          ([ ("x", fvec3); ("minVal", fvec3); ("maxVal", fvec3) ], [ fvec3 ])
+      );
+      ( "clamp",
+        Function
+          ([ ("x", fvec4); ("minVal", fvec4); ("maxVal", fvec4) ], [ fvec4 ])
+      );
       ("sqrt", Function ([ ("x", float) ], [ float ]));
       ("length", Function ([ ("x", fvec2) ], [ float ]));
       ("length", Function ([ ("x", fvec3) ], [ float ]));
       ("length", Function ([ ("x", fvec4) ], [ float ]));
       ("max", Function ([ ("x", float); ("y", float) ], [ float ]));
+      ("max", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
+      ("max", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
+      ("max", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]));
       ("min", Function ([ ("x", float); ("y", float) ], [ float ]));
+      ("min", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
+      ("min", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
+      ("min", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]));
       ("dot", Function ([ ("x", fvec2); ("y", fvec2) ], [ float ]));
       ("dot", Function ([ ("x", fvec3); ("y", fvec3) ], [ float ]));
       ("dot", Function ([ ("x", fvec4); ("y", fvec4) ], [ float ]));
@@ -498,6 +516,9 @@ let global =
       ("dFdy", Function ([ ("p", fvec2) ], [ fvec2 ]));
       ("dFdy", Function ([ ("p", fvec3) ], [ fvec3 ]));
       ("dFdy", Function ([ ("p", fvec4) ], [ fvec4 ]));
+      ("reflect", Function ([ ("I", fvec2); ("N", fvec2) ], [ fvec2 ]));
+      ("reflect", Function ([ ("I", fvec3); ("N", fvec3) ], [ fvec3 ]));
+      ("reflect", Function ([ ("I", fvec4); ("N", fvec4) ], [ fvec4 ]));
     ]
   in
   let env =
