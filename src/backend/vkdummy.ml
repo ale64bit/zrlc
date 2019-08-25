@@ -2966,16 +2966,152 @@ let gen_shader env helpers structs name stage
       Shader.(sh |> add_function main_fn)
   | _ -> failwith "shader programs must have Function type"
 
+let get_dependent_helpers root_fn helper_fns =
+  let rec collect_callees_from_expr_list expr_list =
+    List.fold_left
+      (fun acc expr -> SetString.union acc (collect_callees_from_expr expr))
+      SetString.empty expr_list
+  and collect_callees_from_expr L.{ value = expr; _ } =
+    let open Ast in
+    match expr with
+    | Access (expr, _) -> collect_callees_from_expr expr
+    | Index (lhs, rhs) ->
+        SetString.(
+          union
+            (collect_callees_from_expr lhs)
+            (collect_callees_from_expr_list rhs))
+    | Call (L.{ value = Ast.Id id; _ }, args) -> (
+        let callees =
+          SetString.(
+            union (singleton id) (collect_callees_from_expr_list args))
+        in
+        match
+          List.find_opt
+            (fun TypedAst.{ fd_name; _ } -> fd_name = id)
+            helper_fns
+        with
+        | Some fd ->
+            SetString.union callees
+              (List.fold_left
+                 (fun acc stmt ->
+                   SetString.union acc (collect_callees_from_stmt stmt))
+                 SetString.empty fd.fd_body)
+        | None -> callees )
+    | Call (lhs, rhs) ->
+        SetString.(
+          union
+            (collect_callees_from_expr lhs)
+            (collect_callees_from_expr_list rhs))
+    | Cast (_, expr) -> collect_callees_from_expr expr
+    | NamedArg (_, expr) -> collect_callees_from_expr expr
+    | BinExpr (lhs, _, rhs) ->
+        SetString.union
+          (collect_callees_from_expr lhs)
+          (collect_callees_from_expr rhs)
+    | UnExpr (_, expr) -> collect_callees_from_expr expr
+    | BoolLiteral _ -> SetString.empty
+    | IntLiteral _ -> SetString.empty
+    | FloatLiteral _ -> SetString.empty
+    | Id _ -> SetString.empty
+  and collect_callees_from_stmt (_, L.{ value = stmt; _ }) =
+    let open TypedAst in
+    match stmt with
+    | CallExpr (id, args) -> (
+        let callees =
+          SetString.(
+            union (singleton id)
+              (List.fold_left
+                 (fun acc (_, expr) ->
+                   union acc (collect_callees_from_expr expr))
+                 empty args))
+        in
+        match
+          List.find_opt
+            (fun TypedAst.{ fd_name; _ } -> fd_name = id)
+            helper_fns
+        with
+        | Some fd ->
+            SetString.union callees
+              (List.fold_left
+                 (fun acc stmt ->
+                   SetString.union acc (collect_callees_from_stmt stmt))
+                 SetString.empty fd.fd_body)
+        | None -> callees )
+    | Val { bind_values; _ } | Var { bind_values; _ } ->
+        List.fold_left
+          (fun acc (_, expr) ->
+            SetString.union acc (collect_callees_from_expr expr))
+          SetString.empty bind_values
+    | Assignment { asg_lvalues; asg_rvalues; _ } ->
+        SetString.(
+          union
+            (List.fold_left
+               (fun acc (_, expr) ->
+                 union acc (collect_callees_from_expr expr))
+               empty asg_lvalues)
+            (List.fold_left
+               (fun acc (_, expr) ->
+                 union acc (collect_callees_from_expr expr))
+               empty asg_rvalues))
+    | If { if_cond = _, expr; if_true; if_false } ->
+        SetString.(
+          union
+            (collect_callees_from_expr expr)
+            (union
+               (List.fold_left
+                  (fun acc stmt -> union acc (collect_callees_from_stmt stmt))
+                  empty if_true)
+               (List.fold_left
+                  (fun acc stmt -> union acc (collect_callees_from_stmt stmt))
+                  empty if_false)))
+    | ForIter { foriter_it = _, expr; foriter_body; _ } ->
+        SetString.(
+          union
+            (collect_callees_from_expr expr)
+            (List.fold_left
+               (fun acc stmt -> union acc (collect_callees_from_stmt stmt))
+               empty foriter_body))
+    | ForRange
+        {
+          forrange_from = _, from_expr;
+          forrange_to = _, to_expr;
+          forrange_body;
+          _;
+        } ->
+        SetString.(
+          union
+            (union
+               (collect_callees_from_expr from_expr)
+               (collect_callees_from_expr to_expr))
+            (List.fold_left
+               (fun acc stmt -> union acc (collect_callees_from_stmt stmt))
+               empty forrange_body))
+    | Return exprs ->
+        List.fold_left
+          (fun acc (_, expr) ->
+            SetString.union acc (collect_callees_from_expr expr))
+          SetString.empty exprs
+    | Discard -> SetString.empty
+  in
+  let callees =
+    List.fold_left
+      (fun acc stmt -> SetString.union acc (collect_callees_from_stmt stmt))
+      SetString.empty root_fn.TypedAst.fd_body
+  in
+  List.filter (fun fd -> SetString.mem fd.TypedAst.fd_name callees) helper_fns
+
 let gen_shaders env name glsl_types pipeline =
   let open Glsl in
-  let helpers, structs =
+  let gen_helpers fd =
     List.fold_left
       (fun (helpers, structs) fd ->
         match gen_glsl_function fd with
         | f, Some s -> (f :: helpers, s :: structs)
         | f, None -> (f :: helpers, structs))
-      ([], glsl_types) pipeline.gp_helper_functions
+      ([], glsl_types)
+      (get_dependent_helpers fd pipeline.gp_helper_functions)
   in
+  let helpers, structs = gen_helpers pipeline.gp_vertex_stage in
   let vertex_fn, vertex_ret_struct =
     gen_glsl_function pipeline.gp_vertex_stage
   in
@@ -2991,6 +3127,7 @@ let gen_shaders env name glsl_types pipeline =
   let fragment_shader =
     match pipeline.gp_fragment_stage with
     | Some fd ->
+        let helpers, structs = gen_helpers fd in
         let fragment_fn, fragment_ret_struct = gen_glsl_function fd in
         let fragment_structs =
           match fragment_ret_struct with

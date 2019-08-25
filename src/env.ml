@@ -451,6 +451,12 @@ let global =
       ("fvec4", Function ([ ("x", fvec3); ("y", float) ], [ fvec4 ]));
       ("dvec3", Function ([ ("x", dvec2); ("y", double) ], [ dvec3 ]));
       ("dvec4", Function ([ ("x", dvec3); ("y", double) ], [ dvec4 ]));
+      ("fmat2", Function ([ ("d", float) ], [ fmat2 ]));
+      ("fmat3", Function ([ ("d", float) ], [ fmat3 ]));
+      ("fmat4", Function ([ ("d", float) ], [ fmat4 ]));
+      ("dmat2", Function ([ ("d", double) ], [ dmat2 ]));
+      ("dmat3", Function ([ ("d", double) ], [ dmat3 ]));
+      ("dmat4", Function ([ ("d", double) ], [ dmat4 ]));
       (* Texture lookup *)
         ( "texture",
           Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
@@ -486,6 +492,12 @@ let global =
       ("cross", Function ([ ("x", fvec2); ("y", fvec2) ], [ fvec2 ]));
       ("cross", Function ([ ("x", fvec3); ("y", fvec3) ], [ fvec3 ]));
       ("cross", Function ([ ("x", fvec4); ("y", fvec4) ], [ fvec4 ]));
+      ("dFdx", Function ([ ("p", fvec2) ], [ fvec2 ]));
+      ("dFdx", Function ([ ("p", fvec3) ], [ fvec3 ]));
+      ("dFdx", Function ([ ("p", fvec4) ], [ fvec4 ]));
+      ("dFdy", Function ([ ("p", fvec2) ], [ fvec2 ]));
+      ("dFdy", Function ([ ("p", fvec3) ], [ fvec3 ]));
+      ("dFdy", Function ([ ("p", fvec4) ], [ fvec4 ]));
     ]
   in
   let env =
