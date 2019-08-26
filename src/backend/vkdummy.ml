@@ -1814,7 +1814,7 @@ let sampled_cubemap_reference_struct =
   uint32_t width = 0;
   uint32_t height = 0;
   uint32_t channels = 0;
-  std::array<unsigned char*, 6> image_data;
+  std::array<std::vector<unsigned char*>, 6> image_data;
 };|}
 
 let render_pass_hash =

@@ -366,6 +366,8 @@ let bind_sampled_image2D =
                                                           ref.image_data[layer][level]);
               delete ref.image_data[layer][level];
 
+              const VkExtent3D full_extent = img->GetExtent();
+              const VkExtent3D copy_extent = {full_extent.width >> level, full_extent.height >> level, 1};
               VkBufferImageCopy buffer_image_copy = {};
               buffer_image_copy.bufferOffset = src_offset;
               buffer_image_copy.bufferRowLength = 0;
@@ -375,7 +377,7 @@ let bind_sampled_image2D =
               buffer_image_copy.imageSubresource.baseArrayLayer = layer;
               buffer_image_copy.imageSubresource.layerCount = 1;
               buffer_image_copy.imageOffset = {0, 0, 0};
-              buffer_image_copy.imageExtent = img->GetExtent();
+              buffer_image_copy.imageExtent = copy_extent;
               pending_image_copies_.push_back(
                   std::make_tuple(img->GetHandle(), buffer_image_copy, ref.build_mipmaps));
             }
@@ -437,7 +439,12 @@ let bind_cube_map =
          {|
       const VkExtent2D extent = {ref.width, ref.height};
       const bool is_empty  = extent.width * extent.height == 0;
-      const uint32_t layer_count = 6;
+      constexpr uint32_t layer_count = 6;
+      const uint32_t level_count = ref.image_data[0].size();
+      for (size_t i = 1; i < ref.image_data.size(); ++i) {
+        CHECK_PC(ref.image_data[0].size() == ref.image_data[i].size(), 
+                 "all image layers must have the same level count");
+      }
 
       // Create sampler if needed.
       VkSampler sampler = VK_NULL_HANDLE;
@@ -446,6 +453,7 @@ let bind_cube_map =
       } else {
         ref.sampler_create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         ref.sampler_create_info.pNext = nullptr;
+        ref.sampler_create_info.maxLod = static_cast<float>(level_count);
         auto it = sampler_cache_.find(ref.sampler_create_info);
         if (it == sampler_cache_.end()) {
           DLOG << name_ << ": creating new sampler\n";
@@ -468,11 +476,11 @@ let bind_cube_map =
       std::unique_ptr<zrl::Image> img;
       if (is_empty) {
         LOG(WARNING) << name_ << ": missing cubemap, will use dummy 4x4 cubemap\n";
-        img = zrl::Image::CubeMap(core_, VkExtent2D{4, 4}, 
+        img = zrl::Image::CubeMap(core_, VkExtent2D{4, 4}, level_count,
                                   core_.GetSwapchain().GetSurfaceFormat(), 
                                   usage);
       } else {
-        img = zrl::Image::CubeMap(core_, extent, ref.format, usage);
+        img = zrl::Image::CubeMap(core_, extent, level_count, ref.format, usage);
       }
 
       // Schedule copy and barriers.
@@ -495,21 +503,26 @@ let bind_cube_map =
 
       if (!is_empty) {
         for (uint32_t layer = 0; layer < layer_count; ++layer) {
-          auto src_offset = staging_buffer_->PushData(ref.size, ref.image_data[layer]);
-          delete ref.image_data[layer];
+          for (uint32_t level = 0; level < level_count; ++level) {
+            auto src_offset = staging_buffer_->PushData(ref.size >> level, 
+                                                        ref.image_data[layer][level]);
+            delete ref.image_data[layer][level];
 
-          VkBufferImageCopy buffer_image_copy = {};
-          buffer_image_copy.bufferOffset = src_offset;
-          buffer_image_copy.bufferRowLength = 0;
-          buffer_image_copy.bufferImageHeight = 0;
-          buffer_image_copy.imageSubresource.aspectMask = img->GetAspects();
-          buffer_image_copy.imageSubresource.mipLevel = 0;
-          buffer_image_copy.imageSubresource.baseArrayLayer = layer;
-          buffer_image_copy.imageSubresource.layerCount = 1;
-          buffer_image_copy.imageOffset = {0, 0, 0};
-          buffer_image_copy.imageExtent = img->GetExtent();
-          pending_image_copies_.push_back(
-              std::make_tuple(img->GetHandle(), buffer_image_copy, false));
+            const VkExtent3D full_extent = img->GetExtent();
+            const VkExtent3D copy_extent = {full_extent.width >> level, full_extent.height >> level, 1};
+            VkBufferImageCopy buffer_image_copy = {};
+            buffer_image_copy.bufferOffset = src_offset;
+            buffer_image_copy.bufferRowLength = 0;
+            buffer_image_copy.bufferImageHeight = 0;
+            buffer_image_copy.imageSubresource.aspectMask = img->GetAspects();
+            buffer_image_copy.imageSubresource.mipLevel = level;
+            buffer_image_copy.imageSubresource.baseArrayLayer = layer;
+            buffer_image_copy.imageSubresource.layerCount = 1;
+            buffer_image_copy.imageOffset = {0, 0, 0};
+            buffer_image_copy.imageExtent = copy_extent;
+            pending_image_copies_.push_back(
+                std::make_tuple(img->GetHandle(), buffer_image_copy, false));
+          }
         }
       }
 
