@@ -453,7 +453,9 @@ let bind_cube_map =
       } else {
         ref.sampler_create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         ref.sampler_create_info.pNext = nullptr;
-        ref.sampler_create_info.maxLod = static_cast<float>(level_count);
+        if (ref.sampler_create_info.maxLod == 0 && level_count > 1) {
+          ref.sampler_create_info.maxLod = static_cast<float>(level_count);
+        }
         auto it = sampler_cache_.find(ref.sampler_create_info);
         if (it == sampler_cache_.end()) {
           DLOG << name_ << ": creating new sampler\n";
