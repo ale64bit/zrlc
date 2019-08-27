@@ -462,6 +462,14 @@ let global =
           Function ([ ("sampler", sampler2D); ("coord", fvec2) ], [ fvec4 ]) );
       ( "texture",
         Function ([ ("sampler", samplerCube); ("coord", fvec3) ], [ fvec4 ]) );
+      ( "textureLod",
+        Function
+          ( [ ("sampler", sampler2D); ("coord", fvec2); ("lod", float) ],
+            [ fvec4 ] ) );
+      ( "textureLod",
+        Function
+          ( [ ("sampler", samplerCube); ("coord", fvec3); ("lod", float) ],
+            [ fvec4 ] ) );
       (* Math functions *)
         ("normalize", Function ([ ("v", fvec2) ], [ fvec2 ]));
       ("normalize", Function ([ ("v", fvec3) ], [ fvec3 ]));
