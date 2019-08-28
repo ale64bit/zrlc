@@ -36,7 +36,7 @@ let get_or_create_render_pass =
     for (auto rt : rts) {
       VkAttachmentDescription description = {};
       description.format = rt->format;
-      description.samples = VK_SAMPLE_COUNT_1_BIT;
+      description.samples = rt->samples;
       description.loadOp = rt->load_op;
       description.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -247,7 +247,7 @@ let create_color_render_target =
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
                                       VK_IMAGE_USAGE_SAMPLED_BIT;
   return zrl::Image::Image2D(core_, core_.GetSwapchain().GetExtent(), 1, 1,
-                             format, usage);|})
+                             format, usage, VK_SAMPLE_COUNT_1_BIT);|})
 
 let create_depth_render_target =
   Function.(
@@ -257,7 +257,7 @@ let create_depth_render_target =
          {|  constexpr VkFormat format = VK_FORMAT_D16_UNORM;
   constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   return zrl::Image::DepthBuffer(core_, core_.GetSwapchain().GetExtent(),
-                                 format, usage);|})
+                                 format, usage, VK_SAMPLE_COUNT_1_BIT);|})
 
 let bind_sampled_image2D =
   Function.(
@@ -321,7 +321,7 @@ let bind_sampled_image2D =
           layer_count = 1;
           img = zrl::Image::Image2D(core_, VkExtent2D{4, 4}, level_count, 
                                     layer_count, core_.GetSwapchain().GetSurfaceFormat(), 
-                                    usage);
+                                    usage, VK_SAMPLE_COUNT_1_BIT);
         } else {
           if (ref.build_mipmaps) {
             CHECK_PC(level_count == 1, 
@@ -337,7 +337,7 @@ let bind_sampled_image2D =
             usage ^= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
           }
           img = zrl::Image::Image2D(core_, extent, level_count, layer_count, 
-                                    ref.format, usage);
+                                    ref.format, usage, VK_SAMPLE_COUNT_1_BIT);
         }
 
         // Schedule copy and barriers.
@@ -676,7 +676,8 @@ let ctor_body =
     VkImageView view = CreateImageView(img,
                                        core_.GetSwapchain().GetSurfaceFormat());
     rt_builtin_screen_img_view_[i] = view;
-    rt_builtin_screen_ref_.push_back({core_.GetSwapchain().GetSurfaceFormat(), view, img,
+    rt_builtin_screen_ref_.push_back({core_.GetSwapchain().GetSurfaceFormat(), 
+                                      view, img, VK_SAMPLE_COUNT_1_BIT,
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_IMAGE_LAYOUT_UNDEFINED, 
                                       VK_ATTACHMENT_LOAD_OP_DONT_CARE, 
@@ -747,7 +748,8 @@ let begin_recording =
           CreateImageView(img, core_.GetSwapchain().GetSurfaceFormat());
       rt_builtin_screen_img_view_[i] = view;
       rt_builtin_screen_ref_.push_back(
-          {core_.GetSwapchain().GetSurfaceFormat(), view, img, VK_IMAGE_LAYOUT_UNDEFINED,
+          {core_.GetSwapchain().GetSurfaceFormat(), view, img, 
+           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
            VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
            VkClearValue{}});
     }

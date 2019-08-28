@@ -1399,7 +1399,7 @@ let gen_render_targets rd_type r =
                      VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, \
                      VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | \
-                     VK_IMAGE_USAGE_SAMPLED_BIT, \
+                     VK_IMAGE_USAGE_SAMPLED_BIT, VK_SAMPLE_COUNT_1_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_COLOR_BIT"
                 | RendererEnv.DepthStencil ->
@@ -1407,16 +1407,17 @@ let gen_render_targets rd_type r =
                      1, 1, VK_FORMAT_D16_UNORM, VK_IMAGE_TYPE_2D, \
                      VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, \
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | \
-                     VK_IMAGE_USAGE_SAMPLED_BIT, \
+                     VK_IMAGE_USAGE_SAMPLED_BIT, VK_SAMPLE_COUNT_1_BIT, \
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, \
                      VK_IMAGE_ASPECT_DEPTH_BIT"
               in
               let ref_ctor_args =
                 Printf.sprintf
                   "{%s, %s.GetViewHandle(), %s.GetHandle(), \
-                   VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED, \
+                   %s.GetSampleCount(), VK_IMAGE_LAYOUT_UNDEFINED, \
+                   VK_IMAGE_LAYOUT_UNDEFINED, \
                    VK_ATTACHMENT_LOAD_OP_DONT_CARE, {}}"
-                  format img_id img_id
+                  format img_id img_id img_id
               in
               let r =
                 RendererEnv.
@@ -1787,6 +1788,7 @@ let render_target_reference_struct =
   const VkFormat format = VK_FORMAT_UNDEFINED;
   const VkImageView attachment = VK_NULL_HANDLE;
   const VkImage image = VK_NULL_HANDLE;
+  const VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
   VkImageLayout current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1823,6 +1825,7 @@ let render_pass_hash =
     size_t h = 1;
     for (auto rt : rts) {
       MergeHash(h, rt.format);
+      MergeHash(h, rt.samples);
       MergeHash(h, rt.current_layout);
       MergeHash(h, rt.target_layout);
       MergeHash(h, rt.load_op);
@@ -1840,6 +1843,7 @@ let render_pass_equal_to =
     }
     for (size_t i = 0; i < a.size(); ++i) {
       if (a[i].format != b[i].format ||
+          a[i].samples != b[i].samples ||
           a[i].current_layout != b[i].current_layout ||
           a[i].target_layout != b[i].target_layout ||
           a[i].load_op != b[i].load_op) {
