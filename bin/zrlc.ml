@@ -45,12 +45,16 @@ let () =
   match Frontend.process cfg with
   | Ok ast -> (
       let open Backend in
-      match Vkdummy.gen cfg ast with
-      | Ok () -> print_endline "====== build succeeded ======"
-      | Error err ->
-          print_endline (Vkdummy.Error.string_of_error err);
-          print_endline "====== build failed ======";
-          exit 1 )
+      if !output_dir = "" then (
+        print_endline "No output directory specified: skipping backend";
+        print_endline "====== build succeeded ======" )
+      else
+        match Vkdummy.gen cfg ast with
+        | Ok () -> print_endline "====== build succeeded ======"
+        | Error err ->
+            print_endline (Vkdummy.Error.string_of_error err);
+            print_endline "====== build failed ======";
+            exit 1 )
   | Error err ->
       print_endline (Error.string_of_error err);
       print_endline "====== build failed ======";
