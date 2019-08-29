@@ -28,11 +28,45 @@ Note that `dune` uses the `.exe` file extension for binaries regardless of the a
 
 ## Exploring the Generated Code
 
-TODO 
+In order to explore the generated code, you can run the compiler standalone and specify an output directory. For example:
+
+```
+$ mkdir /tmp/output
+$ zrlc.exe -i samples/tutorial/simple.zrl -o /tmp/output
+$ tree /tmp/output
+/tmp/output
+├── include
+│   ├── Simple.h
+│   └── Types.h
+├── shader
+│   ├── Forward.frag.glsl
+│   └── Forward.vert.glsl
+└── src
+    └── Simple.cc
+
+3 directories, 5 files
+```
+
+In the output directory, the compile always creates 3 directories:
+* shader: generated GLSL shaders.
+* include: generated C++ header files.
+* src: generated C++ source files.
 
 ## Visualizing the AST
 
-TODO
+If you omit the output directory, the compiler won't call the backend (i.e. it won't generate target code). This still can be useful if you want to verify if a ZRL program compiles correctly. Additionally, you can specify `-ast_file` in order to get a [dot](https://en.wikipedia.org/wiki/DOT_(graph_description_language)) file containing a diagram of the AST. For example:
+
+```
+$ zrlc.exe -i input.zrl -ast_file /tmp/ast.dot
+```
+
+If you are on Ubuntu (and probably other Linux distros) you can use the provided script `show_ast.sh` to also convert the dot file to an image and display it. For example:
+
+```
+$ ./show_ast.sh input.zrl
+```
+
+(this will open the AST image in a new window)
 
 ## Limitations and Improvements
 
