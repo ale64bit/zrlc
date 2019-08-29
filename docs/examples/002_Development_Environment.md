@@ -51,8 +51,44 @@ sudo apt-get install libglfw3 libglfw3-dev
 
 ## Minimal Example
 
-Now, let's walk over the basic example code in [examples/empty/main.cc](https://github.com/ale64bit/zrl/blob/master/examples/empty/main.cc):
+Now, let's walk over the "empty" example in [examples/empty](https://github.com/ale4bit/zrl/blob/master/examples/empty):
 
+[BUILD](https://github.com/ale64bit/zrl/blob/master/examples/empty/BULID):
+```
+load("//core:builddefs.bzl", "COPTS", "DEFINES")
+load("//core:zrl_library.bzl", "zrl_library")
+
+zrl_library(
+    name = "empty",
+    src = "empty.zrl",
+)
+
+cc_binary(
+    name = "main",
+    srcs = ["main.cc"],
+    copts = COPTS,
+    defines = DEFINES,
+    deps = [
+        ":empty",
+        "//core",
+        "@glm",
+        "@vulkan_repo//:sdk",
+    ],
+)
+```
+
+The `BUILD` file contains two targets: `empty` and `main`. The first one is generated using [zrl_library](https://github.com/ale64bit/zrl/blob/master/core/zrl_library.bzl); this is a rule provided by the ZRL support library that produces a C++ library from a source ZRL file. The second one is a standard `cc_binary` rule that depends on the generated code. This is the common pattern we will use across most examples: one rule to produce our renderer from a ZRL file and one rule that uses the renderer in a traditional C++ application.
+
+Note that `main` also depends on `//core` (the ZRL support library), `@glm` (the math library) and `@vulkan_repo//:sdk`. Additionally, we import `COPTS` and `DEFINES`, which are the compilation options and `#define`s required for ZRL applications.
+
+[empty.zrl](https://github.com/ale64bit/zrl/blob/master/examples/empty/empty.zrl):
+```
+module empty
+```
+
+The actual ZRL program. In this case, an empty program. Even empty programs must contain a `module` declaration, though. We will see an actual program in the next example.
+
+[main.cc](https://github.com/ale64bit/zrl/blob/master/examples/empty/main.cc):
 ```cpp
 #include "core/Core.h"
 #include "core/Log.h"
