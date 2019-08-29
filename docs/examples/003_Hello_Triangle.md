@@ -6,7 +6,7 @@ Previous: [Development Environment](002_Development_Environment.md) | [Table of 
 
 This example draws a colored triangle: `bazel run //examples/hellotriangle:main`.
 
-![Screenshot](hellotriangle.png)
+![Screenshot](003_hellotriangle.png)
 
 ## TODO
 
