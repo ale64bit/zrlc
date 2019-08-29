@@ -26,7 +26,11 @@ dune build ./bin/zrlc.exe
 
 Note that `dune` uses the `.exe` file extension for binaries regardless of the actual OS. You should have the compiler binary built at `zrlc/_build/default/bin/zrlc.exe`. Feel free to move it somewhere else, rename it and/or add it to `$PATH`. We will refer to this binary as `zrlc` elsewhere in the documentation.
 
-## Exporting the AST
+## Exploring the Generated Code
+
+TODO 
+
+## Visualizing the AST
 
 TODO
 

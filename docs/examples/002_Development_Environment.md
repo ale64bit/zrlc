@@ -51,14 +51,14 @@ sudo apt-get install libglfw3 libglfw3-dev
 
 ## Minimal Example
 
-Now, let's walk over the basic example code in [examples/setup/main.cc](https://github.com/ale64bit/zrl/blob/master/examples/setup/main.cc):
+Now, let's walk over the basic example code in [examples/empty/main.cc](https://github.com/ale64bit/zrl/blob/master/examples/empty/main.cc):
 
 ```cpp
 #include "core/Core.h"
 #include "core/Log.h"
 
 int main() {
-  const zrl::Config config{/* app_name */ "setup",
+  const zrl::Config config{/* app_name */ "empty",
                            /* engine_name */ "zrl",
                            /* width */ 800,
                            /* height */ 600,
@@ -77,7 +77,7 @@ Here we first include the headers for the ZRL support library. Then we create a 
 Try to run the example:
 
 ```
-bazel run //examples/setup:main
+bazel run //examples/empty:main
 ```
 
 If you can see the `Ready!` log message, you are all set. 
