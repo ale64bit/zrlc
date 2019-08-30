@@ -70,7 +70,24 @@ $ ./show_ast.sh input.zrl
 
 ## Limitations and Improvements
 
-TODO
+* the compiler reports only the first error it encounters.
+* very few tests, mostly for the analysis phase.
+* only a single backend for Vulkan is implemented.
+* only graphics pipelines are currently supported by the backend.
+* stencil buffer not supported.
+* multisampling not supported.
+* blending not supported.
+* generated shader code is GLSL.
+* render target sizes different from swapchain size not supported.
+* only a single input file is allowed. `module` not really used as of yet.
+* generated code is single-threaded.
+* staging and uniform internal buffers have fixed sizes. This should be configurable.
+* no optimizations. I would like to explore a more systematic way of implementing and combining the phases, in particular for optimizations ([this article](http://okmij.org/ftp/tagless-final/course/optimizations.html) looks very attractive but I need to research more):
+  - merging or exploding shader stages.
+  - descriptor set assignment according to bind frequency.
+  - reaching definitions to avoid hashing pipelines and render passes.
+  - using derivative pipelines.
+  - optimal barriers and image layout transitions.
 
 ## Contributing
 

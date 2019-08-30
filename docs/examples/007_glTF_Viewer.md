@@ -12,7 +12,8 @@ Previous: [Deferred Shading](006_Deferred_Shading.md) | [Table of Contents](READ
 
 **Screenshots**:
 <p align="center">
-  <img src="https://github.com/ale64bit/zrlc/blob/master/docs/examples/007_glTF_Viewer.png" width="800">
+  <img src="https://github.com/ale64bit/zrlc/blob/master/docs/examples/007_glTF_Viewer1.png" width="800">
+  <img src="https://github.com/ale64bit/zrlc/blob/master/docs/examples/007_glTF_Viewer2.png" width="800">
 </p>
 
 ## TODO
