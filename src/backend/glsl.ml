@@ -84,7 +84,7 @@ module Shader = struct
   let add_function f t = { t with functions = f :: t.functions }
 
   let string_of_source t =
-    let constants = String.concat "\n" (List.rev t.constants) in
+    let constants = String.concat "\n" t.constants in
     let structs =
       String.concat "\n" (List.map (fun s -> s ^ ";") (List.rev t.structs))
     in
@@ -94,7 +94,7 @@ module Shader = struct
            (fun (set, binding, (t, name)) ->
              Printf.sprintf "layout(set=%d, binding=%d) uniform %s %s;" set
                binding t name)
-           (List.rev t.uniforms))
+           t.uniforms)
     in
     let inputs =
       String.concat "\n"

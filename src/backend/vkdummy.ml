@@ -1294,7 +1294,7 @@ let rec gen_cpp_stmt pipelines stmt f =
         (`Unsupported
           "'discard' statement cannot be used outside fragment shaders")
 
-let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
+let gen_cpp_function pipelines TypedAst.{ fd_env; fd_name; fd_type; fd_body } =
   let open Cpp in
   let f = Function.empty fd_name in
   let ret_type =
@@ -1317,6 +1317,9 @@ let gen_cpp_function pipelines TypedAst.{ fd_name; fd_type; fd_body; _ } =
           (fun f (pname, t) ->
             match t with
             | Type.Primitive _ | Type.Vector _ | Type.Matrix _ ->
+                Function.(f |> add_param (zrl_to_cpp_type t, pname))
+            | Type.Array (tt, _)
+              when not (has_opaque_members fd_env SetString.empty tt) ->
                 Function.(f |> add_param (zrl_to_cpp_type t, pname))
             | Type.Atom Singleton ->
                 let tmpl_param = pname ^ "AtomType" in
@@ -2231,7 +2234,7 @@ let gen_render_target_binder pname name =
 };|}
     pname name
 
-let gen_vector_matrix_type_uniform_binder pname name t =
+let gen_primitive_uniform_binder pname name t =
   let tname = zrl_to_cpp_type t in
   Printf.sprintf
     {|template <> struct %s_%s<%s> {
@@ -2244,10 +2247,23 @@ let gen_vector_matrix_type_uniform_binder pname name t =
 };|}
     pname name tname tname tname
 
+let gen_array_uniform_binder pname name t =
+  let tname = zrl_to_cpp_type t in
+  Printf.sprintf
+    {|template <> struct %s_%s<%s> {
+  void operator()(const %s &t, uint32_t &uid, %s *data) const noexcept {
+    uid = 0;
+    if (data != nullptr) {
+      std::copy(t.begin(), t.end(), data->begin());
+    }
+  }
+};|}
+    pname name tname tname tname
+
 let gen_types_header pipelines root_elems cpp_constants =
   let cc_header =
     Cpp.Header.(
-      empty "Types" |> add_include "<array>"
+      empty "Types" |> add_include "<algorithm>" |> add_include "<array>"
       |> add_include "<unordered_map>"
       |> add_include {|"glm/glm.hpp"|})
   in
@@ -2291,14 +2307,30 @@ let gen_types_header pipelines root_elems cpp_constants =
                     Printf.sprintf "template<class T> struct %s_%s;" pname name
                   in
                   match t with
-                  | Type.Vector _ | Type.Matrix _ ->
+                  | Type.Primitive _ | Type.Vector _ | Type.Matrix _ ->
                       let vm_binder =
-                        gen_vector_matrix_type_uniform_binder pname name t
+                        gen_primitive_uniform_binder pname name t
                       in
                       String.concat "\n" [ binder_template; vm_binder ]
+                  | Type.Array (tt, _)
+                    when not
+                           (has_opaque_members pipeline.gp_declaration.pd_env
+                              SetString.empty tt) ->
+                      let array_binder =
+                        gen_array_uniform_binder pname name t
+                      in
+                      String.concat "\n" [ binder_template; array_binder ]
                   | Type.Sampler 2 ->
                       let rt_binder = gen_render_target_binder pname name in
                       String.concat "\n" [ binder_template; rt_binder ]
+                  | Type.TypeRef _
+                    when not
+                           (has_opaque_members pipeline.gp_declaration.pd_env
+                              SetString.empty t) ->
+                      let rec_binder =
+                        gen_primitive_uniform_binder pname name t
+                      in
+                      String.concat "\n" [ binder_template; rec_binder ]
                   | _ -> binder_template)
                 params
           | _ -> failwith "pipeline types must be Function types"
@@ -2315,11 +2347,6 @@ let gen_types_header pipelines root_elems cpp_constants =
         uniforms @ inputs @ indices)
       (MapString.bindings pipelines)
   in
-  let cc_header =
-    List.fold_left
-      (flip Cpp.Header.add_section)
-      cc_header (List.flatten bind_traits)
-  in
   List.fold_left
     (fun acc tl ->
       acc >>= fun (glsl_types, cc_header) ->
@@ -2333,6 +2360,12 @@ let gen_types_header pipelines root_elems cpp_constants =
       | _ -> acc)
     (Ok ([], cc_header))
     root_elems
+  >>= fun (glsl_types, cc_header) ->
+  Ok
+    ( glsl_types,
+      List.fold_left
+        (flip Cpp.Header.add_section)
+        cc_header (List.flatten bind_traits) )
 
 let check_stage_chaining loc src_name from_stage dst_name to_stage =
   match (from_stage, to_stage) with
@@ -2345,6 +2378,7 @@ let check_stage_chaining loc src_name from_stage dst_name to_stage =
 let gen_uniform_bindings env loc set id t =
   let open Type in
   match t with
+  | Primitive _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Vector _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Matrix _ -> Ok [ (set, 0, 1, id, t, "") ]
   | Sampler _ -> Ok [ (set, 0, 1, id, t, "") ]
@@ -2632,8 +2666,9 @@ let rec gen_glsl_expression env L.{ value; _ } =
   let open Ast in
   match value with
   | Access (L.{ value = Id "builtin"; _ }, "position") -> "gl_Position"
-  | Access (L.{ value = Id "builtin"; _ }, "vertexID") -> "gl_VertexID"
-  | Access (L.{ value = Id "builtin"; _ }, "instanceID") -> "gl_InstanceID"
+  | Access (L.{ value = Id "builtin"; _ }, "vertexIndex") -> "gl_VertexIndex"
+  | Access (L.{ value = Id "builtin"; _ }, "instanceIndex") ->
+      "gl_InstanceIndex"
   | Access (L.{ value = Id "builtin"; _ }, "fragCoord") -> "gl_FragCoord"
   | Access (L.{ value = Id "builtin"; _ }, "frontFacing") -> "gl_FrontFacing"
   | Access (expr, member) -> (

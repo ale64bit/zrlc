@@ -609,8 +609,8 @@ let add_builtin fname env =
             Record
               [
                 ("position", TypeRef "fvec4");
-                ("vertexID", TypeRef "int");
-                ("instanceID", TypeRef "int");
+                ("vertexIndex", TypeRef "int");
+                ("instanceIndex", TypeRef "int");
               ]
           in
           add_var "builtin" L.{ loc = builtin_loc; value = t } env
