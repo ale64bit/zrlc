@@ -578,7 +578,7 @@ and valid_arg arg_type want_type =
   let open Type in
   match (arg_type, want_type) with
   | Atom Singleton, _ -> true
-  | RenderTarget RGBA, Sampler 2 -> true
+  | RenderTarget (RGBA | DS), Sampler 2 -> true
   | _ -> arg_type = want_type
 
 and check_call_args f_name arg_exprs arg_types want_types =

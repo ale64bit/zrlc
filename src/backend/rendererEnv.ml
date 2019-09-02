@@ -649,8 +649,8 @@ let ctor_body =
                             .GetPhysicalDevice()
                             .GetProperties()
                             .limits.minUniformBufferOffsetAlignment,
-                        64ul),
-               256ul);
+                        static_cast<VkDeviceSize>(64)),
+               static_cast<VkDeviceSize>(256));
   ubo_buffer_pool_ = std::make_unique<zrl::BufferPool>(
       core, "ubo", zrl::_128MB, 
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
