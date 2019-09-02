@@ -742,6 +742,17 @@ let gen_uniform_atom_binding env pipeline id expr f =
   let bindings =
     List.find_all (fun (s, _, _, _, _, _) -> s = set) pipeline.gp_uniforms
   in
+  let needs_images =
+    List.exists
+      (fun (_, _, _, _, t, _) ->
+        match t with
+        | Type.Sampler _ | Type.SamplerCube
+        | Type.Array (Sampler _, _)
+        | Type.Array (SamplerCube, _) ->
+            true
+        | _ -> false)
+      bindings
+  in
   let binding_writes =
     String.concat "\n"
       (List.map
@@ -776,6 +787,10 @@ let gen_uniform_atom_binding env pipeline id expr f =
       (Ast.string_of_expression expr)
       set
   in
+  let images =
+    "std::vector<std::unique_ptr<zrl::Image>> &images = \
+     discarded_images_[image_index_];"
+  in
   Function.(
     f
     |> append_code_section
@@ -804,7 +819,7 @@ let gen_uniform_atom_binding env pipeline id expr f =
           ClearDescriptorSetRegister(set_index);
           const VkDescriptorSet set = RecycleOrAllocateDescriptorSet(set_layout);
           std::vector<zrl::Block> &blocks = ubo_discarded_blocks_[image_index_];
-          std::vector<std::unique_ptr<zrl::Image>> &images = discarded_images_[image_index_];
+          %s
           %s
           discarded_descriptor_sets_[image_index_][set_layout].push_back(set);
           reg.uid = uid;
@@ -861,7 +876,9 @@ let gen_uniform_atom_binding env pipeline id expr f =
             bind_comment
             (gen_cpp_expression env expr)
             (string_of_bool can_cache) (zrl_to_cpp_type set_type) trait_id set
-            set_layout trait_id binding_writes trait_id binding_writes))
+            set_layout trait_id
+            (if needs_images then images else "")
+            binding_writes trait_id binding_writes))
 
 let gen_indices_atom_binding env pipeline expr f =
   let open Cpp in
