@@ -4,6 +4,8 @@ This repository contains the source code for ZRL, including the compiler, docume
 
 *Disclaimer: ZRL is a hobby project developed as a learning exercise combining several topics I enjoy (graphics and compilers). It's a work in progress, barely tested and probably full of bugs. I focused mostly on having a working prototype but there's plenty of room for optimization, better testing and cleaner design.*
 
+This is not an officially supported Google product
+
 ## Quick Start
 
 Check the [examples](docs/examples/README.md).
